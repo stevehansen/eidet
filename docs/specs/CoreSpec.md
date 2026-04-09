@@ -1,6 +1,6 @@
 # Core Spec: Eidet — Agentic Long-Term Memory
 
-> **Scope**: This spec defines WHAT Eidet is — domain model, memory types, layers, tiered loading, scoring, retrieval, write gates, consolidation, maintenance, and the design decisions behind them. It is implementation-agnostic: whether running embedded in TerminalHost or as a standalone service, the core semantics are identical.
+> **Scope**: This spec defines WHAT Eidet is — domain model, memory types, layers, tiered loading, scoring, retrieval, write gates, consolidation, maintenance, and the design decisions behind them. It is implementation-agnostic: whether running as the Eidet service, embedded in a host application, or accessed via API, the core semantics are identical.
 >
 > *From "eidetic" — relating to extraordinarily vivid, detailed recall.*
 

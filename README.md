@@ -45,7 +45,7 @@ The initial release is **local-only**:
 - Local RavenDB (embedded or connect to existing instance)
 - Local optional Ollama enrichment
 - MCP server (stdio for AI clients)
-- REST API (for TerminalHost and other tools)
+- REST API (for tools and custom integrations)
 - Rich TUI for setup, configuration, troubleshooting
 - Docker container integration (devcontainers, custom containers)
 - Full 13-tool MCP surface
