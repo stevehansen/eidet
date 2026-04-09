@@ -66,6 +66,75 @@ public static class McpToolDefinitions
                 Prop("id", "string", "Memory ID to get history for."),
             ], ["id"]),
         },
+        new()
+        {
+            Name = "eidet_intake",
+            Description = "Ingest project files (CLAUDE.md, README, .editorconfig, dependencies) as seed memories. Idempotent — skips duplicates.",
+            InputSchema = Schema([
+                PropOptional("path", "string", "Directory to ingest docs from (default: project root)."),
+                PropOptional("pattern", "string", "File glob pattern (default: *.md)."),
+                PropOptional("recursive", "boolean", "Recurse into subdirectories (default: true)."),
+                PropOptional("importance", "number", "Default importance for ingested memories (default: 0.6)."),
+                PropOptional("tags", "array", "Extra tags to add to all ingested memories.", items: "string"),
+                PropOptional("dry_run", "boolean", "Preview what would be ingested without storing."),
+            ], []),
+        },
+        new()
+        {
+            Name = "eidet_link",
+            Description = "Create a cross-repo or memory-to-memory relationship link.",
+            InputSchema = Schema([
+                Prop("target_repo", "string", "Target repository path or repoId."),
+                Prop("relation", "string", "Relationship: depends-on, uses-library, forked-from, related, supports, conflicts, refines."),
+                PropOptional("target_memory_id", "string", "Specific memory ID to link to (omit for repo-level link)."),
+            ], ["target_repo", "relation"]),
+        },
+        new()
+        {
+            Name = "eidet_consolidate",
+            Description = "Merge related observations into stable insights. Groups observations by shared tags.",
+            InputSchema = Schema([
+                PropOptional("dry_run", "boolean", "Preview consolidation candidates without creating insights."),
+            ], []),
+        },
+        new()
+        {
+            Name = "eidet_maintenance",
+            Description = "Run the maintenance pipeline: TTL expiry, observation retention, dedup sweep, importance decay, orphan cleanup, auto-consolidation.",
+            InputSchema = Schema([
+                PropOptional("dry_run", "boolean", "Preview only (not yet supported)."),
+            ], []),
+        },
+        new()
+        {
+            Name = "eidet_export",
+            Description = "Export memories as formatted markdown.",
+            InputSchema = Schema([
+                PropOptional("output_path", "string", "File path to write to (returns text if omitted)."),
+            ], []),
+        },
+        new()
+        {
+            Name = "eidet_pack_export",
+            Description = "Export memories as a shareable .eidet pack file for other projects.",
+            InputSchema = Schema([
+                Prop("bundle_id", "string", "Unique bundle identifier."),
+                Prop("name", "string", "Human-readable bundle name."),
+                Prop("version", "string", "Semver version string."),
+                PropOptional("types", "array", "Memory types to include (default: insight, procedure, heuristic).", items: "string"),
+                PropOptional("tags", "array", "Filter by tags.", items: "string"),
+                PropOptional("applicable_packages", "array", "NuGet/npm packages this bundle covers.", items: "string"),
+                PropOptional("output_path", "string", "File path for the .eidet pack."),
+            ], ["bundle_id", "name", "version"]),
+        },
+        new()
+        {
+            Name = "eidet_pack_import",
+            Description = "Import a .eidet pack as a read-only memory layer.",
+            InputSchema = Schema([
+                Prop("path", "string", "Path to the .eidet pack file."),
+            ], ["path"]),
+        },
     ];
 
     private static JsonObject Schema((string name, JsonObject prop)[] properties, string[] required)

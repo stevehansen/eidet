@@ -17,12 +17,21 @@ public class EidetApiServer
     };
 
     private readonly MemoryService _svc;
+    private readonly IntakeService _intake;
+    private readonly ConsolidationService _consolidation;
+    private readonly MaintenanceService _maintenance;
+    private readonly ExportService _export;
     private readonly HttpListener _listener;
     private readonly string _baseUrl;
 
-    public EidetApiServer(MemoryService svc, string bindAddress, int port)
+    public EidetApiServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
+        MaintenanceService maintenance, ExportService export, string bindAddress, int port)
     {
         _svc = svc;
+        _intake = intake;
+        _consolidation = consolidation;
+        _maintenance = maintenance;
+        _export = export;
         _baseUrl = $"http://{bindAddress}:{port}/";
         _listener = new HttpListener();
         _listener.Prefixes.Add(_baseUrl);
@@ -76,6 +85,18 @@ public class EidetApiServer
 
             else if (method == "POST" && path == "/api/eidet/feedback")
                 await HandleFeedback(ctx, ct);
+
+            else if (method == "POST" && path == "/api/eidet/intake")
+                await HandleIntake(ctx, ct);
+
+            else if (method == "POST" && path == "/api/eidet/consolidate")
+                await HandleConsolidate(ctx, ct);
+
+            else if (method == "POST" && path == "/api/maintenance")
+                await HandleMaintenance(ctx, ct);
+
+            else if (method == "GET" && path == "/api/eidet/export")
+                await HandleExport(ctx, ct);
 
             else if (method == "DELETE" && path.StartsWith("/api/eidet/"))
                 await HandleForget(ctx, path["/api/eidet/".Length..], ct);
@@ -213,6 +234,58 @@ public class EidetApiServer
         }
         var context = await _svc.GetContextAsync(repo, maxTokens: 50, ct: ct);
         await WriteJson(ctx, new { repo, summary = context.Trim() });
+    }
+
+    private async Task HandleIntake(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var repo = ctx.Request.QueryString["repo"];
+        if (string.IsNullOrEmpty(repo))
+        {
+            await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
+            return;
+        }
+        var result = await _intake.IngestAsync(repo, repo, ct: ct);
+        await WriteJson(ctx, new { newCount = result.NewCount, skippedCount = result.SkippedCount, dependencies = result.DetectedLinks.Count });
+    }
+
+    private async Task HandleConsolidate(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var repo = ctx.Request.QueryString["repo"];
+        if (string.IsNullOrEmpty(repo))
+        {
+            await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
+            return;
+        }
+        var result = await _consolidation.ConsolidateAsync(RepoIdNormalizer.Normalize(repo), ct: ct);
+        await WriteJson(ctx, new { candidates = result.Candidates.Count, insightsCreated = result.InsightsCreated });
+    }
+
+    private async Task HandleMaintenance(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var repo = ctx.Request.QueryString["repo"];
+        if (string.IsNullOrEmpty(repo))
+        {
+            await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
+            return;
+        }
+        var result = await _maintenance.RunAsync(RepoIdNormalizer.Normalize(repo), ct: ct);
+        await WriteJson(ctx, result);
+    }
+
+    private async Task HandleExport(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var repo = ctx.Request.QueryString["repo"];
+        if (string.IsNullOrEmpty(repo))
+        {
+            await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
+            return;
+        }
+        var markdown = await _export.ExportMarkdownAsync(RepoIdNormalizer.Normalize(repo), ct);
+        ctx.Response.StatusCode = 200;
+        ctx.Response.ContentType = "text/markdown";
+        var bytes = System.Text.Encoding.UTF8.GetBytes(markdown);
+        await ctx.Response.OutputStream.WriteAsync(bytes, ct);
+        ctx.Response.Close();
     }
 
     private static async Task WriteJson(HttpListenerContext ctx, object data, int statusCode = 200)

@@ -41,7 +41,11 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
 
         var eidetStore = new RavenEidetStore(store);
         var memorySvc = new MemoryService(eidetStore);
-        var apiServer = new EidetApiServer(memorySvc, bind, port);
+        var intakeSvc = new IntakeService(eidetStore);
+        var consolidationSvc = new ConsolidationService(eidetStore);
+        var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc);
+        var exportSvc = new ExportService(eidetStore);
+        var apiServer = new EidetApiServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc, bind, port);
 
         AnsiConsole.MarkupLine($"  API:     [green]http://{bind}:{port}[/]");
         AnsiConsole.MarkupLine($"  Health:  http://{bind}:{port}/api/health");

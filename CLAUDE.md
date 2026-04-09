@@ -38,17 +38,23 @@ All design decisions are documented in `docs/specs/`:
 
 ### Phase 3 — Done
 - **`eidet setup`**: Interactive TUI wizard — detects RavenDB, creates database, deploys indexes, configures bge-micro-v2 embeddings, detects Ollama, saves config. Non-interactive mode with `--non-interactive`.
-- **`eidet mcp`**: MCP server over stdio (JSON-RPC). 6 tools: `eidet_store`, `eidet_recall`, `eidet_context`, `eidet_forget`, `eidet_feedback`, `eidet_history`. Direct MemoryService integration (no HTTP hop).
+- **`eidet mcp`**: MCP server over stdio (JSON-RPC). Direct MemoryService integration (no HTTP hop).
 - **DatabaseProvisioner**: EnsureDatabaseExists, DeployIndexes, EnsureEmbeddingsConfigured (AI connection string + embeddings generation task).
 - **SecretScanner**: Added Azure storage, GCP service account, Slack token patterns (10→13).
 
-### Phase 4 — Next
+### Phase 4 — Done
+- **Full 13-tool MCP surface**: eidet_store, eidet_recall, eidet_context, eidet_forget, eidet_feedback, eidet_history, eidet_intake, eidet_link, eidet_consolidate, eidet_maintenance, eidet_export, eidet_pack_export, eidet_pack_import
+- **IntakeService**: Ingests CLAUDE.md, README.md, .editorconfig, NuGet/npm deps. Splits by headings, deduplicates by content hash, extracts entities and one-liners.
+- **ConsolidationService**: Groups observations by tag overlap (union-find), creates insights from groups of 3+, FadeMem differential decay (per-type half-lives).
+- **MaintenanceService**: 6-stage pipeline — TTL expiry, observation retention, dedup sweep (Jaccard 0.85), importance decay, orphan cleanup, auto-consolidation.
+- **ExportService**: Markdown export, .eidet pack export/import with session field stripping.
+- **REST API expanded**: /api/eidet/intake, /api/eidet/consolidate, /api/maintenance, /api/eidet/export
+
+### Phase 5 — Next
 - MCP streamable HTTP transport (for network clients)
 - `eidet serve` as system service (Windows Service/launchd/systemd)
-- Intake system (CLAUDE.md, README, deps)
-- Consolidation pipeline
-- Ollama enrichment
-- Remaining 7 MCP tools (intake, link, consolidate, maintenance, export, pack_export, pack_import)
+- Ollama enrichment (one-liners, summaries, foresight hints, conflict detection)
+- Layer service (mount/unmount, scope resolution, auto-mount by deps)
 
 ## MVP Scope
 

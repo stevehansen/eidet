@@ -21,9 +21,13 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
         var store = DocumentStoreFactory.Create(config.Storage.RavenUrl, config.Storage.DatabaseName);
         var eidetStore = new RavenEidetStore(store);
         var memorySvc = new MemoryService(eidetStore);
+        var intakeSvc = new IntakeService(eidetStore);
+        var consolidationSvc = new ConsolidationService(eidetStore);
+        var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc);
+        var exportSvc = new ExportService(eidetStore);
 
         var workDir = settings.WorkDir ?? Directory.GetCurrentDirectory();
-        var server = new McpServer(memorySvc, workDir);
+        var server = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc, workDir);
 
         try
         {

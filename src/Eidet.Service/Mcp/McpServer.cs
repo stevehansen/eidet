@@ -15,11 +15,20 @@ public class McpServer
     };
 
     private readonly MemoryService _svc;
+    private readonly IntakeService _intake;
+    private readonly ConsolidationService _consolidation;
+    private readonly MaintenanceService _maintenance;
+    private readonly ExportService _export;
     private readonly string _repoId;
 
-    public McpServer(MemoryService svc, string repoId)
+    public McpServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
+        MaintenanceService maintenance, ExportService export, string repoId)
     {
         _svc = svc;
+        _intake = intake;
+        _consolidation = consolidation;
+        _maintenance = maintenance;
+        _export = export;
         _repoId = repoId;
     }
 
@@ -119,6 +128,13 @@ public class McpServer
                 "eidet_forget" => await ExecuteForget(args, ct),
                 "eidet_feedback" => await ExecuteFeedback(args, ct),
                 "eidet_history" => await ExecuteHistory(args, ct),
+                "eidet_intake" => await ExecuteIntake(args, ct),
+                "eidet_link" => await ExecuteLink(args, ct),
+                "eidet_consolidate" => await ExecuteConsolidate(args, ct),
+                "eidet_maintenance" => await ExecuteMaintenance(args, ct),
+                "eidet_export" => await ExecuteExport(args, ct),
+                "eidet_pack_export" => await ExecutePackExport(args, ct),
+                "eidet_pack_import" => await ExecutePackImport(args, ct),
                 _ => McpCallToolResult.Error($"Unknown tool: {name}"),
             };
         }
@@ -232,6 +248,164 @@ public class McpServer
         }
 
         return McpCallToolResult.Text(string.Join("\n", lines));
+    }
+
+    private async Task<McpCallToolResult> ExecuteIntake(JsonElement args, CancellationToken ct)
+    {
+        var dryRun = GetBool(args, "dry_run");
+        var path = GetString(args, "path");
+
+        IntakeResult result;
+        if (!string.IsNullOrEmpty(path))
+        {
+            var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(_repoId, path);
+            if (!Directory.Exists(resolvedPath))
+                return McpCallToolResult.Error($"Directory not found: {resolvedPath}");
+
+            var pattern = GetString(args, "pattern") ?? "*.md";
+            var recursive = GetBool(args, "recursive", true);
+            var importance = GetFloat(args, "importance", 0.6f);
+            var extraTags = GetStringArray(args, "tags");
+
+            result = await _intake.IngestDocsAsync(resolvedPath, resolvedPath, recursive, pattern, importance,
+                extraTags.Count > 0 ? extraTags : null, dryRun, ct);
+        }
+        else
+        {
+            var projectPath = Path.IsPathRooted(_repoId) ? _repoId : Directory.GetCurrentDirectory();
+            result = await _intake.IngestAsync(_repoId, projectPath, dryRun, ct);
+        }
+
+        var mode = dryRun ? "Would ingest" : "Ingested";
+        var lines = new List<string> { $"{mode}: {result.NewCount} new, {result.SkippedCount} skipped" };
+
+        if (result.ProducedPackages.Count > 0)
+            lines.Add($"Produces: {string.Join(", ", result.ProducedPackages)}");
+        if (result.DetectedLinks.Count > 0)
+            lines.Add($"Dependencies: {string.Join(", ", result.DetectedLinks.Select(l => l.TargetRepoId))}");
+
+        foreach (var item in result.Items.Take(20))
+        {
+            var status = item.WasSkipped ? $"[SKIP: {item.SkipReason}]" : "[NEW]";
+            lines.Add($"  {status} {item.Source} -> {item.Type}: {Truncate(item.Content, 80)}");
+        }
+        if (result.Items.Count > 20)
+            lines.Add($"  ... and {result.Items.Count - 20} more");
+
+        return McpCallToolResult.Text(string.Join("\n", lines));
+    }
+
+    private async Task<McpCallToolResult> ExecuteLink(JsonElement args, CancellationToken ct)
+    {
+        var targetRepo = GetString(args, "target_repo");
+        if (string.IsNullOrEmpty(targetRepo)) return McpCallToolResult.Error("Missing: target_repo");
+        var relation = GetString(args, "relation");
+        if (string.IsNullOrEmpty(relation)) return McpCallToolResult.Error("Missing: relation");
+
+        var targetRepoId = RepoIdNormalizer.Normalize(targetRepo);
+        var targetMemoryId = GetString(args, "target_memory_id");
+        var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
+
+        var content = targetMemoryId != null
+            ? $"Memory link: {relation} -> {targetMemoryId}"
+            : $"Cross-repo link: {relation} -> {targetRepoId}";
+
+        var now = DateTime.UtcNow;
+        var result = await _svc.StoreAsync(normalizedRepoId, content, MemoryType.Insight,
+            tags: targetMemoryId != null ? ["memory-link", relation] : ["cross-repo-link", relation],
+            importance: 0.7f, source: "claude-session", ct: ct);
+
+        return result.Success
+            ? McpCallToolResult.Text($"Link created: {normalizedRepoId} --[{relation}]--> {targetRepoId} (ID: {result.Id})")
+            : McpCallToolResult.Error(result.Reason!);
+    }
+
+    private async Task<McpCallToolResult> ExecuteConsolidate(JsonElement args, CancellationToken ct)
+    {
+        var dryRun = GetBool(args, "dry_run");
+        var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
+        var result = await _consolidation.ConsolidateAsync(normalizedRepoId, dryRun, ct);
+
+        if (result.Candidates.Count == 0)
+            return McpCallToolResult.Text("No consolidation candidates found. Need 3+ related observations.");
+
+        var lines = new List<string>();
+        lines.Add(dryRun
+            ? $"Consolidation preview: {result.Candidates.Count} candidate(s)"
+            : $"Consolidated: {result.InsightsCreated} insight(s) from {result.Candidates.Count} group(s)");
+
+        foreach (var c in result.Candidates)
+        {
+            lines.Add($"\n  Group ({c.ObservationIds.Count} observations):");
+            lines.Add($"  -> {Truncate(c.ProposedContent, 100)}");
+            lines.Add($"  Tags: {string.Join(", ", c.Tags)} | Importance: {c.ProposedImportance:F2}");
+        }
+
+        return McpCallToolResult.Text(string.Join("\n", lines));
+    }
+
+    private async Task<McpCallToolResult> ExecuteMaintenance(JsonElement args, CancellationToken ct)
+    {
+        var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
+        var isActive = _svc.IsRepoActive(normalizedRepoId);
+        var result = await _maintenance.RunAsync(normalizedRepoId, isRepoActive: isActive, ct: ct);
+        return McpCallToolResult.Text(result.ToString());
+    }
+
+    private async Task<McpCallToolResult> ExecuteExport(JsonElement args, CancellationToken ct)
+    {
+        var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
+        var markdown = await _export.ExportMarkdownAsync(normalizedRepoId, ct);
+
+        var outputPath = GetString(args, "output_path");
+        if (!string.IsNullOrEmpty(outputPath))
+        {
+            await File.WriteAllTextAsync(outputPath, markdown, ct);
+            return McpCallToolResult.Text($"Exported {markdown.Length} chars to {outputPath}");
+        }
+
+        return McpCallToolResult.Text(markdown);
+    }
+
+    private async Task<McpCallToolResult> ExecutePackExport(JsonElement args, CancellationToken ct)
+    {
+        var bundleId = GetString(args, "bundle_id");
+        if (string.IsNullOrEmpty(bundleId)) return McpCallToolResult.Error("Missing: bundle_id");
+        var name = GetString(args, "name");
+        if (string.IsNullOrEmpty(name)) return McpCallToolResult.Error("Missing: name");
+        var version = GetString(args, "version");
+        if (string.IsNullOrEmpty(version)) return McpCallToolResult.Error("Missing: version");
+
+        var types = GetStringArray(args, "types")
+            .Select(t => Enum.TryParse<MemoryType>(t, true, out var mt) ? mt : (MemoryType?)null)
+            .Where(t => t != null).Select(t => t!.Value).ToList();
+
+        var tags = GetStringArray(args, "tags");
+        var packages = GetStringArray(args, "applicable_packages");
+        var outputPath = GetString(args, "output_path");
+
+        var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
+        var pack = await _export.ExportPackAsync(normalizedRepoId, bundleId, name, version, "user",
+            types.Count > 0 ? types : null, tags.Count > 0 ? tags : null,
+            packages.Count > 0 ? packages : null, ct);
+
+        if (!string.IsNullOrEmpty(outputPath))
+        {
+            await _export.ExportPackToFileAsync(pack, outputPath, ct);
+            return McpCallToolResult.Text($"Bundle exported: {pack.Entries.Count} entries -> {outputPath}");
+        }
+
+        return McpCallToolResult.Text($"Bundle created: {pack.Id} v{pack.Version} with {pack.Entries.Count} entries.");
+    }
+
+    private async Task<McpCallToolResult> ExecutePackImport(JsonElement args, CancellationToken ct)
+    {
+        var path = GetString(args, "path");
+        if (string.IsNullOrEmpty(path)) return McpCallToolResult.Error("Missing: path");
+
+        var pack = await _export.ImportPackFromFileAsync(path, ct);
+        var count = await _export.ImportPackAsync(pack, ct);
+        return McpCallToolResult.Text($"Bundle imported: {pack.Name} v{pack.Version} — {count} entries loaded.");
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
