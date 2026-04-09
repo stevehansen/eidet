@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Eidet.Core/Eidet.Core.csproj" />
+    <Project Path="src/Eidet.Service/Eidet.Service.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Eidet.Core.Tests/Eidet.Core.Tests.csproj" />
+    <Project Path="tests/Eidet.Service.Tests/Eidet.Service.Tests.csproj" />
+  </Folder>
+</Solution>

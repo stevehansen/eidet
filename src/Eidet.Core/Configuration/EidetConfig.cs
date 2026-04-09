@@ -1,0 +1,53 @@
+namespace Eidet.Core.Configuration;
+
+public class EidetConfig
+{
+    public ServiceConfig Service { get; set; } = new();
+    public StorageConfig Storage { get; set; } = new();
+    public MemoryConfig Memory { get; set; } = new();
+    public MaintenanceConfig Maintenance { get; set; } = new();
+    public EnrichmentConfig Enrichment { get; set; } = new();
+}
+
+public class ServiceConfig
+{
+    public int Port { get; set; } = 19380;
+    public string BindAddress { get; set; } = "127.0.0.1";
+}
+
+public class StorageConfig
+{
+    public string Mode { get; set; } = "external"; // "external" or "embedded"
+    public string RavenUrl { get; set; } = "http://localhost:8080";
+    public string DatabaseName { get; set; } = "Eidet";
+    public string? DataDir { get; set; } // only for embedded mode
+}
+
+public class MemoryConfig
+{
+    public int L1Count { get; set; } = 20;
+    public int L1MaxTokens { get; set; } = 500;
+    public float DuplicateThreshold { get; set; } = 0.92f;
+    public float VectorSimilarityMinimum { get; set; } = 0.70f;
+    public int ObservationRetentionDays { get; set; } = 90;
+    public bool AutoIntakeOnFirstSession { get; set; } = true;
+    public bool CrossRepoRecallEnabled { get; set; } = true;
+    public int StalenessWarningDays { get; set; } = 7;
+    public bool RecallCacheEnabled { get; set; } = true;
+}
+
+public class MaintenanceConfig
+{
+    public int IntervalHours { get; set; } = 24;
+    public int ConsolidationIntervalHours { get; set; } = 6;
+}
+
+public class EnrichmentConfig
+{
+    public bool OllamaEnabled { get; set; }
+    public string OllamaUrl { get; set; } = "http://localhost:11434";
+    public string OllamaModel { get; set; } = "gemma4";
+    public bool AutoOneLiner { get; set; } = true;
+    public bool AutoForesight { get; set; } = true;
+    public bool AutoConsolidation { get; set; } = true;
+}
