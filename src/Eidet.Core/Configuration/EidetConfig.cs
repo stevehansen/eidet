@@ -1,4 +1,9 @@
+using System.Text.Json.Serialization;
+
 namespace Eidet.Core.Configuration;
+
+[JsonConverter(typeof(JsonStringEnumConverter<StorageMode>))]
+public enum StorageMode { External, Embedded }
 
 public class EidetConfig
 {
@@ -17,7 +22,7 @@ public class ServiceConfig
 
 public class StorageConfig
 {
-    public string Mode { get; set; } = "external"; // "external" or "embedded"
+    public StorageMode Mode { get; set; } = StorageMode.External;
     public string RavenUrl { get; set; } = "http://localhost:8080";
     public string DatabaseName { get; set; } = "Eidet";
     public string? DataDir { get; set; } // only for embedded mode

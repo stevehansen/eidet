@@ -93,38 +93,38 @@ public static partial class EntityExtractor
     }
 
     // File paths: C:\foo\bar.cs, ./src/file.ts, /usr/bin/thing
-    [GeneratedRegex(@"(?:[A-Za-z]:)?(?:[/\\][\w\-. ]+){2,}(?:\.\w+)?", RegexOptions.Compiled)]
+    [GeneratedRegex(@"(?:[A-Za-z]:)?(?:[/\\][\w\-. ]+){2,}(?:\.\w+)?")]
     private static partial Regex FilePathRegex();
 
     // Dotted identifiers: System.IO.File, config.memory.enabled, App.xaml.cs
-    [GeneratedRegex(@"\b[A-Z][a-zA-Z0-9]*(?:\.[A-Za-z][a-zA-Z0-9]*){1,6}\b", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\b[A-Z][a-zA-Z0-9]*(?:\.[A-Za-z][a-zA-Z0-9]*){1,6}\b")]
     private static partial Regex DottedIdentifierRegex();
 
     // API endpoints: /api/v2/users, /health, /api/memory/context
-    [GeneratedRegex(@"(?:GET|POST|PUT|DELETE|PATCH)?\s*/(?:api|v\d+)/[\w/\-{}]+", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?:GET|POST|PUT|DELETE|PATCH)?\s*/(?:api|v\d+)/[\w/\-{}]+", RegexOptions.IgnoreCase)]
     private static partial Regex ApiEndpointRegex();
 
     // CLI commands: dotnet build, git status, npm install, docker compose
-    [GeneratedRegex(@"\b(?:dotnet|git|npm|yarn|pnpm|docker|kubectl|az|gh|safe|host|claude|pip|cargo|go)\s+[\w\-]+(?:\s+[\w\-.]+)?", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\b(?:dotnet|git|npm|yarn|pnpm|docker|kubectl|az|gh|safe|host|claude|pip|cargo|go)\s+[\w\-]+(?:\s+[\w\-.]+)?")]
     private static partial Regex CliCommandRegex();
 
     // Backtick code spans: `MemoryService.StoreAsync`, `--force`
-    [GeneratedRegex(@"`([^`]+)`", RegexOptions.Compiled)]
+    [GeneratedRegex(@"`([^`]+)`")]
     private static partial Regex BacktickCodeRegex();
 
     // PascalCase identifiers (2+ words): MemoryService, StoreAsync, MainViewModel
-    [GeneratedRegex(@"\b[A-Z][a-z]+(?:[A-Z][a-z]+){1,5}\b", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\b[A-Z][a-z]+(?:[A-Z][a-z]+){1,5}\b")]
     private static partial Regex PascalCaseRegex();
 
     // Package names: Microsoft.Extensions.AI, @anthropic-ai/sdk
-    [GeneratedRegex(@"\b(?:[A-Z][a-z]+\.){2,}[A-Z][a-z]+\b|@[\w\-]+/[\w\-]+", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\b(?:[A-Z][a-z]+\.){2,}[A-Z][a-z]+\b|@[\w\-]+/[\w\-]+")]
     private static partial Regex PackageNameRegex();
 
     // Error codes: HTTP 404, E0001, CS8602, TS2345
-    [GeneratedRegex(@"\b(?:HTTP\s+\d{3}|[A-Z]{1,3}\d{4,5})\b", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\b(?:HTTP\s+\d{3}|[A-Z]{1,3}\d{4,5})\b")]
     private static partial Regex ErrorCodeRegex();
 
-    // Environment variables: ASPNETCORE_ENVIRONMENT, NODE_ENV, PATH
-    [GeneratedRegex(@"\b[A-Z][A-Z0-9_]{3,}\b", RegexOptions.Compiled)]
+    // Environment variables: ASPNETCORE_ENVIRONMENT, NODE_ENV (require underscore to avoid prose words)
+    [GeneratedRegex(@"\b[A-Z][A-Z0-9]*_[A-Z0-9_]{2,}\b")]
     private static partial Regex EnvVarRegex();
 }

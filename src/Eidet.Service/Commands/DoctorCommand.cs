@@ -1,5 +1,6 @@
 using Eidet.Core.Configuration;
 using Eidet.Core.Storage;
+using Raven.Client.Documents;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -18,17 +19,52 @@ public sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
         var config = ConfigManager.Load();
         var checks = new List<CheckResult>();
 
+        IDocumentStore? store = null;
+
         // RavenDB connection check
-        checks.Add(await CheckRavenConnectionAsync(config));
-
-        // Database check
-        if (checks[0].Passed)
+        if (config.Storage.Mode == StorageMode.Embedded)
         {
-            checks.Add(await CheckDatabaseAsync(config));
+            checks.Add(new CheckResult("RavenDB", true, "Embedded mode (not yet implemented)"));
+        }
+        else
+        {
+            try
+            {
+                store = DocumentStoreFactory.Create(config.Storage.RavenUrl, config.Storage.DatabaseName);
+                var buildInfo = await store.Maintenance.Server.SendAsync(
+                    new Raven.Client.ServerWide.Operations.GetBuildNumberOperation());
+                checks.Add(new CheckResult("RavenDB", true, $"Connected (v{buildInfo.FullVersion}) at {config.Storage.RavenUrl}"));
+            }
+            catch (Exception ex)
+            {
+                checks.Add(new CheckResult("RavenDB", false,
+                    $"Connection failed: {ex.Message}",
+                    Fix: "Start RavenDB or switch to embedded:\n  eidet config set storage.mode embedded"));
+            }
+        }
 
-            // Index check (only if database exists)
-            if (checks[1].Passed)
-                checks.Add(await CheckIndexAsync(config));
+        // Database + Index checks (only if connected)
+        if (store is not null && checks[0].Passed)
+        {
+            var ravenStore = new RavenEidetStore(store);
+            var info = await ravenStore.GetDatabaseInfoAsync();
+
+            if (info == null)
+            {
+                checks.Add(new CheckResult("Database", false,
+                    $"\"{config.Storage.DatabaseName}\" not found",
+                    Fix: "Create it with: eidet setup"));
+            }
+            else
+            {
+                checks.Add(new CheckResult("Database", true,
+                    $"\"{info.Name}\" ({info.DocumentCount} documents)"));
+
+                checks.Add(info.IndexExists
+                    ? new CheckResult("Index", true, "Memories/Search deployed")
+                    : new CheckResult("Index", false, "Memories/Search not found",
+                        Fix: "Deploy indexes with: eidet setup"));
+            }
         }
 
         // Ollama check (optional)
@@ -38,84 +74,12 @@ public sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
         checks.Add(CheckConfigFile());
 
         if (settings.Json)
-        {
             RenderJson(checks);
-        }
         else
-        {
             RenderTui(checks);
-        }
 
+        store?.Dispose();
         return checks.All(c => c.Passed || c.Optional) ? 0 : 1;
-    }
-
-    private static async Task<CheckResult> CheckRavenConnectionAsync(EidetConfig config)
-    {
-        if (config.Storage.Mode == "embedded")
-        {
-            return new CheckResult("RavenDB", true, "Embedded mode (not yet implemented)");
-        }
-
-        try
-        {
-            using var store = DocumentStoreFactory.Create(config.Storage.RavenUrl, config.Storage.DatabaseName);
-
-            var buildInfo = await store.Maintenance.Server.SendAsync(
-                new Raven.Client.ServerWide.Operations.GetBuildNumberOperation());
-
-            return new CheckResult("RavenDB", true, $"Connected (v{buildInfo.FullVersion}) at {config.Storage.RavenUrl}");
-        }
-        catch (Exception ex)
-        {
-            return new CheckResult("RavenDB", false,
-                $"Connection failed: {ex.Message}",
-                Fix: config.Storage.Mode == "external"
-                    ? $"Start RavenDB or switch to embedded:\n  eidet config set storage.mode embedded"
-                    : null);
-        }
-    }
-
-    private static async Task<CheckResult> CheckDatabaseAsync(EidetConfig config)
-    {
-        try
-        {
-            using var store = DocumentStoreFactory.Create(config.Storage.RavenUrl, config.Storage.DatabaseName);
-            var ravenStore = new RavenEidetStore(store);
-            var info = await ravenStore.GetDatabaseInfoAsync();
-
-            if (info == null)
-                return new CheckResult("Database", false,
-                    $"\"{config.Storage.DatabaseName}\" not found",
-                    Fix: "Create it with: eidet setup");
-
-            return new CheckResult("Database", true,
-                $"\"{info.Name}\" ({info.DocumentCount} documents)");
-        }
-        catch (Exception ex)
-        {
-            return new CheckResult("Database", false, ex.Message);
-        }
-    }
-
-    private static async Task<CheckResult> CheckIndexAsync(EidetConfig config)
-    {
-        try
-        {
-            using var store = DocumentStoreFactory.Create(config.Storage.RavenUrl, config.Storage.DatabaseName);
-            var ravenStore = new RavenEidetStore(store);
-            var info = await ravenStore.GetDatabaseInfoAsync();
-
-            if (info?.IndexExists == true)
-                return new CheckResult("Index", true, "Memories/Search deployed");
-
-            return new CheckResult("Index", false,
-                "Memories/Search not found",
-                Fix: "Deploy indexes with: eidet setup");
-        }
-        catch (Exception ex)
-        {
-            return new CheckResult("Index", false, ex.Message);
-        }
     }
 
     private static async Task<CheckResult> CheckOllamaAsync(EidetConfig config)
@@ -176,9 +140,7 @@ public sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
                 check.Details);
 
             if (check.Fix != null)
-            {
                 table.AddRow("", "", $"[dim]Fix: {check.Fix.EscapeMarkup()}[/]");
-            }
         }
 
         AnsiConsole.WriteLine();
@@ -194,28 +156,16 @@ public sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
 
     private static void RenderJson(List<CheckResult> checks)
     {
-        var results = checks.Select(c => new
-        {
-            c.Name,
-            c.Passed,
-            c.Optional,
-            c.Details,
-            c.Fix,
-        });
-
+        var results = checks.Select(c => new { c.Name, c.Passed, c.Optional, c.Details, c.Fix });
         var json = System.Text.Json.JsonSerializer.Serialize(new
         {
             healthy = checks.All(c => c.Passed || c.Optional),
             checks = results,
         }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-
         Console.WriteLine(json);
     }
 
     private record CheckResult(
-        string Name,
-        bool Passed,
-        string Details,
-        bool Optional = false,
-        string? Fix = null);
+        string Name, bool Passed, string Details,
+        bool Optional = false, string? Fix = null);
 }

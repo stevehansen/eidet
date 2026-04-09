@@ -38,7 +38,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
         {
             var json = System.Text.Json.JsonSerializer.Serialize(new
             {
-                version = "0.1.0",
+                version = Eidet.Core.EidetVersion.Current,
                 storage = new
                 {
                     mode = config.Storage.Mode,
@@ -59,7 +59,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
         else
         {
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[bold]Eidet[/] v0.1.0");
+            AnsiConsole.MarkupLine($"[bold]Eidet[/] v{Eidet.Core.EidetVersion.Current}");
             AnsiConsole.MarkupLine($"  Storage:    {config.Storage.Mode} RavenDB at [link]{config.Storage.RavenUrl}[/]");
             AnsiConsole.MarkupLine($"  Database:   {config.Storage.DatabaseName}" +
                 (docCount.HasValue ? $" ({docCount} documents)" : " [dim](unreachable)[/]"));

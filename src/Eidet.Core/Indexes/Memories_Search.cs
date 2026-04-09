@@ -6,6 +6,8 @@ namespace Eidet.Core.Indexes;
 
 public class Memories_Search : AbstractIndexCreationTask<MemoryEntry, Memories_Search.Result>
 {
+    public const string IndexName_ = "Memories/Search";
+
     public class Result
     {
         public string Content { get; set; } = "";

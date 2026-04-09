@@ -28,33 +28,33 @@ public static partial class SecretScanner
         return GateResult.Pass();
     }
 
-    [GeneratedRegex(@"AKIA[0-9A-Z]{16}", RegexOptions.Compiled)]
+    [GeneratedRegex(@"AKIA[0-9A-Z]{16}")]
     private static partial Regex AwsKeyRegex();
 
-    [GeneratedRegex(@"\b(sk-[a-zA-Z0-9]{20,}|sk_[a-zA-Z0-9]{20,})", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\b(sk-[a-zA-Z0-9]{20,}|sk_[a-zA-Z0-9]{20,})")]
     private static partial Regex ApiSecretKeyRegex();
 
-    [GeneratedRegex(@"\b(ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|ghs_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{82})", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\b(ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|ghs_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{82})")]
     private static partial Regex GitHubTokenRegex();
 
-    [GeneratedRegex(@"\bBearer\s+[a-zA-Z0-9\-_\.]{40,}", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\bBearer\s+[a-zA-Z0-9\-_\.]{40,}", RegexOptions.IgnoreCase)]
     private static partial Regex BearerTokenRegex();
 
-    [GeneratedRegex(@"\beyJ[a-zA-Z0-9\-_]{20,}\.[a-zA-Z0-9\-_]{20,}\.", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\beyJ[a-zA-Z0-9\-_]{20,}\.[a-zA-Z0-9\-_]{20,}\.")]
     private static partial Regex JwtTokenRegex();
 
-    [GeneratedRegex(@"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----", RegexOptions.Compiled)]
+    [GeneratedRegex(@"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----")]
     private static partial Regex PrivateKeyRegex();
 
-    [GeneratedRegex(@"(Password|Pwd)\s*=\s*[^;\s]{3,}", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(Password|Pwd)\s*=\s*[^;\s]{3,}", RegexOptions.IgnoreCase)]
     private static partial Regex ConnectionPasswordRegex();
 
-    [GeneratedRegex(@"\b(API_KEY|SECRET_KEY|ACCESS_TOKEN|AUTH_TOKEN|PRIVATE_KEY|CLIENT_SECRET)\s*[=:]\s*\S{8,}", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(API_KEY|SECRET_KEY|ACCESS_TOKEN|AUTH_TOKEN|PRIVATE_KEY|CLIENT_SECRET)\s*[=:]\s*\S{8,}", RegexOptions.IgnoreCase)]
     private static partial Regex SecretEnvVarRegex();
 
-    [GeneratedRegex(@"\b[a-zA-Z0-9/+]{40,}==", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\b[a-zA-Z0-9/+]{40,}==")]
     private static partial Regex Base64KeyRegex();
 
-    [GeneratedRegex(@"\bnpm_[a-zA-Z0-9]{36}", RegexOptions.Compiled)]
+    [GeneratedRegex(@"\bnpm_[a-zA-Z0-9]{36}")]
     private static partial Regex NpmTokenRegex();
 }

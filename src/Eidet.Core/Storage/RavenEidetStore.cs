@@ -2,6 +2,7 @@ using Eidet.Core.Domain;
 using Eidet.Core.Indexes;
 using Raven.Client.Documents;
 using Raven.Client.Documents.Indexes;
+using Raven.Client.Documents.Linq;
 using Raven.Client.Documents.Session;
 using Raven.Client.ServerWide;
 using Raven.Client.ServerWide.Operations;
@@ -10,6 +11,7 @@ namespace Eidet.Core.Storage;
 
 public class RavenEidetStore : IEidetStore
 {
+    private const string EmbeddingsTaskId = "memory-embeddings";
     private readonly IDocumentStore _store;
 
     public RavenEidetStore(IDocumentStore store)
@@ -23,41 +25,145 @@ public class RavenEidetStore : IEidetStore
         return await session.LoadAsync<MemoryEntry>(id, ct);
     }
 
-    public async Task StoreAsync(MemoryEntry entry, CancellationToken ct = default)
+    public async Task<string> StoreAsync(MemoryEntry entry, CancellationToken ct = default)
+    {
+        if (entry.CreatedAt == default)
+            entry.CreatedAt = DateTime.UtcNow;
+
+        using var session = _store.OpenAsyncSession();
+        await session.StoreAsync(entry, entry.Id, ct);
+        await session.SaveChangesAsync(ct);
+        return entry.Id;
+    }
+
+    public async Task UpdateAsync(MemoryEntry entry, CancellationToken ct = default)
     {
         using var session = _store.OpenAsyncSession();
         await session.StoreAsync(entry, entry.Id, ct);
         await session.SaveChangesAsync(ct);
     }
 
-    public async Task<List<MemoryEntry>> SearchAsync(string repoId, string query, int limit = 20, CancellationToken ct = default)
+    public async Task<bool> ForgetAsync(string id, CancellationToken ct = default)
     {
         using var session = _store.OpenAsyncSession();
-        var results = await session.Query<MemoryEntry, Memories_Search>()
-            .Where(e => e.RepoId == repoId)
-            .Search(e => e.Content, query)
-            .Take(limit)
-            .ToListAsync(ct);
-        return results;
+        var entry = await session.LoadAsync<MemoryEntry>(id, ct);
+        if (entry is null) return false;
+
+        entry.Validity.ValidUntil = DateTime.UtcNow;
+        await session.SaveChangesAsync(ct);
+        return true;
     }
 
-    public async Task<MemoryStats> GetStatsAsync(string repoId, CancellationToken ct = default)
+    public async Task<List<MemoryEntry>> FullTextSearchAsync(
+        IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
     {
         using var session = _store.OpenAsyncSession();
+        var documentQuery = session.Advanced
+            .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
+            .Search("Content", query.Text)
+            .WhereIn("RepoId", repoIds);
 
-        var counts = await session.Query<MemoryEntry>()
-            .Where(e => e.RepoId == repoId)
-            .GroupBy(e => e.Type)
-            .Select(g => new { Type = g.Key, Count = g.Count() })
+        documentQuery = ApplyFilters(documentQuery, query);
+        return await documentQuery.Take(query.Limit).ToListAsync(ct);
+    }
+
+    public async Task<List<MemoryEntry>> VectorSearchAsync(
+        IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
+    {
+        try
+        {
+            using var session = _store.OpenAsyncSession();
+            var documentQuery = session.Advanced
+                .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
+                .WhereIn("RepoId", repoIds)
+                .VectorSearch(
+                    field => field.WithField("ContentVector"),
+                    searchTerm => searchTerm.ByText(query.Text, EmbeddingsTaskId),
+                    minimumSimilarity: 0.70f,
+                    numberOfCandidates: 30);
+
+            documentQuery = ApplyFilters(documentQuery, query);
+            return await documentQuery.Take(query.Limit).ToListAsync(ct);
+        }
+        catch
+        {
+            return []; // Vector search may fail if embeddings not configured
+        }
+    }
+
+    public async Task<MemoryEntry?> FindDuplicateAsync(
+        string repoId, string content, float threshold, CancellationToken ct = default)
+    {
+        // Strategy 1: Vector similarity
+        try
+        {
+            using var session = _store.OpenAsyncSession();
+            var results = await session.Advanced
+                .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
+                .WhereEquals("RepoId", repoId)
+                .WhereEquals("ValidUntil", (DateTime?)null)
+                .VectorSearch(
+                    field => field.WithField("ContentVector"),
+                    searchTerm => searchTerm.ByText(content, EmbeddingsTaskId),
+                    minimumSimilarity: threshold,
+                    numberOfCandidates: 10)
+                .Take(1)
+                .ToListAsync(ct);
+
+            if (results.Count > 0)
+                return results[0];
+        }
+        catch { }
+
+        // Strategy 2: Full-text fallback with exact content match
+        try
+        {
+            var searchSnippet = content.Length > 80 ? content[..80] : content;
+            using var session = _store.OpenAsyncSession();
+            var candidates = await session.Advanced
+                .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
+                .WhereEquals("RepoId", repoId)
+                .WhereEquals("ValidUntil", (DateTime?)null)
+                .Search("Content", searchSnippet)
+                .Take(10)
+                .ToListAsync(ct);
+
+            return candidates.FirstOrDefault(c =>
+                string.Equals(c.Content.Trim(), content.Trim(), StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public async Task<Dictionary<MemoryType, int>> GetCountsByTypeAsync(
+        string repoId, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+        var counts = await session
+            .Query<Memories_CountByType.Result, Memories_CountByType>()
+            .Where(r => r.RepoId == repoId)
             .ToListAsync(ct);
 
-        var byType = counts.ToDictionary(c => c.Type, c => c.Count);
-        return new MemoryStats(
-            TotalCount: byType.Values.Sum(),
-            ObservationCount: byType.GetValueOrDefault(MemoryType.Observation),
-            InsightCount: byType.GetValueOrDefault(MemoryType.Insight),
-            ProcedureCount: byType.GetValueOrDefault(MemoryType.Procedure),
-            HeuristicCount: byType.GetValueOrDefault(MemoryType.Heuristic));
+        return counts.ToDictionary(c => c.Type, c => c.Count);
+    }
+
+    public async Task<List<MemoryEntry>> GetTopScoredAsync(
+        string repoId, MemoryType[] types, int limit, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+        var results = await session.Advanced
+            .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
+            .WhereEquals("RepoId", repoId)
+            .WhereEquals("ValidUntil", (DateTime?)null)
+            .WhereIn("Type", types.Cast<object>())
+            .OrderByDescending("Importance")
+            .Take(limit)
+            .ToListAsync(ct);
+
+        // Filter to IsLatest client-side (not in the search index)
+        return results.Where(e => e.IsLatest).ToList();
     }
 
     public async Task<bool> TestConnectionAsync(CancellationToken ct = default)
@@ -89,12 +195,12 @@ public class RavenEidetStore : IEidetStore
             try
             {
                 var buildNumber = await _store.Maintenance.Server.SendAsync(
-                    new Raven.Client.ServerWide.Operations.GetBuildNumberOperation(), ct);
+                    new GetBuildNumberOperation(), ct);
                 serverVersion = buildNumber.FullVersion;
             }
             catch { }
 
-            var indexExists = stats.Indexes.Any(i => i.Name == new Memories_Search().IndexName);
+            var indexExists = stats.Indexes.Any(i => i.Name == Memories_Search.IndexName_);
 
             return new DatabaseInfo(
                 Name: _store.Database,
@@ -112,5 +218,20 @@ public class RavenEidetStore : IEidetStore
     {
         await IndexCreation.CreateIndexesAsync(
             typeof(Memories_Search).Assembly, _store, token: ct);
+    }
+
+    private static IAsyncDocumentQuery<MemoryEntry> ApplyFilters(
+        IAsyncDocumentQuery<MemoryEntry> documentQuery, MemoryQuery query)
+    {
+        if (query.Type.HasValue)
+            documentQuery = documentQuery.WhereEquals("Type", query.Type.Value);
+
+        foreach (var tag in query.Tags)
+            documentQuery = documentQuery.WhereIn("Tags", new[] { tag });
+
+        if (!query.IncludeExpired)
+            documentQuery = documentQuery.WhereEquals("ValidUntil", (DateTime?)null);
+
+        return documentQuery;
     }
 }

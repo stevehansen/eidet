@@ -19,6 +19,31 @@ All design decisions are documented in `docs/specs/`:
 | [SyncSpec.md](docs/specs/SyncSpec.md) | *(Future — not MVP)* Remote sync, append-only events (CRDT-like), E2E encryption, team sharing, 3 backend options (SaaS/self-hosted/orchestrator-only), Bitwarden model |
 | [IntegrationSpec.md](docs/specs/IntegrationSpec.md) | Claude Code, Claude Desktop, Cursor, TerminalHost, Docker/devcontainers, CI/CD, web UI, client SDKs |
 
+## Implementation Status
+
+### Phase 1 — Done
+- Solution structure (Eidet.Core, Eidet.Service, test projects)
+- Domain model: MemoryEntry, 4 types, Validity, MemoryLink, MemoryLayer, EidetPack
+- RavenDB Memories/Search index (vector + full-text + Corax, Result projection)
+- Write gates: SecretScanner (10 patterns), SignalGate (17 low-signal phrases, self-talk detection), WriteGate
+- Entity extraction: 9 regex patterns, validation, heuristic one-liner generation
+- Configuration model with StorageMode enum
+- CLI: `eidet doctor` (rich TUI + JSON), `eidet status`
+- 71 unit tests
+
+### Phase 2 — Done
+- **MemoryService**: Store (gates + entities + ID + duplicate detection + supersession), Recall (parallel full-text + vector, scoring, type diversity budgets, staleness warnings, LRU cache), Context (L0 identity + L1 top-K with type budgets), Forget (soft-delete + audit trail), Feedback (echo/fizzle), History (version chain)
+- **REST API**: HttpListener-based on localhost:19380 — `/api/health`, `/api/eidet/context`, `/api/eidet/search`, `/api/eidet` (store), `/api/eidet/{id}` (get/delete), `/api/eidet/feedback`, `/api/eidet/history/{id}`, `/api/eidet/stats`
+- **Code review fixes**: Single DocumentStore in doctor, StorageMode enum, shared version constant, EnvVar regex precision, removed redundant RegexOptions.Compiled, index name constant
+
+### Phase 3 — Next
+- `eidet setup` interactive wizard (TUI)
+- MCP server (stdio bridge + streamable HTTP)
+- `eidet serve` as system service (Windows Service/launchd/systemd)
+- Intake system (CLAUDE.md, README, deps)
+- Consolidation pipeline
+- Ollama enrichment
+
 ## MVP Scope
 
 Local-only. No team/sync/remote yet.
@@ -34,10 +59,10 @@ Local-only. No team/sync/remote yet.
 
 ## Tech Stack
 
-- **.NET 8** (or latest LTS)
-- **RavenDB** — hybrid search (vector + full-text + metadata in one round-trip), built-in embeddings
-- **Spectre.Console** — rich TUI
-- **Microsoft.Extensions.Hosting** — service hosting, DI, configuration
+- **.NET 10** (latest SDK)
+- **RavenDB 7.x** — hybrid search (vector + full-text + metadata in one round-trip), built-in embeddings (bge-micro-v2)
+- **Spectre.Console 0.55** — rich TUI + CLI commands
+- **HttpListener** — lightweight REST API (no ASP.NET dependency)
 - Minimal dependencies. See ServiceSpec.md "Dependency Philosophy" section.
 
 ## Project Structure
@@ -45,11 +70,19 @@ Local-only. No team/sync/remote yet.
 ```
 eidet/
 ├── src/
-│   ├── Eidet.Core/               # Core library (domain, services, indexes)
-│   ├── Eidet.Service/            # System service (MCP, REST, scheduler, TUI)
+│   ├── Eidet.Core/               # Core library
+│   │   ├── Configuration/        # EidetConfig, ConfigManager, StorageMode
+│   │   ├── Domain/               # MemoryEntry, MemoryType, Validity, layers, links, packs
+│   │   ├── Gates/                # SecretScanner, SignalGate, WriteGate
+│   │   ├── Indexes/              # Memories_Search (hybrid vector + full-text)
+│   │   ├── Services/             # MemoryService, EntityExtractor, StoreResult
+│   │   └── Storage/              # IEidetStore, RavenEidetStore, DocumentStoreFactory
+│   ├── Eidet.Service/            # CLI + REST API
+│   │   ├── Api/                  # EidetApiServer (HttpListener)
+│   │   └── Commands/             # serve, doctor, status
 │   └── Eidet.Sync/              # Sync adapters (future)
 ├── tests/
-│   ├── Eidet.Core.Tests/
+│   ├── Eidet.Core.Tests/        # 71 tests
 │   └── Eidet.Service.Tests/
 └── docs/
     └── specs/
@@ -64,6 +97,31 @@ eidet/
 - **Docker-like layers**: Local (rw) + Shared (ro) + Base (ro). Writes always local.
 - **Secret scanning gate**: Runs locally before ANY storage. Cannot be disabled.
 - **< 600 token wake-up**: L0 identity + L1 top-20 dense-packed context.
+- **HttpListener over ASP.NET**: Lightweight, zero extra dependencies, matches TerminalHost approach.
+- **Cross-checked with TerminalHost.Memory**: Domain model, indexes, write gates, entity extraction all verified against the reference implementation.
+
+## API Quick Reference
+
+```bash
+# Health check
+curl http://localhost:19380/api/health
+
+# Get L0+L1 context for a repo
+curl "http://localhost:19380/api/eidet/context?repo=P%3A%5CEidet"
+
+# Search memories
+curl "http://localhost:19380/api/eidet/search?repo=P%3A%5CEidet&q=RavenDB&limit=10"
+
+# Store a memory
+curl -X POST http://localhost:19380/api/eidet \
+  -H "Content-Type: application/json" \
+  -d '{"repo":"P:\\Eidet","content":"...","type":"observation"}'
+
+# Feedback (echo/fizzle)
+curl -X POST http://localhost:19380/api/eidet/feedback \
+  -H "Content-Type: application/json" \
+  -d '{"memoryId":"memories/P--Eidet/insight/abc123","wasUsed":true}'
+```
 
 ## Links
 
