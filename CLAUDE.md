@@ -29,7 +29,7 @@ All design decisions are documented in `docs/specs/`:
 - Entity extraction: 9 regex patterns, validation, heuristic one-liner generation
 - Configuration model with StorageMode enum
 - CLI: `eidet doctor` (rich TUI + JSON), `eidet status`
-- 71 unit tests
+- Unit tests (expanded to 133 in Phase 4.5)
 
 ### Phase 2 — Done
 - **MemoryService**: Store (gates + entities + ID + duplicate detection + supersession), Recall (parallel full-text + vector, scoring, type diversity budgets, staleness warnings, LRU cache), Context (L0 identity + L1 top-K with type budgets), Forget (soft-delete + audit trail), Feedback (echo/fizzle), History (version chain)
@@ -49,6 +49,11 @@ All design decisions are documented in `docs/specs/`:
 - **MaintenanceService**: 6-stage pipeline — TTL expiry, observation retention, dedup sweep (Jaccard 0.85), importance decay, orphan cleanup, auto-consolidation.
 - **ExportService**: Markdown export, .eidet pack export/import with session field stripping.
 - **REST API expanded**: /api/eidet/intake, /api/eidet/consolidate, /api/maintenance, /api/eidet/export
+
+### Phase 4.5 — Polish (Done)
+- **Test coverage**: 77 → 133 tests. Added tests for IntakeService (SplitByHeadings), ConsolidationService (GroupByTagOverlap, transitive merge, case-insensitive), MaintenanceService (Jaccard word similarity), FadeMem decay math (type hierarchy, confidence adjustment, floor), MCP tool definitions (all 13, schemas, required fields), StringUtils.
+- **Shared StringUtils**: Extracted duplicated `Truncate` helper from ExportService and McpServer into `Eidet.Core.StringUtils`.
+- **InternalsVisibleTo**: Eidet.Core exposes internals to Eidet.Core.Tests for testing static/internal helpers.
 
 ### Phase 5 — Next
 - MCP streamable HTTP transport (for network clients)
@@ -88,6 +93,7 @@ eidet/
 │   │   ├── Gates/                # SecretScanner, SignalGate, WriteGate
 │   │   ├── Indexes/              # Memories_Search, Memories_CountByType
 │   │   ├── Services/             # MemoryService, EntityExtractor, StoreResult
+│   │   ├── StringUtils.cs        # Shared string helpers (Truncate)
 │   │   └── Storage/              # IEidetStore, RavenEidetStore, DatabaseProvisioner
 │   ├── Eidet.Service/            # CLI + REST API
 │   │   ├── Api/                  # EidetApiServer (HttpListener)

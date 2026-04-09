@@ -435,5 +435,5 @@ public class McpServer
     }
 
     private static string Truncate(string s, int maxLen) =>
-        s.Length <= maxLen ? s : s[..(maxLen - 3)] + "...";
+        Core.StringUtils.Truncate(s, maxLen);
 }

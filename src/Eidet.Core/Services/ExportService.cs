@@ -122,5 +122,5 @@ public class ExportService
     }
 
     private static string Truncate(string s, int maxLen) =>
-        s.Length <= maxLen ? s : s[..(maxLen - 3)] + "...";
+        StringUtils.Truncate(s, maxLen);
 }
