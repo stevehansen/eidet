@@ -36,13 +36,19 @@ All design decisions are documented in `docs/specs/`:
 - **REST API**: HttpListener-based on localhost:19380 — `/api/health`, `/api/eidet/context`, `/api/eidet/search`, `/api/eidet` (store), `/api/eidet/{id}` (get/delete), `/api/eidet/feedback`, `/api/eidet/history/{id}`, `/api/eidet/stats`
 - **Code review fixes**: Single DocumentStore in doctor, StorageMode enum, shared version constant, EnvVar regex precision, removed redundant RegexOptions.Compiled, index name constant
 
-### Phase 3 — Next
-- `eidet setup` interactive wizard (TUI)
-- MCP server (stdio bridge + streamable HTTP)
+### Phase 3 — Done
+- **`eidet setup`**: Interactive TUI wizard — detects RavenDB, creates database, deploys indexes, configures bge-micro-v2 embeddings, detects Ollama, saves config. Non-interactive mode with `--non-interactive`.
+- **`eidet mcp`**: MCP server over stdio (JSON-RPC). 6 tools: `eidet_store`, `eidet_recall`, `eidet_context`, `eidet_forget`, `eidet_feedback`, `eidet_history`. Direct MemoryService integration (no HTTP hop).
+- **DatabaseProvisioner**: EnsureDatabaseExists, DeployIndexes, EnsureEmbeddingsConfigured (AI connection string + embeddings generation task).
+- **SecretScanner**: Added Azure storage, GCP service account, Slack token patterns (10→13).
+
+### Phase 4 — Next
+- MCP streamable HTTP transport (for network clients)
 - `eidet serve` as system service (Windows Service/launchd/systemd)
 - Intake system (CLAUDE.md, README, deps)
 - Consolidation pipeline
 - Ollama enrichment
+- Remaining 7 MCP tools (intake, link, consolidate, maintenance, export, pack_export, pack_import)
 
 ## MVP Scope
 
@@ -74,12 +80,13 @@ eidet/
 │   │   ├── Configuration/        # EidetConfig, ConfigManager, StorageMode
 │   │   ├── Domain/               # MemoryEntry, MemoryType, Validity, layers, links, packs
 │   │   ├── Gates/                # SecretScanner, SignalGate, WriteGate
-│   │   ├── Indexes/              # Memories_Search (hybrid vector + full-text)
+│   │   ├── Indexes/              # Memories_Search, Memories_CountByType
 │   │   ├── Services/             # MemoryService, EntityExtractor, StoreResult
-│   │   └── Storage/              # IEidetStore, RavenEidetStore, DocumentStoreFactory
+│   │   └── Storage/              # IEidetStore, RavenEidetStore, DatabaseProvisioner
 │   ├── Eidet.Service/            # CLI + REST API
 │   │   ├── Api/                  # EidetApiServer (HttpListener)
-│   │   └── Commands/             # serve, doctor, status
+│   │   ├── Commands/             # setup, mcp, serve, doctor, status
+│   │   └── Mcp/                  # McpServer, McpModels, McpToolDefinitions
 │   └── Eidet.Sync/              # Sync adapters (future)
 ├── tests/
 │   ├── Eidet.Core.Tests/        # 71 tests

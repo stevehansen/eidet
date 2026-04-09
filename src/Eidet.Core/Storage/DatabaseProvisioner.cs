@@ -1,0 +1,105 @@
+using Eidet.Core.Indexes;
+using Raven.Client.Documents;
+using Raven.Client.Documents.Indexes;
+using Raven.Client.Documents.Indexes.Vector;
+using Raven.Client.Documents.Operations;
+using Raven.Client.Documents.Operations.ConnectionStrings;
+using Raven.Client.Documents.Operations.AI;
+using Raven.Client.Exceptions;
+using Raven.Client.Exceptions.Database;
+using Raven.Client.ServerWide;
+using Raven.Client.ServerWide.Operations;
+
+namespace Eidet.Core.Storage;
+
+public static class DatabaseProvisioner
+{
+    public const string ConnectionStringName = "LocalEmbeddings";
+    public const string EmbeddingsTaskId = "memory-embeddings";
+
+    public static bool DatabaseExists(IDocumentStore store)
+    {
+        try
+        {
+            store.Maintenance.ForDatabase(store.Database).Send(new GetStatisticsOperation());
+            return true;
+        }
+        catch (DatabaseDoesNotExistException)
+        {
+            return false;
+        }
+    }
+
+    public static void EnsureDatabaseExists(IDocumentStore store)
+    {
+        if (!DatabaseExists(store))
+            store.Maintenance.Server.Send(new CreateDatabaseOperation(new DatabaseRecord(store.Database)));
+    }
+
+    public static void DeployIndexes(IDocumentStore store)
+    {
+        IndexCreation.CreateIndexes(typeof(Memories_Search).Assembly, store);
+    }
+
+    public static string? EnsureEmbeddingsConfigured(IDocumentStore store)
+    {
+        // 1. Create AI connection string for the embedded bge-micro-v2 model
+        try
+        {
+            var connectionString = new AiConnectionString
+            {
+                Name = ConnectionStringName,
+                EmbeddedSettings = new EmbeddedSettings()
+            };
+
+            store.Maintenance.Send(
+                new PutConnectionStringOperation<AiConnectionString>(connectionString));
+        }
+        catch
+        {
+            // Connection string may already exist
+        }
+
+        // 2. Create embeddings generation task
+        try
+        {
+            var taskConfig = new EmbeddingsGenerationConfiguration
+            {
+                Name = "MemoryEntries Content Embeddings",
+                Identifier = EmbeddingsTaskId,
+                ConnectionStringName = ConnectionStringName,
+                Collection = "MemoryEntries",
+                EmbeddingsPathConfigurations =
+                [
+                    new EmbeddingPathConfiguration
+                    {
+                        Path = "Content",
+                        ChunkingOptions = new ChunkingOptions
+                        {
+                            ChunkingMethod = ChunkingMethod.PlainTextSplitParagraphs,
+                            MaxTokensPerChunk = 512,
+                        }
+                    }
+                ],
+                Quantization = VectorEmbeddingType.Single,
+                ChunkingOptionsForQuerying = new ChunkingOptions
+                {
+                    ChunkingMethod = ChunkingMethod.PlainTextSplitParagraphs,
+                    MaxTokensPerChunk = 512,
+                },
+            };
+
+            store.Maintenance.Send(new AddEmbeddingsGenerationOperation(taskConfig));
+            return null;
+        }
+        catch (Exception ex) when (ex.Message.Contains("already", StringComparison.OrdinalIgnoreCase)
+                                   || ex.InnerException?.Message.Contains("already", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return null; // Already exists
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
+    }
+}

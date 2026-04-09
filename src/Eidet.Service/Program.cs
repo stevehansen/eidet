@@ -9,6 +9,12 @@ app.Configure(config =>
     config.SetApplicationName("eidet");
     config.SetApplicationVersion(EidetVersion.Current);
 
+    config.AddCommand<SetupCommand>("setup")
+        .WithDescription("First-time configuration wizard");
+
+    config.AddCommand<McpCommand>("mcp")
+        .WithDescription("Start MCP server (stdio transport for AI clients)");
+
     config.AddCommand<ServeCommand>("serve")
         .WithDescription("Start the Eidet REST API service");
 
