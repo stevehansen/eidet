@@ -16,6 +16,9 @@ public static partial class SecretScanner
         (SecretEnvVarRegex(), "secret environment variable"),
         (Base64KeyRegex(), "base64-encoded key"),
         (NpmTokenRegex(), "npm token"),
+        (AzureStorageKeyRegex(), "Azure storage key"),
+        (GcpServiceAccountRegex(), "GCP service account key"),
+        (SlackTokenRegex(), "Slack token"),
     ];
 
     public static GateResult Scan(string content)
@@ -57,4 +60,13 @@ public static partial class SecretScanner
 
     [GeneratedRegex(@"\bnpm_[a-zA-Z0-9]{36}")]
     private static partial Regex NpmTokenRegex();
+
+    [GeneratedRegex(@"(DefaultEndpointsProtocol|AccountKey)\s*=\s*\S+", RegexOptions.IgnoreCase)]
+    private static partial Regex AzureStorageKeyRegex();
+
+    [GeneratedRegex(@"""private_key""\s*:\s*""-----BEGIN")]
+    private static partial Regex GcpServiceAccountRegex();
+
+    [GeneratedRegex(@"\b(xoxb-|xoxp-|xoxs-|xapp-)[a-zA-Z0-9\-]+")]
+    private static partial Regex SlackTokenRegex();
 }

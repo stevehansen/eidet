@@ -23,6 +23,10 @@ public class SecretScannerTests
     [InlineData("API_KEY=sk_live_abcdef12345678", "secret environment variable")]
     [InlineData("CLIENT_SECRET: verylongsecretvalue123", "secret environment variable")]
     [InlineData("npm_abcdefghijklmnopqrstuvwxyz0123456789", "npm token")]
+    [InlineData("DefaultEndpointsProtocol=https;AccountName=test;AccountKey=abc123", "Azure storage key")]
+    [InlineData("{\"private_key\": \"-----BEGIN RSA PRIVATE KEY", "GCP service account key")]
+    [InlineData("Bot token is xoxb-123456-abcdef", "Slack token")]
+    [InlineData("User token xoxp-999-abc-def", "Slack token")]
     public void Scan_BlocksSecrets(string content, string expectedType)
     {
         var result = SecretScanner.Scan(content);

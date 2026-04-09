@@ -2,7 +2,7 @@ namespace Eidet.Core.Domain;
 
 public class Validity
 {
-    public DateTime ValidFrom { get; set; } = DateTime.UtcNow;
+    public DateTime ValidFrom { get; set; }
     public DateTime? ValidUntil { get; set; }
 
     public bool IsValidAt(DateTime t) =>

@@ -30,6 +30,14 @@ public class ValidityTests
     }
 
     [Fact]
+    public void DefaultValidFrom_IsNotUtcNow()
+    {
+        // Verify the non-deterministic default was removed (issue #5)
+        var validity = new Validity();
+        Assert.Equal(default, validity.ValidFrom);
+    }
+
+    [Fact]
     public void IsValidAt_ChecksSpecificTime()
     {
         var validity = new Validity
