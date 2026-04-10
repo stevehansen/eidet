@@ -121,6 +121,26 @@ public class ExportService
         return imported;
     }
 
+    /// <summary>
+    /// Import a pack and auto-mount it as a Base layer.
+    /// Returns (importedCount, layer).
+    /// </summary>
+    public async Task<(int Imported, MemoryLayer Layer)> ImportPackWithLayerAsync(
+        EidetPack pack, LayerService layerService, CancellationToken ct = default)
+    {
+        var imported = await ImportPackAsync(pack, ct);
+
+        var layerId = $"bundle:{pack.Id}";
+        var layer = await layerService.MountAsync(
+            layerId,
+            $"{pack.Name} v{pack.Version}",
+            LayerType.Base,
+            applicablePackages: pack.ApplicablePackages,
+            ct: ct);
+
+        return (imported, layer);
+    }
+
     private static string Truncate(string s, int maxLen) =>
         StringUtils.Truncate(s, maxLen);
 }

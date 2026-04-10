@@ -20,9 +20,11 @@ public class McpServer
     private readonly MaintenanceService _maintenance;
     private readonly ExportService _export;
     private readonly string _repoId;
+    private readonly bool _autoIntake;
+    private bool _autoIntakeDone;
 
     public McpServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
-        MaintenanceService maintenance, ExportService export, string repoId)
+        MaintenanceService maintenance, ExportService export, string repoId, bool autoIntake = true)
     {
         _svc = svc;
         _intake = intake;
@@ -30,6 +32,7 @@ public class McpServer
         _maintenance = maintenance;
         _export = export;
         _repoId = repoId;
+        _autoIntake = autoIntake;
     }
 
     public async Task RunStdioAsync(CancellationToken ct)
@@ -217,6 +220,22 @@ public class McpServer
 
     private async Task<McpCallToolResult> ExecuteContext(JsonElement args, CancellationToken ct)
     {
+        // Auto-intake on first context call if no memories exist
+        if (_autoIntake && !_autoIntakeDone)
+        {
+            _autoIntakeDone = true;
+            try
+            {
+                var counts = await _svc.GetStoreInfoAsync(ct);
+                if (counts is { DocumentCount: 0 } || counts is null)
+                {
+                    // No memories yet — run auto-intake from the working directory
+                    await _intake.IngestAsync(_repoId, _repoId, dryRun: false, ct: ct);
+                }
+            }
+            catch { /* Non-critical — don't fail context for auto-intake issues */ }
+        }
+
         var maxTokens = GetInt(args, "max_tokens", 600);
         var context = await _svc.GetContextAsync(_repoId, maxTokens, ct);
         return McpCallToolResult.Text(context);

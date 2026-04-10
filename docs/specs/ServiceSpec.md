@@ -617,12 +617,22 @@ eidet intake /path/to/project          # Run intake
 eidet maintain                         # Trigger maintenance
 ```
 
-### Docker Commands
+### Docker & Integration Commands
 
 ```bash
-eidet docker compose-snippet           # Show docker-compose config
-eidet docker devcontainer-snippet      # Show devcontainer.json config
-eidet docker troubleshoot              # Connectivity troubleshooting guide
+eidet docker                           # Docker/devcontainer integration guide
+eidet docker --json                    # Machine-readable Docker config
+eidet instructions                     # Print memory usage instructions (stdout)
+eidet instructions --install           # Append to ~/.claude/CLAUDE.md
+eidet instructions --project           # Create in project CLAUDE.md
+```
+
+### Ollama Management
+
+```bash
+eidet ollama status                    # Show Ollama connection and models
+eidet ollama list                      # List installed models
+eidet ollama pull gemma4               # Pull a model with progress bar
 ```
 
 ### MCP Bridge
@@ -632,13 +642,16 @@ eidet mcp                          # Start stdio MCP bridge
 eidet mcp --workdir /path/to/proj  # With explicit working directory
 ```
 
-### Instructions Management
+### Environment Variables
 
-```bash
-eidet instructions install         # Add memory instructions to CLAUDE.md
-eidet instructions show            # Preview instructions
-eidet instructions remove          # Remove instructions
-```
+Environment variables override config file values (useful for containers and CI/CD):
+
+| Variable | Overrides | Example |
+|----------|-----------|---------|
+| `EIDET_API_URL` | `service.bindAddress` + `service.port` | `http://host.docker.internal:19380` |
+| `EIDET_RAVEN_URL` | `storage.ravenUrl` | `http://ravendb:8080` |
+| `EIDET_OLLAMA_URL` | `enrichment.ollamaUrl` | `http://ollama:11434` |
+| `EIDET_OLLAMA_MODEL` | `enrichment.ollamaModel` | `gemma4` |
 
 ---
 

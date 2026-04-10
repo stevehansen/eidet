@@ -46,17 +46,22 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         else
             result = await RegisterSystemdAsync(targetExe, cancellation);
 
+        // Step 3: Auto-configure MCP for Claude Code / Claude Desktop
+        var mcpResult = ConfigureMcpClients(targetExe);
+
         if (settings.Json)
         {
             var json = System.Text.Json.JsonSerializer.Serialize(new
             {
-                installed = true, exePath = targetExe, service = result
+                installed = true, exePath = targetExe, service = result, mcpConfigured = mcpResult
             });
             Console.WriteLine(json);
         }
         else
         {
             AnsiConsole.MarkupLine($"  Service: [green]{Markup.Escape(result)}[/]");
+            if (mcpResult != null)
+                AnsiConsole.MarkupLine($"  MCP:     [green]{Markup.Escape(mcpResult)}[/]");
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine("Run [bold]eidet setup[/] if this is a first-time install.");
         }
@@ -166,6 +171,106 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         return startResult.ExitCode == 0
             ? "systemd user service registered, enabled, and started"
             : $"systemd unit written to {unitPath} (start manually with: systemctl --user start eidet)";
+    }
+
+    internal static string? ConfigureMcpClients(string exePath)
+    {
+        var configured = new List<string>();
+
+        // Claude Code: ~/.claude/claude_desktop_config.json (Windows) or similar
+        var claudeCodeConfig = GetClaudeCodeMcpPath();
+        if (claudeCodeConfig != null)
+        {
+            var result = ConfigureMcpJson(claudeCodeConfig, exePath);
+            if (result) configured.Add("Claude Code");
+        }
+
+        // Claude Desktop
+        var claudeDesktopConfig = GetClaudeDesktopConfigPath();
+        if (claudeDesktopConfig != null)
+        {
+            var result = ConfigureMcpJson(claudeDesktopConfig, exePath);
+            if (result) configured.Add("Claude Desktop");
+        }
+
+        return configured.Count > 0 ? string.Join(", ", configured) : null;
+    }
+
+    private static bool ConfigureMcpJson(string configPath, string exePath)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(configPath)!;
+            Directory.CreateDirectory(dir);
+
+            System.Text.Json.Nodes.JsonObject root;
+            if (File.Exists(configPath))
+            {
+                var existing = File.ReadAllText(configPath);
+                root = System.Text.Json.Nodes.JsonNode.Parse(existing)?.AsObject()
+                    ?? new System.Text.Json.Nodes.JsonObject();
+            }
+            else
+            {
+                root = new System.Text.Json.Nodes.JsonObject();
+            }
+
+            // Ensure mcpServers key exists
+            if (!root.ContainsKey("mcpServers"))
+                root["mcpServers"] = new System.Text.Json.Nodes.JsonObject();
+
+            var servers = root["mcpServers"]!.AsObject();
+
+            // Only add if not already configured
+            if (servers.ContainsKey("eidet"))
+                return false;
+
+            servers["eidet"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["command"] = exePath,
+                ["args"] = new System.Text.Json.Nodes.JsonArray("mcp"),
+            };
+
+            var json = root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(configPath, json);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string? GetClaudeCodeMcpPath()
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var path = Path.Combine(home, ".claude", "claude_desktop_config.json");
+        // Claude Code uses ~/.claude/ directory — check if it exists
+        var claudeDir = Path.Combine(home, ".claude");
+        return Directory.Exists(claudeDir) ? path : null;
+    }
+
+    private static string? GetClaudeDesktopConfigPath()
+    {
+        string configDir;
+        if (OperatingSystem.IsWindows())
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            configDir = Path.Combine(appData, "Claude");
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            configDir = Path.Combine(home, "Library", "Application Support", "Claude");
+        }
+        else
+        {
+            return null; // No Claude Desktop on Linux
+        }
+
+        return Directory.Exists(configDir)
+            ? Path.Combine(configDir, "claude_desktop_config.json")
+            : null;
     }
 
     internal static string GetInstallDir()

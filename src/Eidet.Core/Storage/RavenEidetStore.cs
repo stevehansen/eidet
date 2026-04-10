@@ -220,6 +220,31 @@ public class RavenEidetStore : IEidetStore
             typeof(Memories_Search).Assembly, _store, token: ct);
     }
 
+    public async Task<List<string>> GetDistinctRepoIdsAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            using var session = _store.OpenAsyncSession();
+            var repoIds = await session.Advanced
+                .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
+                .SelectFields<RepoIdProjection>("RepoId")
+                .Take(1000)
+                .ToListAsync(ct);
+
+            return repoIds
+                .Select(r => r.RepoId)
+                .Where(r => !string.IsNullOrEmpty(r))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private class RepoIdProjection { public string RepoId { get; set; } = ""; }
+
     // ─── Layer operations ─────────────────────────────────────────────
 
     public async Task<string> StoreMountedLayerAsync(MemoryLayer layer, CancellationToken ct = default)

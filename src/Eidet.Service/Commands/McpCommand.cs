@@ -30,7 +30,8 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
         var exportSvc = new ExportService(eidetStore);
 
         var workDir = settings.WorkDir ?? Directory.GetCurrentDirectory();
-        var server = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc, workDir);
+        var server = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc, workDir,
+            autoIntake: config.Memory.AutoIntakeOnFirstSession);
 
         try
         {

@@ -68,14 +68,30 @@ All design decisions are documented in `docs/specs/`:
 - **InternalsVisibleTo**: Eidet.Service exposes internals to Eidet.Service.Tests.
 - **Test coverage**: 133 → 157 tests. Added tests for NullEnrichmentService (9), OllamaEnrichmentService (3), LayerService (8), InstallCommand (4).
 
-### Phase 6 — Next
-- Ollama model management (auto-pull, model suggestions)
-- Layer import from .eidet pack files (auto-mount)
-- `eidet config get/set` command
-- `eidet instructions` — generate CLAUDE.md memory instructions
-- `eidet docker` — Docker/devcontainer integration guidance
-- `eidet update` — self-update mechanism
-- Web UI for memory exploration
+### Phase 6 — Done
+- **`eidet config get/set/list`**: CLI command for reading/writing all config values via dotted path notation (e.g., `storage.ravenUrl`, `enrichment.ollamaEnabled`). Case-insensitive keys, `--json` output for `list`. Invariant culture for float parsing.
+- **`eidet instructions`**: Generate CLAUDE.md memory usage instructions. `--print` (stdout, default), `--install` (append to `~/.claude/CLAUDE.md`), `--project` (create in project root). Idempotent — uses HTML markers to replace existing sections on re-run.
+- **Ollama model management**: `OllamaService` in Core — list models, pull with streaming progress, suggest best model, check availability. `eidet ollama status/pull/list` CLI commands. `RecommendedModels` list (gemma4, gemma3, llama3.2, phi4, qwen3). Auto-enables enrichment after first pull. Spectre.Console progress bar for downloads.
+- **Layer auto-mount on pack import**: `ExportService.ImportPackWithLayerAsync` — imports pack entries and auto-mounts as Base layer via LayerService. Layer ID uses `bundle:{packId}` convention.
+- **`eidet docker`**: Docker/devcontainer integration guide. Shows devcontainer.json, Dockerfile, MCP config snippets. Detects container environment (/.dockerenv, DOTNET_RUNNING_IN_CONTAINER, /proc/1/cgroup). `--json` for programmatic use.
+- **`eidet update`**: Self-update via GitHub Releases API. `--check` (version check only), `--json`, `--force`. Platform-aware asset download (win-x64, osx-arm64, linux-x64). Binary backup/replace with rollback on failure.
+- **Test coverage**: 157 → 186 tests. Added ConfigHelper (10), InstructionsCommand (5), OllamaService (12), DockerCommand (1), UpdateCommand (1).
+
+### Phase 6.5 — Polish (Done)
+- **GetDistinctRepoIdsAsync**: New `IEidetStore` method for querying distinct RepoId values. Implemented in `RavenEidetStore` using index projection. Replaced MaintenanceScheduler placeholder — scheduler now discovers all active repos automatically.
+- **Environment variable overrides**: `ConfigManager.Load()` applies env var overrides after loading config: `EIDET_API_URL` (bind address + port), `EIDET_RAVEN_URL`, `EIDET_OLLAMA_URL`, `EIDET_OLLAMA_MODEL`. Enables container and CI/CD configuration without config files.
+- **Auto-intake on first session**: MCP `eidet_context` triggers automatic intake (CLAUDE.md, README, etc.) when no memories exist for the repo. Controlled by `memory.autoIntakeOnFirstSession` config. Only runs once per MCP session.
+- **`eidet install` auto-configures MCP clients**: Detects Claude Code (`~/.claude/`) and Claude Desktop (`%APPDATA%\Claude\`), auto-creates `claude_desktop_config.json` with Eidet MCP server entry. Idempotent — skips if already configured.
+- **Graceful shutdown**: `eidet serve` handles Ctrl+C/SIGTERM cleanly — stops scheduler, disposes enrichment, closes RavenDB store, stops HttpListener. Uses `CancellationTokenSource.CreateLinkedTokenSource`.
+- **Test coverage**: 186 → 193 tests. Added ConfigManager defaults (7), InstallCommand MCP config (1), verified existing patterns.
+
+### Phase 7 — Next
+- Web UI for memory exploration (knowledge graph, timeline, browser)
+- RavenDB Embedded mode implementation
+- `eidet serve` bind to 0.0.0.0 for network access (with auth)
+- API key authentication for programmatic access
+- VS Code extension (memory sidebar, inline annotations)
+- Client SDKs (TypeScript, Python, C#)
 
 ## MVP Scope
 
@@ -108,18 +124,18 @@ eidet/
 │   │   ├── Domain/               # MemoryEntry, MemoryType, Validity, layers, links, packs
 │   │   ├── Gates/                # SecretScanner, SignalGate, WriteGate
 │   │   ├── Indexes/              # Memories_Search, Memories_CountByType
-│   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
+│   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, OllamaService, enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
 │   │   ├── StringUtils.cs        # Shared string helpers (Truncate)
 │   │   └── Storage/              # IEidetStore, RavenEidetStore, DatabaseProvisioner
 │   ├── Eidet.Service/            # CLI + REST API + system service
 │   │   ├── Api/                  # EidetApiServer (HttpListener + MCP HTTP)
-│   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, export, intake, maintain, install, uninstall
+│   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, export, intake, maintain, install, uninstall, config, instructions, ollama, docker, update
 │   │   ├── Mcp/                  # McpServer (stdio + HTTP), McpModels, McpToolDefinitions
 │   │   └── Scheduler/            # MaintenanceScheduler (background timers)
 │   └── Eidet.Sync/              # Sync adapters (future)
 ├── tests/
-│   ├── Eidet.Core.Tests/        # 131 tests
-│   └── Eidet.Service.Tests/     # 26 tests
+│   ├── Eidet.Core.Tests/        # 149 tests
+│   └── Eidet.Service.Tests/     # 44 tests
 └── docs/
     └── specs/
 ```

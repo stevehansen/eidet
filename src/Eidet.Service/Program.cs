@@ -47,6 +47,43 @@ app.Configure(config =>
 
     config.AddCommand<UninstallCommand>("uninstall")
         .WithDescription("Uninstall Eidet system service");
+
+    config.AddCommand<InstructionsCommand>("instructions")
+        .WithDescription("Generate CLAUDE.md memory usage instructions");
+
+    config.AddCommand<DockerCommand>("docker")
+        .WithDescription("Docker/devcontainer integration guide");
+
+    config.AddCommand<UpdateCommand>("update")
+        .WithDescription("Check for and install updates");
+
+    config.AddBranch("config", cfg =>
+    {
+        cfg.SetDescription("View and modify configuration");
+
+        cfg.AddCommand<ConfigGetCommand>("get")
+            .WithDescription("Get a config value");
+
+        cfg.AddCommand<ConfigSetCommand>("set")
+            .WithDescription("Set a config value");
+
+        cfg.AddCommand<ConfigListCommand>("list")
+            .WithDescription("List all config values");
+    });
+
+    config.AddBranch("ollama", ollama =>
+    {
+        ollama.SetDescription("Manage Ollama models for enrichment");
+
+        ollama.AddCommand<OllamaStatusCommand>("status")
+            .WithDescription("Show Ollama connection and model status");
+
+        ollama.AddCommand<OllamaPullCommand>("pull")
+            .WithDescription("Pull/download an Ollama model");
+
+        ollama.AddCommand<OllamaListCommand>("list")
+            .WithDescription("List installed Ollama models");
+    });
 });
 
 return app.Run(args);

@@ -52,7 +52,7 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc, enrichment);
         var exportSvc = new ExportService(eidetStore);
         var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
-            Directory.GetCurrentDirectory());
+            Directory.GetCurrentDirectory(), autoIntake: config.Memory.AutoIntakeOnFirstSession);
         var apiServer = new EidetApiServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
             bind, port, layerSvc, mcpServer);
 
@@ -71,9 +71,18 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         scheduler.Start();
         AnsiConsole.MarkupLine($"  Scheduler: [green]Active[/] (maintenance every {config.Maintenance.IntervalHours}h, consolidation every {config.Maintenance.ConsolidationIntervalHours}h)");
 
+        // Graceful shutdown on Ctrl+C / SIGTERM
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+            AnsiConsole.MarkupLine("\n[yellow]Shutting down...[/]");
+            cts.Cancel();
+        };
+
         try
         {
-            await apiServer.RunAsync(cancellation);
+            await apiServer.RunAsync(cts.Token);
         }
         finally
         {
@@ -81,6 +90,7 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
             if (enrichment is IDisposable disposableEnrichment)
                 disposableEnrichment.Dispose();
             store.Dispose();
+            AnsiConsole.MarkupLine("[dim]Eidet stopped.[/]");
         }
 
         return 0;

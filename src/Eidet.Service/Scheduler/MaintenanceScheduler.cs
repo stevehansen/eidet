@@ -96,17 +96,9 @@ public sealed class MaintenanceScheduler : IDisposable
 
     private async Task<List<string>> GetActiveRepoIdsAsync()
     {
-        // Get repos with any memories (distinct RepoId from store)
-        // For now, use a simple approach: get counts for known repos
-        // In production, this would query distinct RepoIds from the index
         try
         {
-            var info = await _store.GetDatabaseInfoAsync();
-            if (info is null || info.DocumentCount == 0) return [];
-
-            // Return a placeholder — in the real implementation, we'd query distinct RepoIds
-            // For now the scheduler works with explicit repos via the API/MCP
-            return [];
+            return await _store.GetDistinctRepoIdsAsync();
         }
         catch
         {
