@@ -25,6 +25,7 @@ public class EidetApiServer
     private readonly ConsolidationService _consolidation;
     private readonly MaintenanceService _maintenance;
     private readonly ExportService _export;
+    private readonly QualityService? _quality;
     private readonly LayerService? _layers;
     private readonly McpServer? _mcpServer;
     private readonly AuthConfig _auth;
@@ -34,13 +35,15 @@ public class EidetApiServer
 
     public EidetApiServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
         MaintenanceService maintenance, ExportService export, string bindAddress, int port,
-        LayerService? layers = null, McpServer? mcpServer = null, AuthConfig? auth = null)
+        LayerService? layers = null, McpServer? mcpServer = null, AuthConfig? auth = null,
+        QualityService? quality = null)
     {
         _svc = svc;
         _intake = intake;
         _consolidation = consolidation;
         _maintenance = maintenance;
         _export = export;
+        _quality = quality;
         _layers = layers;
         _mcpServer = mcpServer;
         _auth = auth ?? new AuthConfig();
@@ -181,6 +184,9 @@ public class EidetApiServer
 
             else if (method == "DELETE" && path.StartsWith("/api/eidet/"))
                 await HandleForget(ctx, path["/api/eidet/".Length..], ct);
+
+            else if (method == "GET" && path == "/api/eidet/quality")
+                await HandleQuality(ctx, ct);
 
             else if (method == "GET" && path == "/api/eidet/repos")
                 await HandleGetRepos(ctx, ct);
@@ -570,6 +576,15 @@ public class EidetApiServer
         var limit = int.TryParse(ctx.Request.QueryString["limit"], out var lim) ? lim : 200;
         var graph = await _svc.GetGraphDataAsync(repo, limit, ct);
         await WriteJson(ctx, graph);
+    }
+
+    private async Task HandleQuality(HttpListenerContext ctx, CancellationToken ct)
+    {
+        if (_quality is null) { await WriteJson(ctx, new { error = "Quality service not available" }, 503); return; }
+        var repo = ctx.Request.QueryString["repo"];
+        if (string.IsNullOrEmpty(repo)) { await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400); return; }
+        var report = await _quality.AnalyzeAsync(repo, ct);
+        await WriteJson(ctx, report);
     }
 
     private static readonly Dictionary<string, string> MimeTypes = new(StringComparer.OrdinalIgnoreCase)

@@ -1,0 +1,194 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: Linux-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: Linux-nuget-
+
+      - name: Build & Test
+        run: dotnet test Eidet.slnx -c Release
+
+  build-binaries:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            artifact: eidet-win-x64.exe
+          - os: macos-latest
+            rid: osx-arm64
+            artifact: eidet-osx-arm64
+          - os: ubuntu-latest
+            rid: linux-x64
+            artifact: eidet-linux-x64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Validate version matches tag
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CODE_VERSION=$(grep -oP 'Current = "\K[^"]+' src/Eidet.Core/EidetVersion.cs)
+          if [ "$TAG_VERSION" != "$CODE_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match EidetVersion.Current ($CODE_VERSION)"
+            exit 1
+          fi
+
+      - name: Publish
+        run: >
+          dotnet publish src/Eidet.Service/Eidet.Service.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -o ./publish
+
+      - name: Rename binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.rid }}" = "win-x64" ]; then
+            mv ./publish/Eidet.Service.exe ./publish/${{ matrix.artifact }}
+          else
+            mv ./publish/Eidet.Service ./publish/${{ matrix.artifact }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ./publish/${{ matrix.artifact }}
+
+  create-release:
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            LOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          else
+            LOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          fi
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$LOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Eidet ${{ github.ref_name }}
+          body: |
+            ## Changes
+
+            ${{ steps.changelog.outputs.changelog }}
+          files: |
+            artifacts/eidet-win-x64.exe/eidet-win-x64.exe
+            artifacts/eidet-osx-arm64/eidet-osx-arm64
+            artifacts/eidet-linux-x64/eidet-linux-x64
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  publish-nuget:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Pack
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          dotnet pack sdk/dotnet/Eidet.Sdk/Eidet.Sdk.csproj -c Release -p:Version=$VERSION -o ./nupkg
+
+      - name: Push to NuGet
+        run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+  publish-npm:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish
+        working-directory: sdk/typescript
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm version $VERSION --no-git-tag-version --allow-same-version
+          npm install
+          npm run build
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-pypi:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build & Publish
+        working-directory: sdk/python
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+          pip install build twine
+          python -m build
+          twine upload dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}

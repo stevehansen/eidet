@@ -59,10 +59,11 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         var consolidationSvc = new ConsolidationService(eidetStore, enrichment);
         var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc, enrichment);
         var exportSvc = new ExportService(eidetStore);
+        var qualitySvc = new QualityService(eidetStore);
         var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
             Directory.GetCurrentDirectory(), autoIntake: config.Memory.AutoIntakeOnFirstSession);
         var apiServer = new EidetApiServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
-            bind, port, layerSvc, mcpServer, config.Auth);
+            bind, port, layerSvc, mcpServer, config.Auth, qualitySvc);
 
         if (config.Enrichment.OllamaEnabled)
         {

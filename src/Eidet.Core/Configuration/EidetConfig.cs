@@ -14,6 +14,7 @@ public class EidetConfig
     public EnrichmentConfig Enrichment { get; set; } = new();
     public AuthConfig Auth { get; set; } = new();
     public HooksConfig Hooks { get; set; } = new();
+    public BackupConfig Backup { get; set; } = new();
 }
 
 public class ServiceConfig
@@ -73,6 +74,13 @@ public class ApiKeyEntry
     public string KeyHash { get; set; } = "";
     public List<string> Scopes { get; set; } = [];
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class BackupConfig
+{
+    public string BackupDir { get; set; } = "";
+    public int RetainCount { get; set; } = 10;
+    public int AutoBackupIntervalHours { get; set; } = 0; // 0 = disabled
 }
 
 public class HooksConfig

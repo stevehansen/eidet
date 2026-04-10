@@ -1,0 +1,40 @@
+services:
+  eidet:
+    build: .
+    image: eidet/eidet:latest
+    ports:
+      - "19380:19380"
+    volumes:
+      - eidet-data:/data
+    restart: unless-stopped
+
+  # Optional: External RavenDB (instead of embedded)
+  # Start with: docker compose --profile external-raven up
+  ravendb:
+    image: ravendb/ravendb:7.2-latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ravendb-data:/opt/RavenDB/Server/RavenData
+    environment:
+      RAVEN_Setup_Mode: None
+      RAVEN_License_Eula_Accepted: "true"
+      RAVEN_Security_UnsecuredAccessAllowed: PrivateNetwork
+    profiles:
+      - external-raven
+
+  # Optional: Ollama for AI enrichment
+  # Start with: docker compose --profile enrichment up
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    profiles:
+      - enrichment
+
+volumes:
+  eidet-data:
+  ravendb-data:
+  ollama-data:

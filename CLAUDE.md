@@ -120,8 +120,13 @@ All design decisions are documented in `docs/specs/`:
 - **Config visibility**: `eidet config list` shows hook counts per event.
 - **Test coverage**: 233 → 253 tests. Added HookRunner (15): NullHookRunner, ParseCommand, HasHooks, HookEvent mapping, defaults, HookContext, HookResult.
 
-### Phase 10 — Future
-- VS Code extension (memory sidebar, inline annotations)
+### Phase 10 — Production Readiness (Done)
+- **CI/CD Pipeline**: GitHub Actions workflows — `ci.yml` (build + test on push/PR, matrix: Windows/Ubuntu/macOS, NuGet caching), `release.yml` (on `v*` tag: build self-contained binaries for win-x64/osx-arm64/linux-x64, create GitHub Release with changelog, publish NuGet/npm/PyPI SDK packages). Version validation against `EidetVersion.Current`.
+- **Docker**: `Dockerfile` (multi-stage, self-contained single-file publish on `runtime-deps:10.0`), `docker-compose.yml` (Eidet + optional RavenDB external + optional Ollama via profiles), `.dockerignore`. New env var overrides: `EIDET_STORAGE_MODE`, `EIDET_DATA_DIR`, `EIDET_AUTH_REQUIRE_NONLOCALHOST`.
+- **Memory Quality Dashboard**: `QualityService` with 8 checks (stale memories, high-fizzle, potential conflicts, orphan observations, tag concentration, type imbalance, low-confidence, missing entities). Overall score 0.0–1.0. `QualityReport` model with issues + breakdown. CLI: `eidet quality --repo ... --json`. API: `GET /api/eidet/quality?repo=...`.
+- **Backup/Restore**: `BackupService` using RavenDB Smuggler API. `.eidetbackup` format (ZIP: `backup.ravendbdump` + `manifest.json` with SHA256 checksum). CLI: `eidet backup create/restore/list/prune`. `BackupConfig`: `backupDir`, `retainCount` (default 10), `autoBackupIntervalHours`.
+- **Integration Tests**: `Eidet.Integration.Tests` project with `EidetApiFixture` (starts real API server on random port with embedded RavenDB, unique database per test class). Tests: health/status, store/recall lifecycle, context, browse, repos, quality, feedback, secret rejection. Uses `SkippableFact` for environments without RavenDB Embedded.
+- **Test coverage**: 253 → 272+ unit tests. Added QualityService (7), BackupService (11). Plus ~11 integration tests (skippable).
 
 ## MVP Scope
 
@@ -154,12 +159,12 @@ eidet/
 │   │   ├── Domain/               # MemoryEntry, MemoryType, Validity, layers, links, packs, GraphData
 │   │   ├── Gates/                # SecretScanner, SignalGate, WriteGate
 │   │   ├── Indexes/              # Memories_Search, Memories_CountByType
-│   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, OllamaService, ApiKeyService, HookRunner (IHookRunner, NullHookRunner), enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
+│   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, OllamaService, ApiKeyService, HookRunner, QualityService, BackupService, enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
 │   │   ├── StringUtils.cs        # Shared string helpers (Truncate)
 │   │   └── Storage/              # IEidetStore, RavenEidetStore, DatabaseProvisioner, DocumentStoreFactory (embedded + external)
 │   ├── Eidet.Service/            # CLI + REST API + system service
 │   │   ├── Api/                  # EidetApiServer (HttpListener + MCP HTTP + embedded Web UI)
-│   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, export, intake, maintain, install, uninstall, config, instructions, ollama, docker, update, api-key
+│   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, export, intake, maintain, quality, backup, install, uninstall, config, instructions, ollama, docker, update, api-key
 │   │   ├── Mcp/                  # McpServer (stdio + HTTP), McpModels, McpToolDefinitions
 │   │   ├── Scheduler/            # MaintenanceScheduler (background timers)
 │   │   └── wwwroot/              # Web UI SPA (index.html, app.css, app.js) — embedded resources
@@ -169,8 +174,9 @@ eidet/
 │   ├── python/                  # eidet-sdk pip package (EidetClient, httpx, type hints)
 │   └── dotnet/Eidet.Sdk/       # Eidet.Sdk NuGet package (EidetClient, record types)
 ├── tests/
-│   ├── Eidet.Core.Tests/        # 198 tests
-│   └── Eidet.Service.Tests/     # 55 tests
+│   ├── Eidet.Core.Tests/        # 217 tests
+│   ├── Eidet.Service.Tests/     # 55 tests
+│   └── Eidet.Integration.Tests/ # ~11 integration tests (skippable, needs embedded RavenDB)
 └── docs/
     └── specs/
 ```

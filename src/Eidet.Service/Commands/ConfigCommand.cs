@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Eidet.Core.Configuration;
+using Eidet.Core.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -136,6 +137,11 @@ internal static class ConfigHelper
         // Auth
         ["auth.enabled"] = (c => c.Auth.Enabled.ToString(), (c, v) => c.Auth.Enabled = bool.Parse(v)),
         ["auth.requireForNonLocalhost"] = (c => c.Auth.RequireForNonLocalhost.ToString(), (c, v) => c.Auth.RequireForNonLocalhost = bool.Parse(v)),
+
+        // Backup
+        ["backup.backupDir"] = (c => BackupService.GetBackupDir(c.Backup), (c, v) => c.Backup.BackupDir = v),
+        ["backup.retainCount"] = (c => c.Backup.RetainCount.ToString(), (c, v) => c.Backup.RetainCount = int.Parse(v)),
+        ["backup.autoBackupIntervalHours"] = (c => c.Backup.AutoBackupIntervalHours.ToString(), (c, v) => c.Backup.AutoBackupIntervalHours = int.Parse(v)),
 
         // Hooks (read-only summaries — use config file for hook definitions)
         ["hooks.preStore"] = (c => $"{c.Hooks.PreStore.Count} hook(s)", (_, _) => { }),

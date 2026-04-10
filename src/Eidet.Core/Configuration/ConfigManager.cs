@@ -66,6 +66,21 @@ public static class ConfigManager
         var ollamaModel = Environment.GetEnvironmentVariable("EIDET_OLLAMA_MODEL");
         if (!string.IsNullOrEmpty(ollamaModel))
             config.Enrichment.OllamaModel = ollamaModel;
+
+        // EIDET_STORAGE_MODE — override storage mode (embedded/external)
+        var storageMode = Environment.GetEnvironmentVariable("EIDET_STORAGE_MODE");
+        if (!string.IsNullOrEmpty(storageMode) && Enum.TryParse<StorageMode>(storageMode, true, out var mode))
+            config.Storage.Mode = mode;
+
+        // EIDET_DATA_DIR — override embedded RavenDB data directory
+        var dataDir = Environment.GetEnvironmentVariable("EIDET_DATA_DIR");
+        if (!string.IsNullOrEmpty(dataDir))
+            config.Storage.DataDir = dataDir;
+
+        // EIDET_AUTH_REQUIRE_NONLOCALHOST — override non-localhost auth guard
+        var authGuard = Environment.GetEnvironmentVariable("EIDET_AUTH_REQUIRE_NONLOCALHOST");
+        if (!string.IsNullOrEmpty(authGuard) && bool.TryParse(authGuard, out var requireAuth))
+            config.Auth.RequireForNonLocalhost = requireAuth;
     }
 
     public static void Save(EidetConfig config)

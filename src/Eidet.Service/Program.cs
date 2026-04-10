@@ -42,6 +42,9 @@ app.Configure(config =>
     config.AddCommand<MaintainCommand>("maintain")
         .WithDescription("Run maintenance pipeline");
 
+    config.AddCommand<QualityCommand>("quality")
+        .WithDescription("Analyze memory quality and detect issues");
+
     config.AddCommand<InstallCommand>("install")
         .WithDescription("Install Eidet as a system service");
 
@@ -56,6 +59,23 @@ app.Configure(config =>
 
     config.AddCommand<UpdateCommand>("update")
         .WithDescription("Check for and install updates");
+
+    config.AddBranch("backup", backup =>
+    {
+        backup.SetDescription("Backup and restore memory data");
+
+        backup.AddCommand<BackupCreateCommand>("create")
+            .WithDescription("Create a full backup");
+
+        backup.AddCommand<BackupRestoreCommand>("restore")
+            .WithDescription("Restore from a backup file");
+
+        backup.AddCommand<BackupListCommand>("list")
+            .WithDescription("List available backups");
+
+        backup.AddCommand<BackupPruneCommand>("prune")
+            .WithDescription("Delete old backups per retention policy");
+    });
 
     config.AddBranch("api-key", apiKey =>
     {

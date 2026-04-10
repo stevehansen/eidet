@@ -1,0 +1,51 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: [docs/**]
+  pull_request:
+    branches: [main]
+    paths-ignore: [docs/**]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore Eidet.slnx
+
+      - name: Build
+        run: dotnet build Eidet.slnx --no-restore -c Release
+
+      - name: Test
+        run: dotnet test Eidet.slnx --no-build -c Release --logger "trx;LogFileName=results.trx" --results-directory ./test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: ./test-results/*.trx
