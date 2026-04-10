@@ -132,6 +132,10 @@ internal static class ConfigHelper
         ["enrichment.autoOneLiner"] = (c => c.Enrichment.AutoOneLiner.ToString(), (c, v) => c.Enrichment.AutoOneLiner = bool.Parse(v)),
         ["enrichment.autoForesight"] = (c => c.Enrichment.AutoForesight.ToString(), (c, v) => c.Enrichment.AutoForesight = bool.Parse(v)),
         ["enrichment.autoConsolidation"] = (c => c.Enrichment.AutoConsolidation.ToString(), (c, v) => c.Enrichment.AutoConsolidation = bool.Parse(v)),
+
+        // Auth
+        ["auth.enabled"] = (c => c.Auth.Enabled.ToString(), (c, v) => c.Auth.Enabled = bool.Parse(v)),
+        ["auth.requireForNonLocalhost"] = (c => c.Auth.RequireForNonLocalhost.ToString(), (c, v) => c.Auth.RequireForNonLocalhost = bool.Parse(v)),
     };
 
     public static string? GetValue(EidetConfig config, string key)

@@ -85,11 +85,15 @@ All design decisions are documented in `docs/specs/`:
 - **Graceful shutdown**: `eidet serve` handles Ctrl+C/SIGTERM cleanly — stops scheduler, disposes enrichment, closes RavenDB store, stops HttpListener. Uses `CancellationTokenSource.CreateLinkedTokenSource`.
 - **Test coverage**: 186 → 193 tests. Added ConfigManager defaults (7), InstallCommand MCP config (1), verified existing patterns.
 
-### Phase 7 — Next
+### Phase 7 — In Progress
+- **RavenDB Embedded mode**: `DocumentStoreFactory.CreateEmbedded()` and `CreateFromConfig()` — starts embedded RavenDB server from `RavenDB.Embedded` NuGet, manages lifecycle. All commands now use `CreateFromConfig` (auto-selects embedded vs external). `eidet setup --embedded` provisions indexes and embeddings. `eidet doctor` tests embedded mode. Default data dir: `~/.eidet/data/raven` (Unix) or `%APPDATA%\Eidet\data\raven` (Windows).
+- **API key authentication**: `AuthConfig` with `Enabled`, `RequireForNonLocalhost`, `ApiKeys` list. `ApiKeyService` in Core: SHA256 key hashing, scope validation (`read:all`, `write:observations`, `write:all`, `admin`), `admin` implies all scopes, `write:all` implies `write:observations`. `EidetApiServer` auth middleware: checks `Authorization: Bearer` header, validates key, checks scope. Health/status endpoints exempt. CORS headers (`Access-Control-Allow-Origin: *`) + OPTIONS preflight handling.
+- **`eidet api-key create/list/revoke`**: CLI commands for key management. Creating first key auto-enables auth. Revoking last key auto-disables. `--scopes` flag, `--json` output.
+- **Network binding guard**: `eidet serve` refuses to start on non-localhost without auth enabled. Configurable via `auth.requireForNonLocalhost`.
+- **Test coverage**: 193 → 220 tests. Added ApiKeyService (16), AuthConfig (3), DocumentStoreFactory (4), ConfigHelper auth keys (4).
+
+### Phase 8 — Future
 - Web UI for memory exploration (knowledge graph, timeline, browser)
-- RavenDB Embedded mode implementation
-- `eidet serve` bind to 0.0.0.0 for network access (with auth)
-- API key authentication for programmatic access
 - VS Code extension (memory sidebar, inline annotations)
 - Client SDKs (TypeScript, Python, C#)
 
@@ -124,18 +128,18 @@ eidet/
 │   │   ├── Domain/               # MemoryEntry, MemoryType, Validity, layers, links, packs
 │   │   ├── Gates/                # SecretScanner, SignalGate, WriteGate
 │   │   ├── Indexes/              # Memories_Search, Memories_CountByType
-│   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, OllamaService, enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
+│   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, OllamaService, ApiKeyService, enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
 │   │   ├── StringUtils.cs        # Shared string helpers (Truncate)
-│   │   └── Storage/              # IEidetStore, RavenEidetStore, DatabaseProvisioner
+│   │   └── Storage/              # IEidetStore, RavenEidetStore, DatabaseProvisioner, DocumentStoreFactory (embedded + external)
 │   ├── Eidet.Service/            # CLI + REST API + system service
 │   │   ├── Api/                  # EidetApiServer (HttpListener + MCP HTTP)
-│   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, export, intake, maintain, install, uninstall, config, instructions, ollama, docker, update
+│   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, export, intake, maintain, install, uninstall, config, instructions, ollama, docker, update, api-key
 │   │   ├── Mcp/                  # McpServer (stdio + HTTP), McpModels, McpToolDefinitions
 │   │   └── Scheduler/            # MaintenanceScheduler (background timers)
 │   └── Eidet.Sync/              # Sync adapters (future)
 ├── tests/
-│   ├── Eidet.Core.Tests/        # 149 tests
-│   └── Eidet.Service.Tests/     # 44 tests
+│   ├── Eidet.Core.Tests/        # 172 tests
+│   └── Eidet.Service.Tests/     # 48 tests
 └── docs/
     └── specs/
 ```
@@ -151,6 +155,8 @@ eidet/
 - **< 600 token wake-up**: L0 identity + L1 top-20 dense-packed context.
 - **HttpListener over ASP.NET**: Lightweight, zero extra dependencies, matches TerminalHost approach.
 - **Cross-checked with TerminalHost.Memory**: Domain model, indexes, write gates, entity extraction all verified against the reference implementation.
+- **API key auth with scope model**: Bearer token auth, SHA256 hashed keys in config, 4 scopes (read:all, write:observations, write:all, admin). Health/status always public. Network binding guard prevents non-localhost without auth.
+- **CORS enabled**: All responses include `Access-Control-Allow-Origin: *` for browser/Web UI access.
 
 ## API Quick Reference
 

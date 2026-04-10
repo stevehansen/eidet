@@ -32,8 +32,11 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         Raven.Client.Documents.IDocumentStore store;
         try
         {
-            store = DocumentStoreFactory.Create(config.Storage.RavenUrl, config.Storage.DatabaseName);
-            AnsiConsole.MarkupLine($"  RavenDB: [green]Connected[/] at {config.Storage.RavenUrl}");
+            store = DocumentStoreFactory.CreateFromConfig(config);
+            if (config.Storage.Mode == StorageMode.Embedded)
+                AnsiConsole.MarkupLine($"  RavenDB: [green]Embedded[/] at {config.Storage.DataDir ?? DocumentStoreFactory.GetDefaultDataDir()}");
+            else
+                AnsiConsole.MarkupLine($"  RavenDB: [green]Connected[/] at {config.Storage.RavenUrl}");
         }
         catch (Exception ex)
         {
@@ -54,12 +57,23 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
             Directory.GetCurrentDirectory(), autoIntake: config.Memory.AutoIntakeOnFirstSession);
         var apiServer = new EidetApiServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
-            bind, port, layerSvc, mcpServer);
+            bind, port, layerSvc, mcpServer, config.Auth);
 
         if (config.Enrichment.OllamaEnabled)
         {
             var ollamaHealthy = await enrichment.CheckHealthAsync(cancellation);
             AnsiConsole.MarkupLine($"  Ollama:  {(ollamaHealthy ? "[green]Connected[/]" : "[yellow]Unavailable[/]")} ({config.Enrichment.OllamaModel})");
+        }
+
+        // Auth status
+        if (config.Auth.Enabled)
+            AnsiConsole.MarkupLine($"  Auth:    [green]Enabled[/] ({config.Auth.ApiKeys.Count} key(s))");
+        else if (bind != "127.0.0.1" && bind != "localhost" && config.Auth.RequireForNonLocalhost)
+        {
+            AnsiConsole.MarkupLine("  Auth:    [red]DISABLED — binding to non-localhost without auth![/]");
+            AnsiConsole.MarkupLine("           [yellow]Create an API key: eidet api-key create \"my-key\"[/]");
+            AnsiConsole.MarkupLine("           [yellow]Or disable guard:  eidet config set auth.requireForNonLocalhost false[/]");
+            return 1;
         }
 
         AnsiConsole.MarkupLine($"  API:     [green]http://{bind}:{port}[/]");

@@ -12,6 +12,7 @@ public class EidetConfig
     public MemoryConfig Memory { get; set; } = new();
     public MaintenanceConfig Maintenance { get; set; } = new();
     public EnrichmentConfig Enrichment { get; set; } = new();
+    public AuthConfig Auth { get; set; } = new();
 }
 
 public class ServiceConfig
@@ -55,4 +56,20 @@ public class EnrichmentConfig
     public bool AutoOneLiner { get; set; } = true;
     public bool AutoForesight { get; set; } = true;
     public bool AutoConsolidation { get; set; } = true;
+}
+
+public class AuthConfig
+{
+    public bool Enabled { get; set; }
+    public bool RequireForNonLocalhost { get; set; } = true;
+    public List<ApiKeyEntry> ApiKeys { get; set; } = [];
+}
+
+public class ApiKeyEntry
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string KeyHash { get; set; } = "";
+    public List<string> Scopes { get; set; } = [];
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

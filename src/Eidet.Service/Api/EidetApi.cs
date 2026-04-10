@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
@@ -25,13 +26,14 @@ public class EidetApiServer
     private readonly ExportService _export;
     private readonly LayerService? _layers;
     private readonly McpServer? _mcpServer;
+    private readonly AuthConfig _auth;
     private readonly HttpListener _listener;
     private readonly string _baseUrl;
     private readonly DateTime _startedAt = DateTime.UtcNow;
 
     public EidetApiServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
         MaintenanceService maintenance, ExportService export, string bindAddress, int port,
-        LayerService? layers = null, McpServer? mcpServer = null)
+        LayerService? layers = null, McpServer? mcpServer = null, AuthConfig? auth = null)
     {
         _svc = svc;
         _intake = intake;
@@ -40,6 +42,7 @@ public class EidetApiServer
         _export = export;
         _layers = layers;
         _mcpServer = mcpServer;
+        _auth = auth ?? new AuthConfig();
         _baseUrl = $"http://{bindAddress}:{port}/";
         _listener = new HttpListener();
         _listener.Prefixes.Add(_baseUrl);
@@ -72,6 +75,48 @@ public class EidetApiServer
         {
             var path = ctx.Request.Url?.AbsolutePath ?? "";
             var method = ctx.Request.HttpMethod;
+
+            // CORS preflight
+            if (method == "OPTIONS")
+            {
+                AddCorsHeaders(ctx);
+                ctx.Response.StatusCode = 204;
+                ctx.Response.Close();
+                return;
+            }
+
+            AddCorsHeaders(ctx);
+
+            // Auth check
+            if (_auth.Enabled)
+            {
+                var requiredScope = ApiKeyService.GetRequiredScope(method, path);
+                if (!string.IsNullOrEmpty(requiredScope))
+                {
+                    var authHeader = ctx.Request.Headers["Authorization"];
+                    var rawKey = authHeader?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true
+                        ? authHeader["Bearer ".Length..] : null;
+
+                    if (string.IsNullOrEmpty(rawKey))
+                    {
+                        await WriteJson(ctx, new { error = "Authentication required" }, 401);
+                        return;
+                    }
+
+                    var entry = ApiKeyService.ValidateKey(_auth, rawKey);
+                    if (entry is null)
+                    {
+                        await WriteJson(ctx, new { error = "Invalid API key" }, 401);
+                        return;
+                    }
+
+                    if (!ApiKeyService.HasScope(entry, requiredScope))
+                    {
+                        await WriteJson(ctx, new { error = "Insufficient permissions", required = requiredScope }, 403);
+                        return;
+                    }
+                }
+            }
 
             if (method == "POST" && path == "/mcp")
                 await HandleMcpRequest(ctx, ct);
@@ -474,6 +519,14 @@ public class EidetApiServer
         var ok = await _layers.UnmountAsync(decoded, ct);
         if (ok) await WriteJson(ctx, new { unmounted = true });
         else await WriteJson(ctx, new { error = "Layer not found" }, 404);
+    }
+
+    private static void AddCorsHeaders(HttpListenerContext ctx)
+    {
+        ctx.Response.Headers.Add("Access-Control-Allow-Origin", "*");
+        ctx.Response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        ctx.Response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        ctx.Response.Headers.Add("Access-Control-Max-Age", "86400");
     }
 
     private static async Task WriteJson(HttpListenerContext ctx, object data, int statusCode = 200)

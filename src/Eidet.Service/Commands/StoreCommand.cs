@@ -39,7 +39,7 @@ public sealed class StoreCommand : AsyncCommand<StoreCommand.Settings>
         }
 
         var config = ConfigManager.Load();
-        var store = DocumentStoreFactory.Create(config.Storage.RavenUrl, config.Storage.DatabaseName);
+        var store = DocumentStoreFactory.CreateFromConfig(config);
         var eidetStore = new RavenEidetStore(store);
         var svc = new MemoryService(eidetStore);
 

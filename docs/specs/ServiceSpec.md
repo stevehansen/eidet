@@ -715,6 +715,58 @@ Clients find the running service via:
 - **No data exfiltration**: Nothing leaves the machine. No analytics, no telemetry, no phone-home (update checks are opt-in and metadata-only).
 - **Write gates always active**: Cannot be disabled via configuration.
 
+### API Key Authentication
+
+For programmatic access, CI/CD, or when binding to non-localhost:
+
+```bash
+# Create an API key (auto-enables auth)
+eidet api-key create "GitHub Actions" --scopes "write:observations,read:all"
+# → Shows key once: eidet_abc123...
+
+# List keys
+eidet api-key list
+
+# Revoke a key
+eidet api-key revoke <id>
+```
+
+API keys are scoped:
+- `read:all` — read any memory
+- `write:observations` — store observations and intake (CI/CD use case)
+- `write:all` — store any type, consolidate, export
+- `admin` — maintenance, config changes (implies all other scopes)
+
+Keys are stored in `config.json` as SHA256 hashes. The raw key is shown once at creation.
+
+Use in requests:
+```bash
+curl -H "Authorization: Bearer eidet_abc123..." http://localhost:19380/api/eidet/search?repo=...
+```
+
+Health (`/api/health`) and status (`/api/status`) endpoints are always public (no auth required).
+
+### Network Binding Guard
+
+When binding to a non-localhost address (e.g., `0.0.0.0` for container access), `eidet serve` requires auth to be enabled:
+
+```bash
+# This will fail:
+eidet config set service.bindAddress 0.0.0.0
+eidet serve  # Error: binding to non-localhost without auth
+
+# Fix: create a key first
+eidet api-key create "network-access"
+eidet serve  # Now works — auth enabled
+
+# Or disable the guard (not recommended):
+eidet config set auth.requireForNonLocalhost false
+```
+
+### CORS
+
+The REST API includes CORS headers (`Access-Control-Allow-Origin: *`) to support browser-based clients (Web UI). Preflight `OPTIONS` requests return 204 with appropriate headers.
+
 ---
 
 ## Logging

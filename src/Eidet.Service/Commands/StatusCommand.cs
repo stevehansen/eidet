@@ -22,7 +22,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
 
         try
         {
-            using var store = DocumentStoreFactory.Create(config.Storage.RavenUrl, config.Storage.DatabaseName);
+            using var store = DocumentStoreFactory.CreateFromConfig(config);
             var ravenStore = new RavenEidetStore(store);
             var info = await ravenStore.GetDatabaseInfoAsync();
 

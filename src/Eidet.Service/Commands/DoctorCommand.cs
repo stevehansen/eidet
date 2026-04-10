@@ -24,7 +24,18 @@ public sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
         // RavenDB connection check
         if (config.Storage.Mode == StorageMode.Embedded)
         {
-            checks.Add(new CheckResult("RavenDB", true, "Embedded mode (not yet implemented)"));
+            try
+            {
+                var dataDir = config.Storage.DataDir ?? DocumentStoreFactory.GetDefaultDataDir();
+                store = DocumentStoreFactory.CreateEmbedded(dataDir, config.Storage.DatabaseName);
+                checks.Add(new CheckResult("RavenDB", true, $"Embedded at {dataDir}"));
+            }
+            catch (Exception ex)
+            {
+                checks.Add(new CheckResult("RavenDB", false,
+                    $"Embedded startup failed: {ex.Message}",
+                    Fix: "Check disk space and permissions, or switch to external:\n  eidet config set storage.mode external"));
+            }
         }
         else
         {

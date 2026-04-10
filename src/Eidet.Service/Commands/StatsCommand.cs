@@ -20,7 +20,7 @@ public sealed class StatsCommand : AsyncCommand<StatsCommand.Settings>
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
-        var store = DocumentStoreFactory.Create(config.Storage.RavenUrl, config.Storage.DatabaseName);
+        var store = DocumentStoreFactory.CreateFromConfig(config);
         var eidetStore = new RavenEidetStore(store);
 
         var repoId = settings.Repo ?? Directory.GetCurrentDirectory();

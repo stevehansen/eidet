@@ -87,4 +87,35 @@ public class ConfigCommandTests
         ConfigHelper.SetValue(config, "enrichment.ollamaUrl", "http://custom:11434");
         Assert.Equal("http://custom:11434", config.Enrichment.OllamaUrl);
     }
+
+    [Fact]
+    public void GetValue_AuthEnabled_ReturnsDefault()
+    {
+        var config = new EidetConfig();
+        Assert.Equal("False", ConfigHelper.GetValue(config, "auth.enabled"));
+    }
+
+    [Fact]
+    public void SetValue_AuthEnabled_ParsesCorrectly()
+    {
+        var config = new EidetConfig();
+        ConfigHelper.SetValue(config, "auth.enabled", "True");
+        Assert.True(config.Auth.Enabled);
+    }
+
+    [Fact]
+    public void GetValue_AuthRequireForNonLocalhost_ReturnsDefault()
+    {
+        var config = new EidetConfig();
+        Assert.Equal("True", ConfigHelper.GetValue(config, "auth.requireForNonLocalhost"));
+    }
+
+    [Fact]
+    public void GetAllValues_IncludesAuthKeys()
+    {
+        var config = new EidetConfig();
+        var pairs = ConfigHelper.GetAllValues(config);
+        Assert.Contains(pairs, p => p.Key == "auth.enabled");
+        Assert.Contains(pairs, p => p.Key == "auth.requireForNonLocalhost");
+    }
 }

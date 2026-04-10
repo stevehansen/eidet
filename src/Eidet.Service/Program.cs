@@ -57,6 +57,20 @@ app.Configure(config =>
     config.AddCommand<UpdateCommand>("update")
         .WithDescription("Check for and install updates");
 
+    config.AddBranch("api-key", apiKey =>
+    {
+        apiKey.SetDescription("Manage API keys for authentication");
+
+        apiKey.AddCommand<ApiKeyCreateCommand>("create")
+            .WithDescription("Create a new API key");
+
+        apiKey.AddCommand<ApiKeyListCommand>("list")
+            .WithDescription("List all API keys");
+
+        apiKey.AddCommand<ApiKeyRevokeCommand>("revoke")
+            .WithDescription("Revoke an API key");
+    });
+
     config.AddBranch("config", cfg =>
     {
         cfg.SetDescription("View and modify configuration");

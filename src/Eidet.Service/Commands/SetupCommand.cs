@@ -37,7 +37,42 @@ public sealed class SetupCommand : AsyncCommand<SetupCommand.Settings>
         if (settings.Embedded)
         {
             config.Storage.Mode = StorageMode.Embedded;
-            AnsiConsole.MarkupLine("  Storage:  [yellow]Embedded mode[/] (not yet implemented)");
+            var dataDir = config.Storage.DataDir ?? DocumentStoreFactory.GetDefaultDataDir();
+            config.Storage.DataDir = dataDir;
+
+            AnsiConsole.MarkupLine($"  Storage:  [green]Embedded mode[/]");
+            AnsiConsole.MarkupLine($"  Data dir: {Markup.Escape(dataDir)}");
+
+            // Start embedded server and provision
+            Raven.Client.Documents.IDocumentStore? store = null;
+            try
+            {
+                store = DocumentStoreFactory.CreateEmbedded(dataDir, config.Storage.DatabaseName);
+
+                AnsiConsole.MarkupLine("  Deploying indexes...");
+                DatabaseProvisioner.DeployIndexes(store);
+                AnsiConsole.MarkupLine("  [green]✓[/] Indexes deployed (Memories/Search, Memories/CountByType)");
+
+                AnsiConsole.MarkupLine("  Configuring embeddings (bge-micro-v2)...");
+                var embeddingsError = DatabaseProvisioner.EnsureEmbeddingsConfigured(store);
+                if (embeddingsError == null)
+                    AnsiConsole.MarkupLine("  [green]✓[/] Embeddings configured");
+                else
+                    AnsiConsole.MarkupLine($"  [yellow]~[/] Embeddings: {embeddingsError}");
+
+                AnsiConsole.MarkupLine("  [green]✓[/] Embedded RavenDB configured");
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"  [red]✗[/] Embedded setup failed: {ex.Message}");
+                store?.Dispose();
+                return 1;
+            }
+            finally
+            {
+                store?.Dispose();
+            }
+
             changed = true;
         }
         else

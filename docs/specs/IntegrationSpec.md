@@ -412,21 +412,31 @@ Laptop (local service + sync)          Desktop (local service + sync)
 
 ## API Key Authentication (for Programmatic Access)
 
-For CI/CD and custom integrations that need to call the remote API:
+For CI/CD, custom integrations, and non-localhost access:
 
 ```bash
-# Generate API key
-eidet api-key create --name "GitHub Actions" --scopes "write:observations,read:all"
+# Create API key (auto-enables auth, key shown once)
+eidet api-key create "GitHub Actions" --scopes "write:observations,read:all"
+
+# List keys
+eidet api-key list
+
+# Revoke a key
+eidet api-key revoke <id>
 
 # Use in requests
-curl -H "Authorization: Bearer eidet_abc123..." https://api.eidet.dev/api/eidet
+curl -H "Authorization: Bearer eidet_abc123..." http://localhost:19380/api/eidet/search?repo=...
 ```
 
 API keys are scoped:
 - `read:all` — read any memory
-- `write:observations` — store observations only (CI/CD use case)
-- `write:all` — store any type
-- `admin` — team management, maintenance, config
+- `write:observations` — store observations and intake (CI/CD use case)
+- `write:all` — store any type, consolidate, export
+- `admin` — maintenance, config (implies all other scopes)
+
+Health (`/api/health`) and status (`/api/status`) are always public — no auth required.
+
+Keys stored in config as SHA256 hashes. Creating the first key auto-enables auth. Revoking the last key auto-disables it.
 
 ---
 
