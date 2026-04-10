@@ -45,7 +45,7 @@ public class StoreRecallTests : IClassFixture<EidetApiFixture>
         Assert.Equal(System.Net.HttpStatusCode.UnprocessableEntity, res.StatusCode);
         var json = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
         Assert.True(json.RootElement.TryGetProperty("error", out var error));
-        Assert.Contains("secret", error.GetString()!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Blocked", error.GetString()!, StringComparison.OrdinalIgnoreCase);
     }
 
     [SkippableFact]
