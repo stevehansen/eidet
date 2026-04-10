@@ -41,6 +41,12 @@ app.Configure(config =>
 
     config.AddCommand<MaintainCommand>("maintain")
         .WithDescription("Run maintenance pipeline");
+
+    config.AddCommand<InstallCommand>("install")
+        .WithDescription("Install Eidet as a system service");
+
+    config.AddCommand<UninstallCommand>("uninstall")
+        .WithDescription("Uninstall Eidet system service");
 });
 
 return app.Run(args);

@@ -58,11 +58,24 @@ All design decisions are documented in `docs/specs/`:
 - **Hybrid retrieval over-fetch 2×**: Full-text search now fetches 2× limit for better merge quality (spec compliance).
 - **CLI memory commands**: `eidet recall`, `eidet store`, `eidet stats`, `eidet export`, `eidet intake`, `eidet maintain` — all with `--json` support.
 
-### Phase 5 — Next
-- MCP streamable HTTP transport (for network clients)
-- `eidet serve` as system service (Windows Service/launchd/systemd)
-- Ollama enrichment (one-liners, summaries, foresight hints, conflict detection)
-- Layer service (mount/unmount, scope resolution, auto-mount by deps)
+### Phase 5 — Done
+- **OllamaEnrichmentService**: IEnrichmentService interface with NullEnrichmentService (zero-overhead no-op) and OllamaEnrichmentService (/api/chat, think:false, 120s timeout, lazy health re-check). 6 enrichment tasks: one-liner, summary, foresight hint, entity extraction (LLM supplement), consolidation merge (>5 observations), conflict detection. Integrated into MaintenanceService (Stage 6b) and ConsolidationService (merge for large groups).
+- **LayerService**: Mount/unmount layers, scope resolution for layer-aware recall, auto-mount by package dependencies. IEidetStore layer CRUD (StoreMountedLayer, UnmountLayer, GetMountedLayers, GetLayer). Non-local de-boost 0.8×, layer-tagged search results. REST API: GET/POST/DELETE /api/eidet/layers.
+- **MCP streamable HTTP transport**: POST /mcp endpoint on EidetApiServer. Reuses McpServer.ProcessRequestAsync for JSON-RPC over HTTP. Supports all 13 tools. 204 No Content for notifications.
+- **System service**: `eidet install` (Windows Service via sc.exe, macOS launchd plist, Linux systemd user unit), `eidet uninstall` (with --purge). Binary copies to ~/.eidet/bin/ (or %APPDATA%\Eidet\bin\).
+- **MaintenanceScheduler**: Background timer for periodic maintenance and consolidation at configured intervals (default 24h/6h). Runs inside `eidet serve`.
+- **Doctor Ollama check**: Verifies model availability (not just connectivity).
+- **InternalsVisibleTo**: Eidet.Service exposes internals to Eidet.Service.Tests.
+- **Test coverage**: 133 → 157 tests. Added tests for NullEnrichmentService (9), OllamaEnrichmentService (3), LayerService (8), InstallCommand (4).
+
+### Phase 6 — Next
+- Ollama model management (auto-pull, model suggestions)
+- Layer import from .eidet pack files (auto-mount)
+- `eidet config get/set` command
+- `eidet instructions` — generate CLAUDE.md memory instructions
+- `eidet docker` — Docker/devcontainer integration guidance
+- `eidet update` — self-update mechanism
+- Web UI for memory exploration
 
 ## MVP Scope
 
@@ -95,17 +108,18 @@ eidet/
 │   │   ├── Domain/               # MemoryEntry, MemoryType, Validity, layers, links, packs
 │   │   ├── Gates/                # SecretScanner, SignalGate, WriteGate
 │   │   ├── Indexes/              # Memories_Search, Memories_CountByType
-│   │   ├── Services/             # MemoryService, EntityExtractor, StoreResult
+│   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
 │   │   ├── StringUtils.cs        # Shared string helpers (Truncate)
 │   │   └── Storage/              # IEidetStore, RavenEidetStore, DatabaseProvisioner
-│   ├── Eidet.Service/            # CLI + REST API
-│   │   ├── Api/                  # EidetApiServer (HttpListener)
-│   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, export, intake, maintain
-│   │   └── Mcp/                  # McpServer, McpModels, McpToolDefinitions
+│   ├── Eidet.Service/            # CLI + REST API + system service
+│   │   ├── Api/                  # EidetApiServer (HttpListener + MCP HTTP)
+│   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, export, intake, maintain, install, uninstall
+│   │   ├── Mcp/                  # McpServer (stdio + HTTP), McpModels, McpToolDefinitions
+│   │   └── Scheduler/            # MaintenanceScheduler (background timers)
 │   └── Eidet.Sync/              # Sync adapters (future)
 ├── tests/
-│   ├── Eidet.Core.Tests/        # 71 tests
-│   └── Eidet.Service.Tests/
+│   ├── Eidet.Core.Tests/        # 131 tests
+│   └── Eidet.Service.Tests/     # 26 tests
 └── docs/
     └── specs/
 ```

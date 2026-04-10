@@ -6,6 +6,7 @@ namespace Eidet.Core.Services;
 public class ConsolidationService
 {
     private readonly IEidetStore _store;
+    private readonly IEnrichmentService _enrichment;
 
     // FadeMem decay parameters per type
     private static readonly Dictionary<MemoryType, (double HalfLifeDays, double Shape)> DecayParams = new()
@@ -16,9 +17,10 @@ public class ConsolidationService
         [MemoryType.Heuristic] = (730, 0.7),     // Sub-linear: nearly immortal
     };
 
-    public ConsolidationService(IEidetStore store)
+    public ConsolidationService(IEidetStore store, IEnrichmentService? enrichment = null)
     {
         _store = store;
+        _enrichment = enrichment ?? NullEnrichmentService.Instance;
     }
 
     public async Task<ConsolidationResult> ConsolidateAsync(string repoId, bool dryRun = false, CancellationToken ct = default)
@@ -75,13 +77,23 @@ public class ConsolidationService
                 }
                 else
                 {
+                    // For large groups (>5), use Ollama to merge if available
+                    var mergedContent = representative.Content;
+                    if (group.Count > 5 && _enrichment.IsAvailable)
+                    {
+                        var merged = await _enrichment.MergeObservationsAsync(
+                            group.Select(o => o.Content).ToList(), ct);
+                        if (!string.IsNullOrEmpty(merged))
+                            mergedContent = merged;
+                    }
+
                     var now = DateTime.UtcNow;
                     var insight = new MemoryEntry
                     {
-                        Id = MemoryIdGenerator.Generate(repoId, MemoryType.Insight, representative.Content, now),
+                        Id = MemoryIdGenerator.Generate(repoId, MemoryType.Insight, mergedContent, now),
                         RepoId = repoId,
                         Type = MemoryType.Insight,
-                        Content = representative.Content,
+                        Content = mergedContent,
                         Tags = unionTags,
                         Importance = proposedImportance,
                         Source = "consolidation",
@@ -90,8 +102,8 @@ public class ConsolidationService
                         CreatedAt = now,
                         Validity = new Validity { ValidFrom = now },
                         DerivedFrom = candidate.ObservationIds,
-                        Entities = EntityExtractor.Extract(representative.Content),
-                        OneLiner = EntityExtractor.GenerateHeuristicOneLiner(representative.Content),
+                        Entities = EntityExtractor.Extract(mergedContent),
+                        OneLiner = EntityExtractor.GenerateHeuristicOneLiner(mergedContent),
                     };
                     await _store.StoreAsync(insight, ct);
                     result.InsightsCreated++;

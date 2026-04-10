@@ -15,14 +15,16 @@ public class MemoryService
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
 
     private readonly IEidetStore _store;
+    private readonly LayerService? _layers;
     private readonly ConcurrentDictionary<string, CacheEntry> _recallCache = new();
     private readonly ConcurrentDictionary<string, DateTime> _lastActiveDate = new();
 
     public int StalenessWarningDays { get; set; } = 7;
 
-    public MemoryService(IEidetStore store)
+    public MemoryService(IEidetStore store, LayerService? layers = null)
     {
         _store = store;
+        _layers = layers;
     }
 
     // ─── Store ───────────────────────────────────────────────────────────
@@ -114,9 +116,10 @@ public class MemoryService
         if (_recallCache.TryGetValue(cacheKey, out var cached) && !cached.IsExpired)
             return cached.Results;
 
-        // Resolve repo scope
-        var repoIds = new List<string> { normalizedRepoId };
-        // TODO: Add cross-repo linked repos when LayerService is implemented
+        // Resolve repo scope (layer-aware)
+        var repoIds = _layers != null && query.CrossRepo
+            ? await _layers.ResolveScopeAsync(normalizedRepoId, query.CrossRepo, ct)
+            : new List<string> { normalizedRepoId };
 
         // Parallel hybrid search
         var textTask = _store.FullTextSearchAsync(repoIds, query, ct);
@@ -451,6 +454,7 @@ public class MemoryService
         OneLiner = entry.OneLiner,
         CreatedAt = entry.CreatedAt,
         Score = score,
+        LayerSource = entry.LayerId,
         IsSuperseded = !entry.IsLatest,
     };
 

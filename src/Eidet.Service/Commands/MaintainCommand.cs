@@ -22,8 +22,11 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
         var config = ConfigManager.Load();
         var store = DocumentStoreFactory.Create(config.Storage.RavenUrl, config.Storage.DatabaseName);
         var eidetStore = new RavenEidetStore(store);
-        var consolidationSvc = new ConsolidationService(eidetStore);
-        var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc);
+        IEnrichmentService enrichment = config.Enrichment.OllamaEnabled
+            ? new OllamaEnrichmentService(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
+            : NullEnrichmentService.Instance;
+        var consolidationSvc = new ConsolidationService(eidetStore, enrichment);
+        var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc, enrichment);
 
         var repoId = Eidet.Core.Domain.RepoIdNormalizer.Normalize(settings.Repo ?? Directory.GetCurrentDirectory());
 
@@ -45,6 +48,7 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
                 AnsiConsole.MarkupLine($"  Decay updated:  {result.DecayUpdated}");
                 AnsiConsole.MarkupLine($"  Orphans:        {result.OrphansCleaned}");
                 AnsiConsole.MarkupLine($"  Backfill:       {result.BackfillEnriched}");
+                AnsiConsole.MarkupLine($"  Ollama:         {result.OllamaEnriched}");
                 AnsiConsole.MarkupLine($"  Consolidated:   {result.ConsolidatedInsights}");
             }
         }

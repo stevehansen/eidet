@@ -2,6 +2,8 @@ using Eidet.Core.Configuration;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Api;
+using Eidet.Service.Mcp;
+using Eidet.Service.Scheduler;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -40,16 +42,34 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         }
 
         var eidetStore = new RavenEidetStore(store);
-        var memorySvc = new MemoryService(eidetStore);
+        IEnrichmentService enrichment = config.Enrichment.OllamaEnabled
+            ? new OllamaEnrichmentService(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
+            : NullEnrichmentService.Instance;
+        var layerSvc = new LayerService(eidetStore);
+        var memorySvc = new MemoryService(eidetStore, layerSvc);
         var intakeSvc = new IntakeService(eidetStore);
-        var consolidationSvc = new ConsolidationService(eidetStore);
-        var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc);
+        var consolidationSvc = new ConsolidationService(eidetStore, enrichment);
+        var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc, enrichment);
         var exportSvc = new ExportService(eidetStore);
-        var apiServer = new EidetApiServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc, bind, port);
+        var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
+            Directory.GetCurrentDirectory());
+        var apiServer = new EidetApiServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
+            bind, port, layerSvc, mcpServer);
+
+        if (config.Enrichment.OllamaEnabled)
+        {
+            var ollamaHealthy = await enrichment.CheckHealthAsync(cancellation);
+            AnsiConsole.MarkupLine($"  Ollama:  {(ollamaHealthy ? "[green]Connected[/]" : "[yellow]Unavailable[/]")} ({config.Enrichment.OllamaModel})");
+        }
 
         AnsiConsole.MarkupLine($"  API:     [green]http://{bind}:{port}[/]");
+        AnsiConsole.MarkupLine($"  MCP:     http://{bind}:{port}/mcp");
         AnsiConsole.MarkupLine($"  Health:  http://{bind}:{port}/api/health");
         AnsiConsole.WriteLine();
+
+        var scheduler = new MaintenanceScheduler(eidetStore, memorySvc, maintenanceSvc, consolidationSvc, config.Maintenance);
+        scheduler.Start();
+        AnsiConsole.MarkupLine($"  Scheduler: [green]Active[/] (maintenance every {config.Maintenance.IntervalHours}h, consolidation every {config.Maintenance.ConsolidationIntervalHours}h)");
 
         try
         {
@@ -57,6 +77,9 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         }
         finally
         {
+            scheduler.Dispose();
+            if (enrichment is IDisposable disposableEnrichment)
+                disposableEnrichment.Dispose();
             store.Dispose();
         }
 

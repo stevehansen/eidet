@@ -7,11 +7,14 @@ public class MaintenanceService
 {
     private readonly IEidetStore _store;
     private readonly ConsolidationService _consolidation;
+    private readonly IEnrichmentService _enrichment;
 
-    public MaintenanceService(IEidetStore store, ConsolidationService consolidation)
+    public MaintenanceService(IEidetStore store, ConsolidationService consolidation,
+        IEnrichmentService? enrichment = null)
     {
         _store = store;
         _consolidation = consolidation;
+        _enrichment = enrichment ?? NullEnrichmentService.Instance;
     }
 
     public async Task<MaintenanceResult> RunAsync(
@@ -36,8 +39,11 @@ public class MaintenanceService
         // Stage 5: Orphan Cleanup
         result.OrphansCleaned = await CleanOrphansAsync(repoId, now, ct);
 
-        // Stage 6: Backfill Enrichment (entities + one-liners for memories missing them)
+        // Stage 6: Backfill Enrichment (entities + one-liners + Ollama enrichment)
         result.BackfillEnriched = await BackfillEnrichmentAsync(repoId, ct);
+
+        // Stage 6b: Ollama enrichment (summaries, foresight hints — if available)
+        result.OllamaEnriched = await OllamaEnrichmentAsync(repoId, ct);
 
         // Stage 7: Auto-Consolidation
         var consolidationResult = await _consolidation.ConsolidateAsync(repoId, ct: ct);
@@ -186,6 +192,76 @@ public class MaintenanceService
         return enriched;
     }
 
+    private async Task<int> OllamaEnrichmentAsync(string repoId, CancellationToken ct)
+    {
+        if (!_enrichment.IsAvailable) return 0;
+
+        var entries = await _store.GetTopScoredAsync(repoId, Enum.GetValues<MemoryType>(), 200, ct);
+        var enriched = 0;
+
+        foreach (var entry in entries)
+        {
+            var changed = false;
+
+            // Summary (1-2 sentence)
+            if (string.IsNullOrEmpty(entry.Summary) && !string.IsNullOrWhiteSpace(entry.Content))
+            {
+                var summary = await _enrichment.GenerateSummaryAsync(entry.Content, ct);
+                if (!string.IsNullOrEmpty(summary))
+                {
+                    entry.Summary = summary;
+                    changed = true;
+                }
+            }
+
+            // One-liner upgrade (replace heuristic with LLM if available)
+            if (!string.IsNullOrWhiteSpace(entry.Content) && entry.OneLiner == EntityExtractor.GenerateHeuristicOneLiner(entry.Content))
+            {
+                var oneLiner = await _enrichment.GenerateOneLinerAsync(entry.Content, ct);
+                if (!string.IsNullOrEmpty(oneLiner))
+                {
+                    entry.OneLiner = oneLiner;
+                    changed = true;
+                }
+            }
+
+            // Foresight hint
+            if (string.IsNullOrEmpty(entry.ForesightHint) && !string.IsNullOrWhiteSpace(entry.Content))
+            {
+                var hint = await _enrichment.GenerateForesightHintAsync(entry.Content, ct);
+                if (!string.IsNullOrEmpty(hint))
+                {
+                    entry.ForesightHint = hint;
+                    changed = true;
+                }
+            }
+
+            // LLM entity extraction (supplement regex)
+            if (entry.Entities.Count < 2 && !string.IsNullOrWhiteSpace(entry.Content))
+            {
+                var llmEntities = await _enrichment.ExtractEntitiesAsync(entry.Content, ct);
+                if (llmEntities.Count > 0)
+                {
+                    var existing = new HashSet<string>(entry.Entities, StringComparer.OrdinalIgnoreCase);
+                    foreach (var e in llmEntities)
+                    {
+                        if (existing.Add(e))
+                            entry.Entities.Add(e);
+                    }
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                await _store.UpdateAsync(entry, ct);
+                enriched++;
+            }
+        }
+
+        return enriched;
+    }
+
     internal static float ComputeWordSimilarity(string a, string b)
     {
         var wordsA = Tokenize(a);
@@ -216,9 +292,10 @@ public class MaintenanceResult
     public int DecayUpdated { get; set; }
     public int OrphansCleaned { get; set; }
     public int BackfillEnriched { get; set; }
+    public int OllamaEnriched { get; set; }
     public int ConsolidatedInsights { get; set; }
     public DateTime CompletedAt { get; set; }
 
     public override string ToString() =>
-        $"Maintenance complete: TTL={ExpiredByTtl}, Retention={ExpiredByRetention}, Dedup={DedupMerged}, Decay={DecayUpdated}, Orphans={OrphansCleaned}, Backfill={BackfillEnriched}, Consolidated={ConsolidatedInsights}";
+        $"Maintenance complete: TTL={ExpiredByTtl}, Retention={ExpiredByRetention}, Dedup={DedupMerged}, Decay={DecayUpdated}, Orphans={OrphansCleaned}, Backfill={BackfillEnriched}, Ollama={OllamaEnriched}, Consolidated={ConsolidatedInsights}";
 }

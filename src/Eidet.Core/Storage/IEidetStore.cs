@@ -16,6 +16,12 @@ public interface IEidetStore
     Task<bool> TestConnectionAsync(CancellationToken ct = default);
     Task<DatabaseInfo?> GetDatabaseInfoAsync(CancellationToken ct = default);
     Task EnsureIndexesAsync(CancellationToken ct = default);
+
+    // Layer operations
+    Task<string> StoreMountedLayerAsync(MemoryLayer layer, CancellationToken ct = default);
+    Task<bool> UnmountLayerAsync(string layerId, CancellationToken ct = default);
+    Task<List<MemoryLayer>> GetMountedLayersAsync(string repoId, CancellationToken ct = default);
+    Task<MemoryLayer?> GetLayerAsync(string layerId, CancellationToken ct = default);
 }
 
 public record DatabaseInfo(

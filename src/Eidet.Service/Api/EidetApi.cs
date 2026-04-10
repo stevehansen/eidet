@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Eidet.Core.Domain;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
+using Eidet.Service.Mcp;
 
 namespace Eidet.Service.Api;
 
@@ -22,18 +23,23 @@ public class EidetApiServer
     private readonly ConsolidationService _consolidation;
     private readonly MaintenanceService _maintenance;
     private readonly ExportService _export;
+    private readonly LayerService? _layers;
+    private readonly McpServer? _mcpServer;
     private readonly HttpListener _listener;
     private readonly string _baseUrl;
     private readonly DateTime _startedAt = DateTime.UtcNow;
 
     public EidetApiServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
-        MaintenanceService maintenance, ExportService export, string bindAddress, int port)
+        MaintenanceService maintenance, ExportService export, string bindAddress, int port,
+        LayerService? layers = null, McpServer? mcpServer = null)
     {
         _svc = svc;
         _intake = intake;
         _consolidation = consolidation;
         _maintenance = maintenance;
         _export = export;
+        _layers = layers;
+        _mcpServer = mcpServer;
         _baseUrl = $"http://{bindAddress}:{port}/";
         _listener = new HttpListener();
         _listener.Prefixes.Add(_baseUrl);
@@ -67,7 +73,10 @@ public class EidetApiServer
             var path = ctx.Request.Url?.AbsolutePath ?? "";
             var method = ctx.Request.HttpMethod;
 
-            if (method == "GET" && path == "/api/health")
+            if (method == "POST" && path == "/mcp")
+                await HandleMcpRequest(ctx, ct);
+
+            else if (method == "GET" && path == "/api/health")
                 await WriteJson(ctx, new { status = "ok", version = Eidet.Core.EidetVersion.Current });
 
             else if (method == "GET" && path == "/api/status")
@@ -114,6 +123,15 @@ public class EidetApiServer
 
             else if (method == "GET" && path == "/api/eidet/links")
                 await HandleGetLinks(ctx, ct);
+
+            else if (method == "GET" && path == "/api/eidet/layers")
+                await HandleGetLayers(ctx, ct);
+
+            else if (method == "POST" && path == "/api/eidet/layers/mount")
+                await HandleMountLayer(ctx, ct);
+
+            else if (method == "DELETE" && path.StartsWith("/api/eidet/layers/"))
+                await HandleUnmountLayer(ctx, path["/api/eidet/layers/".Length..], ct);
 
             else if (method == "DELETE" && path.StartsWith("/api/eidet/"))
                 await HandleForget(ctx, path["/api/eidet/".Length..], ct);
@@ -399,6 +417,65 @@ public class EidetApiServer
         ctx.Response.Close();
     }
 
+    private async Task HandleMcpRequest(HttpListenerContext ctx, CancellationToken ct)
+    {
+        if (_mcpServer is null)
+        {
+            await WriteJson(ctx, new { error = "MCP server not available" }, 501);
+            return;
+        }
+
+        using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
+        var body = await reader.ReadToEndAsync(ct);
+
+        var response = await _mcpServer.ProcessRequestAsync(body, ct);
+
+        if (response is null)
+        {
+            // Notification — no response needed (204 No Content)
+            ctx.Response.StatusCode = 204;
+            ctx.Response.Close();
+            return;
+        }
+
+        ctx.Response.StatusCode = 200;
+        ctx.Response.ContentType = "application/json";
+        await JsonSerializer.SerializeAsync(ctx.Response.OutputStream, response, McpServer.SerializerOptions, ct);
+        ctx.Response.Close();
+    }
+
+    private async Task HandleGetLayers(HttpListenerContext ctx, CancellationToken ct)
+    {
+        if (_layers is null) { await WriteJson(ctx, new { error = "Layer service not available" }, 501); return; }
+        var repo = ctx.Request.QueryString["repo"];
+        if (string.IsNullOrEmpty(repo)) { await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400); return; }
+        var layers = await _layers.GetApplicableLayersAsync(RepoIdNormalizer.Normalize(repo), ct: ct);
+        await WriteJson(ctx, new { repo, layers });
+    }
+
+    private async Task HandleMountLayer(HttpListenerContext ctx, CancellationToken ct)
+    {
+        if (_layers is null) { await WriteJson(ctx, new { error = "Layer service not available" }, 501); return; }
+        var req = await ReadJson<MountLayerRequest>(ctx);
+        if (req is null || string.IsNullOrEmpty(req.LayerId) || string.IsNullOrEmpty(req.Name))
+        {
+            await WriteJson(ctx, new { error = "Missing required fields: layerId, name" }, 400);
+            return;
+        }
+        var layer = await _layers.MountAsync(req.LayerId, req.Name, req.Type,
+            req.ApplicableRepos, req.ApplicablePackages, req.SourcePath, ct);
+        await WriteJson(ctx, layer, 201);
+    }
+
+    private async Task HandleUnmountLayer(HttpListenerContext ctx, string layerId, CancellationToken ct)
+    {
+        if (_layers is null) { await WriteJson(ctx, new { error = "Layer service not available" }, 501); return; }
+        var decoded = Uri.UnescapeDataString(layerId);
+        var ok = await _layers.UnmountAsync(decoded, ct);
+        if (ok) await WriteJson(ctx, new { unmounted = true });
+        else await WriteJson(ctx, new { error = "Layer not found" }, 404);
+    }
+
     private static async Task WriteJson(HttpListenerContext ctx, object data, int statusCode = 200)
     {
         ctx.Response.StatusCode = statusCode;
@@ -452,4 +529,14 @@ public record CreateLinkRequest
     public string Repo { get; init; } = "";
     public string TargetRepo { get; init; } = "";
     public string Relation { get; init; } = "";
+}
+
+public record MountLayerRequest
+{
+    public string LayerId { get; init; } = "";
+    public string Name { get; init; } = "";
+    public LayerType Type { get; init; }
+    public List<string>? ApplicableRepos { get; init; }
+    public List<string>? ApplicablePackages { get; init; }
+    public string? SourcePath { get; init; }
 }

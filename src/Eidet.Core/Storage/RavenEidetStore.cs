@@ -220,6 +220,44 @@ public class RavenEidetStore : IEidetStore
             typeof(Memories_Search).Assembly, _store, token: ct);
     }
 
+    // ─── Layer operations ─────────────────────────────────────────────
+
+    public async Task<string> StoreMountedLayerAsync(MemoryLayer layer, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+        await session.StoreAsync(layer, layer.Id, ct);
+        await session.SaveChangesAsync(ct);
+        return layer.Id;
+    }
+
+    public async Task<bool> UnmountLayerAsync(string layerId, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+        var layer = await session.LoadAsync<MemoryLayer>(layerId, ct);
+        if (layer is null) return false;
+        session.Delete(layer);
+        await session.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public async Task<List<MemoryLayer>> GetMountedLayersAsync(string repoId, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+        var layers = await session.Query<MemoryLayer>()
+            .ToListAsync(ct);
+
+        // Filter to applicable layers: universal, or repo is in ApplicableRepos
+        return layers.Where(l =>
+            l.ApplicableRepos.Count == 0 ||
+            l.ApplicableRepos.Contains(repoId, StringComparer.OrdinalIgnoreCase)).ToList();
+    }
+
+    public async Task<MemoryLayer?> GetLayerAsync(string layerId, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+        return await session.LoadAsync<MemoryLayer>(layerId, ct);
+    }
+
     private static IAsyncDocumentQuery<MemoryEntry> ApplyFilters(
         IAsyncDocumentQuery<MemoryEntry> documentQuery, MemoryQuery query)
     {

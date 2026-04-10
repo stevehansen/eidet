@@ -20,10 +20,13 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
 
         var store = DocumentStoreFactory.Create(config.Storage.RavenUrl, config.Storage.DatabaseName);
         var eidetStore = new RavenEidetStore(store);
+        IEnrichmentService enrichment = config.Enrichment.OllamaEnabled
+            ? new OllamaEnrichmentService(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
+            : NullEnrichmentService.Instance;
         var memorySvc = new MemoryService(eidetStore);
         var intakeSvc = new IntakeService(eidetStore);
-        var consolidationSvc = new ConsolidationService(eidetStore);
-        var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc);
+        var consolidationSvc = new ConsolidationService(eidetStore, enrichment);
+        var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc, enrichment);
         var exportSvc = new ExportService(eidetStore);
 
         var workDir = settings.WorkDir ?? Directory.GetCurrentDirectory();

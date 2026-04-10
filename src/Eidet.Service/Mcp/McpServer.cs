@@ -54,6 +54,17 @@ public class McpServer
         }
     }
 
+    /// <summary>
+    /// Handle a single JSON-RPC request string. Used by both stdio and HTTP transports.
+    /// </summary>
+    public async Task<JsonRpcResponse?> ProcessRequestAsync(string json, CancellationToken ct) =>
+        await HandleJsonRpcAsync(json, ct);
+
+    /// <summary>
+    /// JSON serializer options (shared with HTTP transport).
+    /// </summary>
+    public static JsonSerializerOptions SerializerOptions => JsonOptions;
+
     private async Task<JsonRpcResponse?> HandleJsonRpcAsync(string json, CancellationToken ct)
     {
         JsonRpcRequest? request;

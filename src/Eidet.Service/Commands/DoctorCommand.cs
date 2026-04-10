@@ -90,9 +90,18 @@ public sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-            var response = await http.GetAsync($"{config.Enrichment.OllamaUrl}/api/version");
+            var response = await http.GetAsync($"{config.Enrichment.OllamaUrl}/api/tags");
             if (response.IsSuccessStatusCode)
-                return new CheckResult("Ollama", true, $"Connected at {config.Enrichment.OllamaUrl}");
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                var hasModel = body.Contains(config.Enrichment.OllamaModel, StringComparison.OrdinalIgnoreCase);
+                return hasModel
+                    ? new CheckResult("Ollama", true, $"Connected ({config.Enrichment.OllamaModel})")
+                    : new CheckResult("Ollama", false,
+                        $"Connected but model \"{config.Enrichment.OllamaModel}\" not found",
+                        Optional: true,
+                        Fix: $"Pull the model: ollama pull {config.Enrichment.OllamaModel}");
+            }
 
             return new CheckResult("Ollama", false,
                 $"HTTP {(int)response.StatusCode} from {config.Enrichment.OllamaUrl}",
