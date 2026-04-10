@@ -29,6 +29,9 @@ bld/
 node_modules/
 package-lock.json
 
+## Generated files
+*.pptx
+
 ## OS
 Thumbs.db
 .DS_Store
