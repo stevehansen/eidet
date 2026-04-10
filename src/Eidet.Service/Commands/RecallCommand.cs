@@ -32,7 +32,9 @@ public sealed class RecallCommand : AsyncCommand<RecallCommand.Settings>
         var config = ConfigManager.Load();
         var store = DocumentStoreFactory.CreateFromConfig(config);
         var eidetStore = new RavenEidetStore(store);
-        var svc = new MemoryService(eidetStore);
+        IHookRunner hookRunner = config.Hooks.PreRecall.Count > 0 || config.Hooks.PostRecall.Count > 0
+            ? new HookRunner(config.Hooks) : NullHookRunner.Instance;
+        var svc = new MemoryService(eidetStore, hooks: hookRunner);
 
         var repoId = settings.Repo ?? Directory.GetCurrentDirectory();
 

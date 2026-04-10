@@ -13,6 +13,7 @@ public class EidetConfig
     public MaintenanceConfig Maintenance { get; set; } = new();
     public EnrichmentConfig Enrichment { get; set; } = new();
     public AuthConfig Auth { get; set; } = new();
+    public HooksConfig Hooks { get; set; } = new();
 }
 
 public class ServiceConfig
@@ -72,4 +73,21 @@ public class ApiKeyEntry
     public string KeyHash { get; set; } = "";
     public List<string> Scopes { get; set; } = [];
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class HooksConfig
+{
+    public List<HookDefinition> PreStore { get; set; } = [];
+    public List<HookDefinition> PostStore { get; set; } = [];
+    public List<HookDefinition> PreRecall { get; set; } = [];
+    public List<HookDefinition> PostRecall { get; set; } = [];
+    public List<HookDefinition> PreForget { get; set; } = [];
+    public List<HookDefinition> PostForget { get; set; } = [];
+}
+
+public class HookDefinition
+{
+    public string Command { get; set; } = "";
+    public int TimeoutSeconds { get; set; } = 10;
+    public bool Enabled { get; set; } = true;
 }

@@ -23,7 +23,12 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
         IEnrichmentService enrichment = config.Enrichment.OllamaEnabled
             ? new OllamaEnrichmentService(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
             : NullEnrichmentService.Instance;
-        var memorySvc = new MemoryService(eidetStore);
+        IHookRunner hookRunner = config.Hooks.PreStore.Count > 0 || config.Hooks.PostStore.Count > 0
+            || config.Hooks.PreRecall.Count > 0 || config.Hooks.PostRecall.Count > 0
+            || config.Hooks.PreForget.Count > 0 || config.Hooks.PostForget.Count > 0
+            ? new HookRunner(config.Hooks)
+            : NullHookRunner.Instance;
+        var memorySvc = new MemoryService(eidetStore, hooks: hookRunner);
         var intakeSvc = new IntakeService(eidetStore);
         var consolidationSvc = new ConsolidationService(eidetStore, enrichment);
         var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc, enrichment);

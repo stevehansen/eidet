@@ -136,6 +136,14 @@ internal static class ConfigHelper
         // Auth
         ["auth.enabled"] = (c => c.Auth.Enabled.ToString(), (c, v) => c.Auth.Enabled = bool.Parse(v)),
         ["auth.requireForNonLocalhost"] = (c => c.Auth.RequireForNonLocalhost.ToString(), (c, v) => c.Auth.RequireForNonLocalhost = bool.Parse(v)),
+
+        // Hooks (read-only summaries — use config file for hook definitions)
+        ["hooks.preStore"] = (c => $"{c.Hooks.PreStore.Count} hook(s)", (_, _) => { }),
+        ["hooks.postStore"] = (c => $"{c.Hooks.PostStore.Count} hook(s)", (_, _) => { }),
+        ["hooks.preRecall"] = (c => $"{c.Hooks.PreRecall.Count} hook(s)", (_, _) => { }),
+        ["hooks.postRecall"] = (c => $"{c.Hooks.PostRecall.Count} hook(s)", (_, _) => { }),
+        ["hooks.preForget"] = (c => $"{c.Hooks.PreForget.Count} hook(s)", (_, _) => { }),
+        ["hooks.postForget"] = (c => $"{c.Hooks.PostForget.Count} hook(s)", (_, _) => { }),
     };
 
     public static string? GetValue(EidetConfig config, string key)

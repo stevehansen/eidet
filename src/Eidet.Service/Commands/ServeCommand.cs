@@ -49,7 +49,12 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
             ? new OllamaEnrichmentService(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
             : NullEnrichmentService.Instance;
         var layerSvc = new LayerService(eidetStore);
-        var memorySvc = new MemoryService(eidetStore, layerSvc);
+        IHookRunner hookRunner = config.Hooks.PreStore.Count > 0 || config.Hooks.PostStore.Count > 0
+            || config.Hooks.PreRecall.Count > 0 || config.Hooks.PostRecall.Count > 0
+            || config.Hooks.PreForget.Count > 0 || config.Hooks.PostForget.Count > 0
+            ? new HookRunner(config.Hooks)
+            : NullHookRunner.Instance;
+        var memorySvc = new MemoryService(eidetStore, layerSvc, hookRunner);
         var intakeSvc = new IntakeService(eidetStore);
         var consolidationSvc = new ConsolidationService(eidetStore, enrichment);
         var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc, enrichment);

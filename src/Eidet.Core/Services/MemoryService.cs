@@ -16,15 +16,17 @@ public class MemoryService
 
     private readonly IEidetStore _store;
     private readonly LayerService? _layers;
+    private readonly IHookRunner _hooks;
     private readonly ConcurrentDictionary<string, CacheEntry> _recallCache = new();
     private readonly ConcurrentDictionary<string, DateTime> _lastActiveDate = new();
 
     public int StalenessWarningDays { get; set; } = 7;
 
-    public MemoryService(IEidetStore store, LayerService? layers = null)
+    public MemoryService(IEidetStore store, LayerService? layers = null, IHookRunner? hooks = null)
     {
         _store = store;
         _layers = layers;
+        _hooks = hooks ?? NullHookRunner.Instance;
     }
 
     // ─── Store ───────────────────────────────────────────────────────────
@@ -43,6 +45,16 @@ public class MemoryService
     {
         var normalizedRepoId = RepoIdNormalizer.Normalize(repoId);
         TrackRepoActivity(normalizedRepoId);
+
+        // Hook: pre-store
+        var preHook = await _hooks.RunPreHooksAsync(HookEvent.PreStore, new HookContext
+        {
+            Event = "pre-store",
+            Repo = normalizedRepoId,
+            Data = new { content, type = type.ToString().ToLowerInvariant(), tags, importance, source },
+        }, ct);
+        if (!preHook.Allowed)
+            return StoreResult.Rejected($"Hook rejected: {preHook.Reason}");
 
         // Gate 1: Secret scanning
         var secretResult = SecretScanner.Scan(content);
@@ -98,6 +110,15 @@ public class MemoryService
 
         var id = await _store.StoreAsync(entry, ct);
         InvalidateCache();
+
+        // Hook: post-store (fire-and-forget)
+        _ = _hooks.RunPostHooksAsync(HookEvent.PostStore, new HookContext
+        {
+            Event = "post-store",
+            Repo = normalizedRepoId,
+            Data = new { id, type = type.ToString().ToLowerInvariant(), content, tags, importance },
+        }, ct);
+
         return StoreResult.Stored(id);
     }
 
@@ -110,6 +131,16 @@ public class MemoryService
     {
         var normalizedRepoId = RepoIdNormalizer.Normalize(repoId);
         TrackRepoActivity(normalizedRepoId);
+
+        // Hook: pre-recall
+        var preHook = await _hooks.RunPreHooksAsync(HookEvent.PreRecall, new HookContext
+        {
+            Event = "pre-recall",
+            Repo = normalizedRepoId,
+            Data = new { query = query.Text, limit = query.Limit, type = query.Type?.ToString().ToLowerInvariant(), tags = query.Tags },
+        }, ct);
+        if (!preHook.Allowed)
+            return []; // Pre-recall rejection returns empty results
 
         // Check cache
         var cacheKey = ComputeCacheKey(normalizedRepoId, query);
@@ -164,6 +195,14 @@ public class MemoryService
 
         // Bump access count on local memories (fire-and-forget, don't block recall)
         _ = BumpAccessCountsAsync(budgeted, normalizedRepoId, ct);
+
+        // Hook: post-recall (fire-and-forget)
+        _ = _hooks.RunPostHooksAsync(HookEvent.PostRecall, new HookContext
+        {
+            Event = "post-recall",
+            Repo = normalizedRepoId,
+            Data = new { query = query.Text, resultCount = budgeted.Count },
+        }, ct);
 
         // Cache results
         EvictCacheIfNeeded();
@@ -293,6 +332,16 @@ public class MemoryService
         string? sessionId = null,
         CancellationToken ct = default)
     {
+        // Hook: pre-forget
+        var preHook = await _hooks.RunPreHooksAsync(HookEvent.PreForget, new HookContext
+        {
+            Event = "pre-forget",
+            Repo = "",
+            Data = new { id, reason },
+        }, ct);
+        if (!preHook.Allowed)
+            return false;
+
         var forgotten = await _store.ForgetAsync(id, ct);
         if (!forgotten) return false;
 
@@ -324,6 +373,15 @@ public class MemoryService
         }
 
         InvalidateCache();
+
+        // Hook: post-forget (fire-and-forget)
+        _ = _hooks.RunPostHooksAsync(HookEvent.PostForget, new HookContext
+        {
+            Event = "post-forget",
+            Repo = "",
+            Data = new { id, reason },
+        }, ct);
+
         return true;
     }
 

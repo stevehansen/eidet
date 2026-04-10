@@ -111,6 +111,15 @@ All design decisions are documented in `docs/specs/`:
 - **Python SDK** (`sdk/python/`): `eidet-sdk` pip package. `EidetClient` class using `httpx`. Full type hints, context manager support. `MemoryType` enum, `StoreRequest` dataclass. Methods mirror TypeScript SDK. `EidetError` exception. Python 3.10+.
 - **C# SDK** (`sdk/dotnet/Eidet.Sdk/`): `Eidet.Sdk` NuGet package targeting `net8.0`. `EidetClient` (IDisposable) using `HttpClient` + `System.Text.Json`. Full record types for all request/response models (`StoreRequest`, `MemoryEntry`, `SearchResult`, `BrowseResponse`, `GraphData`, etc.). `EidetException` for HTTP errors. CancellationToken support throughout. `IsAvailableAsync` health check.
 
+### Phase 9.5 — Hooks System (Done)
+- **HookRunner**: `IHookRunner` interface with `HookRunner` (real) and `NullHookRunner` (zero-overhead no-op). Runs external commands via `Process.Start`, passes JSON context on stdin, captures stdout/stderr. Configurable timeout per hook with process tree kill on timeout.
+- **Hook events**: 6 lifecycle points — `PreStore`, `PostStore`, `PreRecall`, `PostRecall`, `PreForget`, `PostForget`. Pre-hooks can reject (non-zero exit code, stderr as reason). Post-hooks are fire-and-forget.
+- **HooksConfig**: Per-event hook lists in `EidetConfig`. Each `HookDefinition` has `Command`, `TimeoutSeconds` (default 10), `Enabled` (default true).
+- **MemoryService integration**: Hooks wired into Store (pre/post), Recall (pre/post), Forget (pre/post). Pre-hook rejection returns `StoreResult.Rejected` / empty results / false. Post-hooks don't block the caller.
+- **All entry points**: ServeCommand, McpCommand, StoreCommand, RecallCommand all construct `HookRunner` from config when hooks are defined.
+- **Config visibility**: `eidet config list` shows hook counts per event.
+- **Test coverage**: 233 → 253 tests. Added HookRunner (15): NullHookRunner, ParseCommand, HasHooks, HookEvent mapping, defaults, HookContext, HookResult.
+
 ### Phase 10 — Future
 - VS Code extension (memory sidebar, inline annotations)
 
@@ -145,7 +154,7 @@ eidet/
 │   │   ├── Domain/               # MemoryEntry, MemoryType, Validity, layers, links, packs, GraphData
 │   │   ├── Gates/                # SecretScanner, SignalGate, WriteGate
 │   │   ├── Indexes/              # Memories_Search, Memories_CountByType
-│   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, OllamaService, ApiKeyService, enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
+│   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, OllamaService, ApiKeyService, HookRunner (IHookRunner, NullHookRunner), enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
 │   │   ├── StringUtils.cs        # Shared string helpers (Truncate)
 │   │   └── Storage/              # IEidetStore, RavenEidetStore, DatabaseProvisioner, DocumentStoreFactory (embedded + external)
 │   ├── Eidet.Service/            # CLI + REST API + system service
@@ -160,7 +169,7 @@ eidet/
 │   ├── python/                  # eidet-sdk pip package (EidetClient, httpx, type hints)
 │   └── dotnet/Eidet.Sdk/       # Eidet.Sdk NuGet package (EidetClient, record types)
 ├── tests/
-│   ├── Eidet.Core.Tests/        # 178 tests
+│   ├── Eidet.Core.Tests/        # 198 tests
 │   └── Eidet.Service.Tests/     # 55 tests
 └── docs/
     └── specs/
@@ -180,6 +189,7 @@ eidet/
 - **API key auth with scope model**: Bearer token auth, SHA256 hashed keys in config, 4 scopes (read:all, write:observations, write:all, admin). Health/status always public. Network binding guard prevents non-localhost without auth.
 - **CORS enabled**: All responses include `Access-Control-Allow-Origin: *` for browser/Web UI access.
 - **Embedded Web UI**: SPA compiled as embedded resources — no external files to manage, ships with the binary. Vanilla HTML/CSS/JS with canvas-based graph (no framework dependencies). Dark theme, responsive.
+- **Hooks system**: Claude Code-inspired lifecycle hooks. External commands receive JSON context on stdin, pre-hooks gate operations (non-zero exit = reject), post-hooks fire-and-forget. Configurable per-event with timeout and enable/disable. Zero overhead when no hooks configured (NullHookRunner).
 
 ## API Quick Reference
 
