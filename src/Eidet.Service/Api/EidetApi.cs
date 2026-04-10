@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Eidet.Core.Domain;
 using Eidet.Core.Services;
+using Eidet.Core.Storage;
 
 namespace Eidet.Service.Api;
 
@@ -23,6 +24,7 @@ public class EidetApiServer
     private readonly ExportService _export;
     private readonly HttpListener _listener;
     private readonly string _baseUrl;
+    private readonly DateTime _startedAt = DateTime.UtcNow;
 
     public EidetApiServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
         MaintenanceService maintenance, ExportService export, string bindAddress, int port)
@@ -68,6 +70,9 @@ public class EidetApiServer
             if (method == "GET" && path == "/api/health")
                 await WriteJson(ctx, new { status = "ok", version = Eidet.Core.EidetVersion.Current });
 
+            else if (method == "GET" && path == "/api/status")
+                await HandleStatus(ctx, ct);
+
             else if (method == "GET" && path == "/api/eidet/context")
                 await HandleGetContext(ctx, ct);
 
@@ -97,6 +102,18 @@ public class EidetApiServer
 
             else if (method == "GET" && path == "/api/eidet/export")
                 await HandleExport(ctx, ct);
+
+            else if (method == "POST" && path == "/api/eidet/packs/export")
+                await HandlePackExport(ctx, ct);
+
+            else if (method == "POST" && path == "/api/eidet/packs/import")
+                await HandlePackImport(ctx, ct);
+
+            else if (method == "POST" && path == "/api/eidet/links")
+                await HandleCreateLink(ctx, ct);
+
+            else if (method == "GET" && path == "/api/eidet/links")
+                await HandleGetLinks(ctx, ct);
 
             else if (method == "DELETE" && path.StartsWith("/api/eidet/"))
                 await HandleForget(ctx, path["/api/eidet/".Length..], ct);
@@ -257,7 +274,7 @@ public class EidetApiServer
             return;
         }
         var result = await _consolidation.ConsolidateAsync(RepoIdNormalizer.Normalize(repo), ct: ct);
-        await WriteJson(ctx, new { candidates = result.Candidates.Count, insightsCreated = result.InsightsCreated });
+        await WriteJson(ctx, new { candidates = result.Candidates.Count, insightsCreated = result.InsightsCreated, insightsBoosted = result.InsightsBoosted });
     }
 
     private async Task HandleMaintenance(HttpListenerContext ctx, CancellationToken ct)
@@ -270,6 +287,100 @@ public class EidetApiServer
         }
         var result = await _maintenance.RunAsync(RepoIdNormalizer.Normalize(repo), ct: ct);
         await WriteJson(ctx, result);
+    }
+
+    private async Task HandleStatus(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var info = await _svc.GetStoreInfoAsync(ct);
+        await WriteJson(ctx, new
+        {
+            version = Eidet.Core.EidetVersion.Current,
+            status = "running",
+            uptime = (DateTime.UtcNow - _startedAt).ToString(@"d\.hh\:mm\:ss"),
+            api = _baseUrl,
+            database = info,
+        });
+    }
+
+    private async Task HandlePackExport(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var req = await ReadJson<PackExportRequest>(ctx);
+        if (req is null || string.IsNullOrEmpty(req.Repo) || string.IsNullOrEmpty(req.BundleId)
+            || string.IsNullOrEmpty(req.Name) || string.IsNullOrEmpty(req.Version))
+        {
+            await WriteJson(ctx, new { error = "Missing required fields: repo, bundleId, name, version" }, 400);
+            return;
+        }
+
+        var pack = await _export.ExportPackAsync(
+            RepoIdNormalizer.Normalize(req.Repo), req.BundleId, req.Name, req.Version, "user",
+            ct: ct);
+
+        if (!string.IsNullOrEmpty(req.OutputPath))
+        {
+            await _export.ExportPackToFileAsync(pack, req.OutputPath, ct);
+            await WriteJson(ctx, new { entries = pack.Entries.Count, path = req.OutputPath });
+        }
+        else
+        {
+            await WriteJson(ctx, pack);
+        }
+    }
+
+    private async Task HandlePackImport(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var req = await ReadJson<PackImportRequest>(ctx);
+        if (req is null || string.IsNullOrEmpty(req.Path))
+        {
+            await WriteJson(ctx, new { error = "Missing required field: path" }, 400);
+            return;
+        }
+
+        var pack = await _export.ImportPackFromFileAsync(req.Path, ct);
+        var count = await _export.ImportPackAsync(pack, ct);
+        await WriteJson(ctx, new { imported = count, bundle = pack.Name, version = pack.Version });
+    }
+
+    private async Task HandleCreateLink(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var req = await ReadJson<CreateLinkRequest>(ctx);
+        if (req is null || string.IsNullOrEmpty(req.Repo) || string.IsNullOrEmpty(req.TargetRepo)
+            || string.IsNullOrEmpty(req.Relation))
+        {
+            await WriteJson(ctx, new { error = "Missing required fields: repo, targetRepo, relation" }, 400);
+            return;
+        }
+
+        var normalizedRepoId = RepoIdNormalizer.Normalize(req.Repo);
+        var targetRepoId = RepoIdNormalizer.Normalize(req.TargetRepo);
+        var content = $"Cross-repo link: {req.Relation} -> {targetRepoId}";
+
+        var result = await _svc.StoreAsync(normalizedRepoId, content, Eidet.Core.Domain.MemoryType.Insight,
+            tags: ["cross-repo-link", req.Relation], importance: 0.7f, source: "user", ct: ct);
+
+        if (result.Success)
+            await WriteJson(ctx, new { id = result.Id, from = normalizedRepoId, to = targetRepoId, relation = req.Relation }, 201);
+        else
+            await WriteJson(ctx, new { error = result.Reason }, 422);
+    }
+
+    private async Task HandleGetLinks(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var repo = ctx.Request.QueryString["repo"];
+        if (string.IsNullOrEmpty(repo))
+        {
+            await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
+            return;
+        }
+
+        var query = new Eidet.Core.Domain.MemoryQuery
+        {
+            Text = "cross-repo link",
+            Tags = ["cross-repo-link"],
+            Limit = 50,
+        };
+        var results = await _svc.RecallAsync(repo, query, ct);
+        await WriteJson(ctx, new { repo, links = results });
     }
 
     private async Task HandleExport(HttpListenerContext ctx, CancellationToken ct)
@@ -320,4 +431,25 @@ public record FeedbackRequest
 {
     public string MemoryId { get; init; } = "";
     public bool WasUsed { get; init; }
+}
+
+public record PackExportRequest
+{
+    public string Repo { get; init; } = "";
+    public string BundleId { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string Version { get; init; } = "";
+    public string? OutputPath { get; init; }
+}
+
+public record PackImportRequest
+{
+    public string Path { get; init; } = "";
+}
+
+public record CreateLinkRequest
+{
+    public string Repo { get; init; } = "";
+    public string TargetRepo { get; init; } = "";
+    public string Relation { get; init; } = "";
 }

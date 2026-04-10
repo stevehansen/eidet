@@ -44,16 +44,19 @@ All design decisions are documented in `docs/specs/`:
 
 ### Phase 4 — Done
 - **Full 13-tool MCP surface**: eidet_store, eidet_recall, eidet_context, eidet_forget, eidet_feedback, eidet_history, eidet_intake, eidet_link, eidet_consolidate, eidet_maintenance, eidet_export, eidet_pack_export, eidet_pack_import
-- **IntakeService**: Ingests CLAUDE.md, README.md, .editorconfig, NuGet/npm deps. Splits by headings, deduplicates by content hash, extracts entities and one-liners.
-- **ConsolidationService**: Groups observations by tag overlap (union-find), creates insights from groups of 3+, FadeMem differential decay (per-type half-lives).
-- **MaintenanceService**: 6-stage pipeline — TTL expiry, observation retention, dedup sweep (Jaccard 0.85), importance decay, orphan cleanup, auto-consolidation.
+- **IntakeService**: Ingests CLAUDE.md, MEMORY.md, README.md, .editorconfig, NuGet/npm deps. Splits by headings, deduplicates by content hash, extracts entities and one-liners.
+- **ConsolidationService**: Groups observations by tag overlap (union-find), creates insights from groups of 3+ (or boosts existing insights if topic already covered via vector similarity > 0.85), FadeMem differential decay (per-type half-lives).
+- **MaintenanceService**: 7-stage pipeline — TTL expiry, observation retention, dedup sweep (Jaccard 0.85), importance decay, orphan cleanup, backfill enrichment (entities + one-liners), auto-consolidation.
 - **ExportService**: Markdown export, .eidet pack export/import with session field stripping.
-- **REST API expanded**: /api/eidet/intake, /api/eidet/consolidate, /api/maintenance, /api/eidet/export
+- **REST API expanded**: /api/eidet/intake, /api/eidet/consolidate, /api/maintenance, /api/eidet/export, /api/status, /api/eidet/links, /api/eidet/packs/export, /api/eidet/packs/import
+- **Recall access tracking**: Bumps access count on local memories during recall (spec compliance).
 
 ### Phase 4.5 — Polish (Done)
 - **Test coverage**: 77 → 133 tests. Added tests for IntakeService (SplitByHeadings), ConsolidationService (GroupByTagOverlap, transitive merge, case-insensitive), MaintenanceService (Jaccard word similarity), FadeMem decay math (type hierarchy, confidence adjustment, floor), MCP tool definitions (all 13, schemas, required fields), StringUtils.
 - **Shared StringUtils**: Extracted duplicated `Truncate` helper from ExportService and McpServer into `Eidet.Core.StringUtils`.
 - **InternalsVisibleTo**: Eidet.Core exposes internals to Eidet.Core.Tests for testing static/internal helpers.
+- **Hybrid retrieval over-fetch 2×**: Full-text search now fetches 2× limit for better merge quality (spec compliance).
+- **CLI memory commands**: `eidet recall`, `eidet store`, `eidet stats`, `eidet export`, `eidet intake`, `eidet maintain` — all with `--json` support.
 
 ### Phase 5 — Next
 - MCP streamable HTTP transport (for network clients)
@@ -97,7 +100,7 @@ eidet/
 │   │   └── Storage/              # IEidetStore, RavenEidetStore, DatabaseProvisioner
 │   ├── Eidet.Service/            # CLI + REST API
 │   │   ├── Api/                  # EidetApiServer (HttpListener)
-│   │   ├── Commands/             # setup, mcp, serve, doctor, status
+│   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, export, intake, maintain
 │   │   └── Mcp/                  # McpServer, McpModels, McpToolDefinitions
 │   └── Eidet.Sync/              # Sync adapters (future)
 ├── tests/

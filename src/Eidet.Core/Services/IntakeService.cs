@@ -26,6 +26,11 @@ public partial class IntakeService
         if (File.Exists(claudeMd))
             await IngestMarkdownFile(normalizedRepoId, claudeMd, "CLAUDE.md", MemoryType.Insight, 0.8f, result, dryRun, ct);
 
+        // MEMORY.md (legacy Claude Code memory format)
+        var memoryMd = Path.Combine(projectPath, "MEMORY.md");
+        if (File.Exists(memoryMd))
+            await IngestMarkdownFile(normalizedRepoId, memoryMd, "MEMORY.md", MemoryType.Insight, 0.8f, result, dryRun, ct);
+
         // README.md
         var readme = Path.Combine(projectPath, "README.md");
         if (File.Exists(readme))

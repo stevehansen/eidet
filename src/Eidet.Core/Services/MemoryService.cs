@@ -159,11 +159,35 @@ public class MemoryService
         // Apply type diversity budgets
         var budgeted = ApplyTypeBudgets(merged, query.Limit);
 
+        // Bump access count on local memories (fire-and-forget, don't block recall)
+        _ = BumpAccessCountsAsync(budgeted, normalizedRepoId, ct);
+
         // Cache results
         EvictCacheIfNeeded();
         _recallCache[cacheKey] = new CacheEntry(budgeted);
 
         return budgeted;
+    }
+
+    private async Task BumpAccessCountsAsync(List<MemorySearchResult> results, string repoId, CancellationToken ct)
+    {
+        try
+        {
+            foreach (var result in results)
+            {
+                // Only bump local memories (not cross-repo/layer results)
+                if (!string.Equals(result.RepoId, repoId, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var entry = await _store.GetAsync(result.Id, ct);
+                if (entry is null) continue;
+
+                entry.AccessCount++;
+                entry.LastAccessedAt = DateTime.UtcNow;
+                await _store.UpdateAsync(entry, ct);
+            }
+        }
+        catch { /* Non-critical — don't fail recall for access tracking */ }
     }
 
     // ─── Context (L0 + L1) ───────────────────────────────────────────────
@@ -349,6 +373,9 @@ public class MemoryService
 
         return chain;
     }
+
+    public async Task<DatabaseInfo?> GetStoreInfoAsync(CancellationToken ct = default) =>
+        await _store.GetDatabaseInfoAsync(ct);
 
     // ─── Helpers ─────────────────────────────────────────────────────────
 

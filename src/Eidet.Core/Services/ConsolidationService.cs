@@ -60,26 +60,42 @@ public class ConsolidationService
 
             if (!dryRun)
             {
-                var now = DateTime.UtcNow;
-                var insight = new MemoryEntry
+                // Check existing insights for topic coverage (spec: vector similarity > 0.85)
+                var existingInsight = await _store.FindDuplicateAsync(repoId, representative.Content, 0.85f, ct);
+                if (existingInsight is not null && existingInsight.Type == MemoryType.Insight)
                 {
-                    Id = MemoryIdGenerator.Generate(repoId, MemoryType.Insight, representative.Content, now),
-                    RepoId = repoId,
-                    Type = MemoryType.Insight,
-                    Content = representative.Content,
-                    Tags = unionTags,
-                    Importance = proposedImportance,
-                    Source = "consolidation",
-                    Provenance = MemoryProvenance.Consolidation,
-                    Confidence = 0.7f,
-                    CreatedAt = now,
-                    Validity = new Validity { ValidFrom = now },
-                    DerivedFrom = candidate.ObservationIds,
-                    Entities = EntityExtractor.Extract(representative.Content),
-                    OneLiner = EntityExtractor.GenerateHeuristicOneLiner(representative.Content),
-                };
-                await _store.StoreAsync(insight, ct);
-                result.InsightsCreated++;
+                    // Boost existing insight's importance instead of creating a new one
+                    existingInsight.Importance = Math.Min(1.0f, existingInsight.Importance + 0.05f * group.Count);
+                    existingInsight.DerivedFrom = existingInsight.DerivedFrom
+                        .Concat(candidate.ObservationIds)
+                        .Distinct()
+                        .ToList();
+                    await _store.UpdateAsync(existingInsight, ct);
+                    result.InsightsBoosted++;
+                }
+                else
+                {
+                    var now = DateTime.UtcNow;
+                    var insight = new MemoryEntry
+                    {
+                        Id = MemoryIdGenerator.Generate(repoId, MemoryType.Insight, representative.Content, now),
+                        RepoId = repoId,
+                        Type = MemoryType.Insight,
+                        Content = representative.Content,
+                        Tags = unionTags,
+                        Importance = proposedImportance,
+                        Source = "consolidation",
+                        Provenance = MemoryProvenance.Consolidation,
+                        Confidence = 0.7f,
+                        CreatedAt = now,
+                        Validity = new Validity { ValidFrom = now },
+                        DerivedFrom = candidate.ObservationIds,
+                        Entities = EntityExtractor.Extract(representative.Content),
+                        OneLiner = EntityExtractor.GenerateHeuristicOneLiner(representative.Content),
+                    };
+                    await _store.StoreAsync(insight, ct);
+                    result.InsightsCreated++;
+                }
             }
         }
 
@@ -194,6 +210,7 @@ public class ConsolidationResult
 {
     public List<ConsolidationCandidate> Candidates { get; set; } = [];
     public int InsightsCreated { get; set; }
+    public int InsightsBoosted { get; set; }
 }
 
 public class ConsolidationCandidate

@@ -64,7 +64,7 @@ public class RavenEidetStore : IEidetStore
             .WhereIn("RepoId", repoIds);
 
         documentQuery = ApplyFilters(documentQuery, query);
-        return await documentQuery.Take(query.Limit).ToListAsync(ct);
+        return await documentQuery.Take(query.Limit * 2).ToListAsync(ct); // Over-fetch 2× for merge quality
     }
 
     public async Task<List<MemoryEntry>> VectorSearchAsync(

@@ -330,9 +330,15 @@ public class McpServer
             return McpCallToolResult.Text("No consolidation candidates found. Need 3+ related observations.");
 
         var lines = new List<string>();
-        lines.Add(dryRun
-            ? $"Consolidation preview: {result.Candidates.Count} candidate(s)"
-            : $"Consolidated: {result.InsightsCreated} insight(s) from {result.Candidates.Count} group(s)");
+        if (dryRun)
+            lines.Add($"Consolidation preview: {result.Candidates.Count} candidate(s)");
+        else
+        {
+            var parts = new List<string>();
+            if (result.InsightsCreated > 0) parts.Add($"{result.InsightsCreated} created");
+            if (result.InsightsBoosted > 0) parts.Add($"{result.InsightsBoosted} boosted");
+            lines.Add($"Consolidated: {string.Join(", ", parts)} from {result.Candidates.Count} group(s)");
+        }
 
         foreach (var c in result.Candidates)
         {

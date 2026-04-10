@@ -23,6 +23,24 @@ app.Configure(config =>
 
     config.AddCommand<StatusCommand>("status")
         .WithDescription("Show service status and stats");
+
+    config.AddCommand<RecallCommand>("recall")
+        .WithDescription("Search memories");
+
+    config.AddCommand<StoreCommand>("store")
+        .WithDescription("Store a memory");
+
+    config.AddCommand<StatsCommand>("stats")
+        .WithDescription("Memory counts by type");
+
+    config.AddCommand<ExportCommand>("export")
+        .WithDescription("Export memories as markdown");
+
+    config.AddCommand<IntakeCommand>("intake")
+        .WithDescription("Ingest project files as seed memories");
+
+    config.AddCommand<MaintainCommand>("maintain")
+        .WithDescription("Run maintenance pipeline");
 });
 
 return app.Run(args);

@@ -36,7 +36,10 @@ public class MaintenanceService
         // Stage 5: Orphan Cleanup
         result.OrphansCleaned = await CleanOrphansAsync(repoId, now, ct);
 
-        // Stage 6: Auto-Consolidation
+        // Stage 6: Backfill Enrichment (entities + one-liners for memories missing them)
+        result.BackfillEnriched = await BackfillEnrichmentAsync(repoId, ct);
+
+        // Stage 7: Auto-Consolidation
         var consolidationResult = await _consolidation.ConsolidateAsync(repoId, ct: ct);
         result.ConsolidatedInsights = consolidationResult.InsightsCreated;
 
@@ -150,6 +153,39 @@ public class MaintenanceService
         return cleaned;
     }
 
+    private async Task<int> BackfillEnrichmentAsync(string repoId, CancellationToken ct)
+    {
+        var entries = await _store.GetTopScoredAsync(repoId, Enum.GetValues<MemoryType>(), 500, ct);
+        var enriched = 0;
+
+        foreach (var entry in entries)
+        {
+            var changed = false;
+
+            // Backfill missing entities
+            if (entry.Entities.Count == 0 && !string.IsNullOrWhiteSpace(entry.Content))
+            {
+                entry.Entities = EntityExtractor.Extract(entry.Content);
+                if (entry.Entities.Count > 0) changed = true;
+            }
+
+            // Backfill missing one-liner
+            if (string.IsNullOrEmpty(entry.OneLiner) && !string.IsNullOrWhiteSpace(entry.Content))
+            {
+                entry.OneLiner = EntityExtractor.GenerateHeuristicOneLiner(entry.Content);
+                if (!string.IsNullOrEmpty(entry.OneLiner)) changed = true;
+            }
+
+            if (changed)
+            {
+                await _store.UpdateAsync(entry, ct);
+                enriched++;
+            }
+        }
+
+        return enriched;
+    }
+
     internal static float ComputeWordSimilarity(string a, string b)
     {
         var wordsA = Tokenize(a);
@@ -179,9 +215,10 @@ public class MaintenanceResult
     public int DedupMerged { get; set; }
     public int DecayUpdated { get; set; }
     public int OrphansCleaned { get; set; }
+    public int BackfillEnriched { get; set; }
     public int ConsolidatedInsights { get; set; }
     public DateTime CompletedAt { get; set; }
 
     public override string ToString() =>
-        $"Maintenance complete: TTL={ExpiredByTtl}, Retention={ExpiredByRetention}, Dedup={DedupMerged}, Decay={DecayUpdated}, Orphans={OrphansCleaned}, Consolidated={ConsolidatedInsights}";
+        $"Maintenance complete: TTL={ExpiredByTtl}, Retention={ExpiredByRetention}, Dedup={DedupMerged}, Decay={DecayUpdated}, Orphans={OrphansCleaned}, Backfill={BackfillEnriched}, Consolidated={ConsolidatedInsights}";
 }
