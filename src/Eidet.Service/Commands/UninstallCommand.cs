@@ -88,10 +88,17 @@ public sealed class UninstallCommand : AsyncCommand<UninstallCommand.Settings>
 
     private static async Task<string> UnregisterWindowsServiceAsync(CancellationToken ct)
     {
+        // Stop the running task
+        await RunProcessAsync("schtasks.exe", "/end /tn \"Eidet\"", ct);
+
+        // Delete the scheduled task
+        var result = await RunProcessAsync("schtasks.exe", "/delete /tn \"Eidet\" /f", ct);
+
+        // Also clean up legacy Windows Service if present
         await RunProcessAsync("sc.exe", "stop Eidet", ct);
-        await Task.Delay(1000, ct);
-        var result = await RunProcessAsync("sc.exe", "delete Eidet", ct);
-        return result.ExitCode == 0 ? "Windows Service removed" : "Service not found or already removed";
+        await RunProcessAsync("sc.exe", "delete Eidet", ct);
+
+        return result.ExitCode == 0 ? "Scheduled task removed" : "Task not found or already removed";
     }
 
     private static async Task<string> UnregisterLaunchdAsync(CancellationToken ct)

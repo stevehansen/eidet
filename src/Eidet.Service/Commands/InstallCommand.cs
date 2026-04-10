@@ -71,33 +71,64 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
 
     private static async Task<string> RegisterWindowsServiceAsync(string exePath, CancellationToken ct)
     {
-        var serviceName = "Eidet";
-        // Check if service already exists
-        var checkResult = await RunProcessAsync("sc.exe", $"query {serviceName}", ct);
-        if (checkResult.ExitCode == 0)
-        {
-            // Stop and delete existing service, then recreate
-            await RunProcessAsync("sc.exe", $"stop {serviceName}", ct);
-            await Task.Delay(1000, ct);
-            await RunProcessAsync("sc.exe", $"delete {serviceName}", ct);
-            await Task.Delay(500, ct);
-        }
+        var taskName = "Eidet";
 
-        var createResult = await RunProcessAsync("sc.exe",
-            $"create {serviceName} binPath= \"\\\"{exePath}\\\" serve --service\" start= auto DisplayName= \"Eidet Memory Service\"", ct);
+        // Remove existing task if present
+        await RunProcessAsync("schtasks.exe", $"/delete /tn \"{taskName}\" /f", ct);
+
+        // Write task XML to temp file
+        var xmlPath = Path.Combine(Path.GetTempPath(), "eidet-task.xml");
+        var xml = $"""
+            <?xml version="1.0" encoding="UTF-16"?>
+            <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+              <RegistrationInfo>
+                <Description>Eidet Memory Service — long-term memory for AI coding agents</Description>
+              </RegistrationInfo>
+              <Triggers>
+                <LogonTrigger>
+                  <Enabled>true</Enabled>
+                </LogonTrigger>
+              </Triggers>
+              <Principals>
+                <Principal>
+                  <LogonType>InteractiveToken</LogonType>
+                  <RunLevel>LeastPrivilege</RunLevel>
+                </Principal>
+              </Principals>
+              <Settings>
+                <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+                <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+                <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+                <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+                <RestartOnFailure>
+                  <Interval>PT1M</Interval>
+                  <Count>3</Count>
+                </RestartOnFailure>
+              </Settings>
+              <Actions>
+                <Exec>
+                  <Command>{exePath}</Command>
+                  <Arguments>serve</Arguments>
+                </Exec>
+              </Actions>
+            </Task>
+            """;
+
+        await File.WriteAllTextAsync(xmlPath, xml, ct);
+
+        var createResult = await RunProcessAsync("schtasks.exe",
+            $"/create /tn \"{taskName}\" /xml \"{xmlPath}\" /f", ct);
+
+        File.Delete(xmlPath);
 
         if (createResult.ExitCode != 0)
-            return $"Failed to create service: {createResult.Output}";
+            return $"Failed to create scheduled task: {createResult.Output}";
 
-        // Set description
-        await RunProcessAsync("sc.exe",
-            $"description {serviceName} \"Long-term memory for AI coding agents\"", ct);
-
-        // Start the service
-        var startResult = await RunProcessAsync("sc.exe", $"start {serviceName}", ct);
+        // Start immediately
+        var startResult = await RunProcessAsync("schtasks.exe", $"/run /tn \"{taskName}\"", ct);
         return startResult.ExitCode == 0
-            ? "Windows Service registered and started"
-            : "Windows Service registered (start manually with: sc.exe start Eidet)";
+            ? "Scheduled task registered and started (runs at logon)"
+            : "Scheduled task registered (starts at next logon)";
     }
 
     private static async Task<string> RegisterLaunchdAsync(string exePath, CancellationToken ct)
