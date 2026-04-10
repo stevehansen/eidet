@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eidet-sdk"
+version = "0.1.0"
+description = "Python client SDK for Eidet — long-term memory for AI coding agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+keywords = ["eidet", "memory", "ai", "coding-agent", "mcp"]
+dependencies = ["httpx>=0.27"]
+
+[project.urls]
+Homepage = "https://github.com/stevehansen/eidet"

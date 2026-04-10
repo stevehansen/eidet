@@ -18,6 +18,7 @@ public interface IEidetStore
     Task EnsureIndexesAsync(CancellationToken ct = default);
 
     Task<List<string>> GetDistinctRepoIdsAsync(CancellationToken ct = default);
+    Task<List<MemoryEntry>> BrowseAsync(string repoId, int skip, int take, MemoryType? type = null, CancellationToken ct = default);
 
     // Layer operations
     Task<string> StoreMountedLayerAsync(MemoryLayer layer, CancellationToken ct = default);

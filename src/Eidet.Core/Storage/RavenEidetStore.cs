@@ -243,6 +243,24 @@ public class RavenEidetStore : IEidetStore
         }
     }
 
+    public async Task<List<MemoryEntry>> BrowseAsync(string repoId, int skip, int take, MemoryType? type = null, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+        var query = session.Advanced
+            .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
+            .WhereEquals("RepoId", repoId)
+            .WhereEquals("ValidUntil", (DateTime?)null);
+
+        if (type.HasValue)
+            query = query.WhereEquals("Type", type.Value);
+
+        return await query
+            .OrderByDescending("CreatedAt")
+            .Skip(skip)
+            .Take(take)
+            .ToListAsync(ct);
+    }
+
     private class RepoIdProjection { public string RepoId { get; set; } = ""; }
 
     // ─── Layer operations ─────────────────────────────────────────────

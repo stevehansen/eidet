@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageId>Eidet.Sdk</PackageId>
+    <Version>0.1.0</Version>
+    <Description>C# client SDK for Eidet — long-term memory for AI coding agents</Description>
+    <Authors>Steve Hansen</Authors>
+    <PackageTags>eidet;memory;ai;coding-agent;mcp</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+</Project>

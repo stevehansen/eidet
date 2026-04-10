@@ -85,17 +85,34 @@ All design decisions are documented in `docs/specs/`:
 - **Graceful shutdown**: `eidet serve` handles Ctrl+C/SIGTERM cleanly — stops scheduler, disposes enrichment, closes RavenDB store, stops HttpListener. Uses `CancellationTokenSource.CreateLinkedTokenSource`.
 - **Test coverage**: 186 → 193 tests. Added ConfigManager defaults (7), InstallCommand MCP config (1), verified existing patterns.
 
-### Phase 7 — In Progress
+### Phase 7 — Done
 - **RavenDB Embedded mode**: `DocumentStoreFactory.CreateEmbedded()` and `CreateFromConfig()` — starts embedded RavenDB server from `RavenDB.Embedded` NuGet, manages lifecycle. All commands now use `CreateFromConfig` (auto-selects embedded vs external). `eidet setup --embedded` provisions indexes and embeddings. `eidet doctor` tests embedded mode. Default data dir: `~/.eidet/data/raven` (Unix) or `%APPDATA%\Eidet\data\raven` (Windows).
 - **API key authentication**: `AuthConfig` with `Enabled`, `RequireForNonLocalhost`, `ApiKeys` list. `ApiKeyService` in Core: SHA256 key hashing, scope validation (`read:all`, `write:observations`, `write:all`, `admin`), `admin` implies all scopes, `write:all` implies `write:observations`. `EidetApiServer` auth middleware: checks `Authorization: Bearer` header, validates key, checks scope. Health/status endpoints exempt. CORS headers (`Access-Control-Allow-Origin: *`) + OPTIONS preflight handling.
 - **`eidet api-key create/list/revoke`**: CLI commands for key management. Creating first key auto-enables auth. Revoking last key auto-disables. `--scopes` flag, `--json` output.
 - **Network binding guard**: `eidet serve` refuses to start on non-localhost without auth enabled. Configurable via `auth.requireForNonLocalhost`.
 - **Test coverage**: 193 → 220 tests. Added ApiKeyService (16), AuthConfig (3), DocumentStoreFactory (4), ConfigHelper auth keys (4).
 
-### Phase 8 — Future
-- Web UI for memory exploration (knowledge graph, timeline, browser)
+### Phase 8 — Done
+- **Local Web UI**: SPA served at `http://localhost:19380/ui` from embedded resources. Dark-themed, responsive. 5 pages:
+  - **Dashboard**: Repo selector, memory counts by type, recent memories list.
+  - **Memory Browser**: Full-text search + browse with type filter, paginated results, detail panel (content, entities, tags, importance, confidence, provenance, echo/fizzle counts).
+  - **Knowledge Graph**: Canvas-based force-directed graph. Nodes colored by type (blue=observation, purple=insight, green=procedure, orange=heuristic), sized by importance. Edges from DerivedFrom/Links. Interactive drag, hover tooltips.
+  - **Timeline**: Chronological view grouped by date, type badges, tag chips.
+  - **Settings**: Service status display (version, uptime, database info). Action buttons: intake, consolidate, maintenance, export.
+- **New API endpoints**: `GET /api/eidet/repos` (list all repo IDs), `GET /api/eidet/browse` (paginated browse with type filter, no search query required), `GET /api/eidet/graph` (graph data — nodes + edges for visualization).
+- **BrowseAsync**: New `IEidetStore.BrowseAsync` method for paginated memory listing by repo, ordered by creation date. `MemoryService.BrowseAsync` and `GetGraphDataAsync` wrappers.
+- **GraphData domain types**: `GraphData`, `GraphNode`, `GraphEdge` — compact graph representation with type, label, importance, edges.
+- **Embedded resource serving**: Static files compiled into assembly via `<EmbeddedResource>`. Served from `EidetApiServer` for `/ui/*` routes. MIME type mapping for HTML/CSS/JS/SVG/PNG. Path traversal protection.
+- **UI routes exempt from auth**: `/ui` and `/ui/*` paths are public (no API key required) in `ApiKeyService.GetRequiredScope`.
+- **Test coverage**: 220 → 233 tests. Added GraphData (4), WebUI embedded resources (5), ApiKeyService UI scope (2).
+
+### Phase 9 — Done
+- **TypeScript SDK** (`sdk/typescript/`): `@eidet/sdk` npm package. `EidetClient` class wrapping all REST endpoints with full TypeScript types. ESM module, zero runtime dependencies (uses native `fetch`). Methods: `store`, `recall`, `context`, `browse`, `graph`, `repos`, `forget`, `feedback`, `history`, `intake`, `consolidate`, `maintenance`, `exportMarkdown`, `health`, `status`. `EidetError` for HTTP errors. Supports API key auth.
+- **Python SDK** (`sdk/python/`): `eidet-sdk` pip package. `EidetClient` class using `httpx`. Full type hints, context manager support. `MemoryType` enum, `StoreRequest` dataclass. Methods mirror TypeScript SDK. `EidetError` exception. Python 3.10+.
+- **C# SDK** (`sdk/dotnet/Eidet.Sdk/`): `Eidet.Sdk` NuGet package targeting `net8.0`. `EidetClient` (IDisposable) using `HttpClient` + `System.Text.Json`. Full record types for all request/response models (`StoreRequest`, `MemoryEntry`, `SearchResult`, `BrowseResponse`, `GraphData`, etc.). `EidetException` for HTTP errors. CancellationToken support throughout. `IsAvailableAsync` health check.
+
+### Phase 10 — Future
 - VS Code extension (memory sidebar, inline annotations)
-- Client SDKs (TypeScript, Python, C#)
 
 ## MVP Scope
 
@@ -125,21 +142,26 @@ eidet/
 ├── src/
 │   ├── Eidet.Core/               # Core library
 │   │   ├── Configuration/        # EidetConfig, ConfigManager, StorageMode
-│   │   ├── Domain/               # MemoryEntry, MemoryType, Validity, layers, links, packs
+│   │   ├── Domain/               # MemoryEntry, MemoryType, Validity, layers, links, packs, GraphData
 │   │   ├── Gates/                # SecretScanner, SignalGate, WriteGate
 │   │   ├── Indexes/              # Memories_Search, Memories_CountByType
 │   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, OllamaService, ApiKeyService, enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
 │   │   ├── StringUtils.cs        # Shared string helpers (Truncate)
 │   │   └── Storage/              # IEidetStore, RavenEidetStore, DatabaseProvisioner, DocumentStoreFactory (embedded + external)
 │   ├── Eidet.Service/            # CLI + REST API + system service
-│   │   ├── Api/                  # EidetApiServer (HttpListener + MCP HTTP)
+│   │   ├── Api/                  # EidetApiServer (HttpListener + MCP HTTP + embedded Web UI)
 │   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, export, intake, maintain, install, uninstall, config, instructions, ollama, docker, update, api-key
 │   │   ├── Mcp/                  # McpServer (stdio + HTTP), McpModels, McpToolDefinitions
-│   │   └── Scheduler/            # MaintenanceScheduler (background timers)
+│   │   ├── Scheduler/            # MaintenanceScheduler (background timers)
+│   │   └── wwwroot/              # Web UI SPA (index.html, app.css, app.js) — embedded resources
 │   └── Eidet.Sync/              # Sync adapters (future)
+├── sdk/
+│   ├── typescript/              # @eidet/sdk npm package (EidetClient, full types)
+│   ├── python/                  # eidet-sdk pip package (EidetClient, httpx, type hints)
+│   └── dotnet/Eidet.Sdk/       # Eidet.Sdk NuGet package (EidetClient, record types)
 ├── tests/
-│   ├── Eidet.Core.Tests/        # 172 tests
-│   └── Eidet.Service.Tests/     # 48 tests
+│   ├── Eidet.Core.Tests/        # 178 tests
+│   └── Eidet.Service.Tests/     # 55 tests
 └── docs/
     └── specs/
 ```
@@ -157,6 +179,7 @@ eidet/
 - **Cross-checked with TerminalHost.Memory**: Domain model, indexes, write gates, entity extraction all verified against the reference implementation.
 - **API key auth with scope model**: Bearer token auth, SHA256 hashed keys in config, 4 scopes (read:all, write:observations, write:all, admin). Health/status always public. Network binding guard prevents non-localhost without auth.
 - **CORS enabled**: All responses include `Access-Control-Allow-Origin: *` for browser/Web UI access.
+- **Embedded Web UI**: SPA compiled as embedded resources — no external files to manage, ships with the binary. Vanilla HTML/CSS/JS with canvas-based graph (no framework dependencies). Dark theme, responsive.
 
 ## API Quick Reference
 
@@ -179,6 +202,18 @@ curl -X POST http://localhost:19380/api/eidet \
 curl -X POST http://localhost:19380/api/eidet/feedback \
   -H "Content-Type: application/json" \
   -d '{"memoryId":"memories/P--Eidet/insight/abc123","wasUsed":true}'
+
+# Browse memories (paginated, no search query)
+curl "http://localhost:19380/api/eidet/browse?repo=P%3A%5CEidet&skip=0&take=50&type=insight"
+
+# List all repos
+curl http://localhost:19380/api/eidet/repos
+
+# Graph data for visualization
+curl "http://localhost:19380/api/eidet/graph?repo=P%3A%5CEidet&limit=200"
+
+# Web UI
+# Open http://localhost:19380/ui in browser
 ```
 
 ## Links

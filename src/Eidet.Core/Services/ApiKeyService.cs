@@ -68,8 +68,8 @@ public static class ApiKeyService
     /// </summary>
     public static string GetRequiredScope(string method, string path)
     {
-        // Health and status are always public
-        if (path == "/api/health" || path == "/api/status")
+        // Health, status, and UI are always public
+        if (path == "/api/health" || path == "/api/status" || path == "/ui" || path.StartsWith("/ui/"))
             return "";
 
         // Write operations

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Eidet.Core.Configuration;
@@ -181,8 +182,23 @@ public class EidetApiServer
             else if (method == "DELETE" && path.StartsWith("/api/eidet/"))
                 await HandleForget(ctx, path["/api/eidet/".Length..], ct);
 
+            else if (method == "GET" && path == "/api/eidet/repos")
+                await HandleGetRepos(ctx, ct);
+
+            else if (method == "GET" && path == "/api/eidet/browse")
+                await HandleBrowse(ctx, ct);
+
+            else if (method == "GET" && path == "/api/eidet/graph")
+                await HandleGraph(ctx, ct);
+
             else if (method == "GET" && path.StartsWith("/api/eidet/"))
                 await HandleGetMemory(ctx, path["/api/eidet/".Length..], ct);
+
+            else if (path == "/ui" || path == "/ui/")
+                await ServeEmbeddedFile(ctx, "index.html");
+
+            else if (path.StartsWith("/ui/"))
+                await ServeEmbeddedFile(ctx, path["/ui/".Length..]);
 
             else
                 await WriteJson(ctx, new { error = "Not found" }, 404);
@@ -519,6 +535,82 @@ public class EidetApiServer
         var ok = await _layers.UnmountAsync(decoded, ct);
         if (ok) await WriteJson(ctx, new { unmounted = true });
         else await WriteJson(ctx, new { error = "Layer not found" }, 404);
+    }
+
+    private async Task HandleGetRepos(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var repos = await _svc.GetRepoIdsAsync(ct);
+        await WriteJson(ctx, new { repos = repos.Select(r => new { repoId = r }) });
+    }
+
+    private async Task HandleBrowse(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var repo = ctx.Request.QueryString["repo"];
+        if (string.IsNullOrEmpty(repo))
+        {
+            await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
+            return;
+        }
+        var skip = int.TryParse(ctx.Request.QueryString["skip"], out var s) ? s : 0;
+        var take = int.TryParse(ctx.Request.QueryString["take"], out var t) ? t : 50;
+        var type = Enum.TryParse<MemoryType>(ctx.Request.QueryString["type"], true, out var mt) ? mt : (MemoryType?)null;
+
+        var entries = await _svc.BrowseAsync(repo, skip, take, type, ct);
+        await WriteJson(ctx, new { repo, skip, take, count = entries.Count, entries });
+    }
+
+    private async Task HandleGraph(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var repo = ctx.Request.QueryString["repo"];
+        if (string.IsNullOrEmpty(repo))
+        {
+            await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
+            return;
+        }
+        var limit = int.TryParse(ctx.Request.QueryString["limit"], out var lim) ? lim : 200;
+        var graph = await _svc.GetGraphDataAsync(repo, limit, ct);
+        await WriteJson(ctx, graph);
+    }
+
+    private static readonly Dictionary<string, string> MimeTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [".html"] = "text/html; charset=utf-8",
+        [".css"] = "text/css; charset=utf-8",
+        [".js"] = "application/javascript; charset=utf-8",
+        [".json"] = "application/json",
+        [".svg"] = "image/svg+xml",
+        [".png"] = "image/png",
+        [".ico"] = "image/x-icon",
+    };
+
+    private static async Task ServeEmbeddedFile(HttpListenerContext ctx, string filePath)
+    {
+        // Sanitize path
+        filePath = filePath.Replace('\\', '/').TrimStart('/');
+        if (filePath.Contains(".."))
+        {
+            ctx.Response.StatusCode = 400;
+            ctx.Response.Close();
+            return;
+        }
+
+        var resourceName = $"Eidet.Service.wwwroot.{filePath.Replace('/', '.')}";
+        var assembly = Assembly.GetExecutingAssembly();
+        using var stream = assembly.GetManifestResourceStream(resourceName);
+
+        if (stream is null)
+        {
+            ctx.Response.StatusCode = 404;
+            ctx.Response.Close();
+            return;
+        }
+
+        var ext = Path.GetExtension(filePath);
+        ctx.Response.ContentType = MimeTypes.GetValueOrDefault(ext, "application/octet-stream");
+        ctx.Response.StatusCode = 200;
+        ctx.Response.ContentLength64 = stream.Length;
+        await stream.CopyToAsync(ctx.Response.OutputStream);
+        ctx.Response.Close();
     }
 
     private static void AddCorsHeaders(HttpListenerContext ctx)

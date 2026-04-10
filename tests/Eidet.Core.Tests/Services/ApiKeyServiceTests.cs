@@ -127,6 +127,24 @@ public class ApiKeyServiceTests
     }
 
     [Fact]
+    public void GetRequiredScope_UIIsPublic()
+    {
+        Assert.Equal("", ApiKeyService.GetRequiredScope("GET", "/ui"));
+        Assert.Equal("", ApiKeyService.GetRequiredScope("GET", "/ui/"));
+        Assert.Equal("", ApiKeyService.GetRequiredScope("GET", "/ui/app.js"));
+        Assert.Equal("", ApiKeyService.GetRequiredScope("GET", "/ui/app.css"));
+        Assert.Equal("", ApiKeyService.GetRequiredScope("GET", "/ui/index.html"));
+    }
+
+    [Fact]
+    public void GetRequiredScope_BrowseAndReposNeedRead()
+    {
+        Assert.Equal("read:all", ApiKeyService.GetRequiredScope("GET", "/api/eidet/repos"));
+        Assert.Equal("read:all", ApiKeyService.GetRequiredScope("GET", "/api/eidet/browse"));
+        Assert.Equal("read:all", ApiKeyService.GetRequiredScope("GET", "/api/eidet/graph"));
+    }
+
+    [Fact]
     public void HashKey_Deterministic()
     {
         var hash1 = ApiKeyService.HashKey("eidet_test123");

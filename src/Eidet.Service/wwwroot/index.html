@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eidet Memory Explorer</title>
+  <link rel="stylesheet" href="/ui/app.css">
+</head>
+<body>
+  <div id="app">
+    <nav id="sidebar">
+      <div class="logo">
+        <h1>Eidet</h1>
+        <span class="subtitle">Memory Explorer</span>
+      </div>
+      <div class="nav-links">
+        <a href="#dashboard" class="nav-link active" data-page="dashboard">
+          <span class="icon">&#9632;</span> Dashboard
+        </a>
+        <a href="#browser" class="nav-link" data-page="browser">
+          <span class="icon">&#128269;</span> Browser
+        </a>
+        <a href="#graph" class="nav-link" data-page="graph">
+          <span class="icon">&#9733;</span> Graph
+        </a>
+        <a href="#timeline" class="nav-link" data-page="timeline">
+          <span class="icon">&#9202;</span> Timeline
+        </a>
+        <a href="#settings" class="nav-link" data-page="settings">
+          <span class="icon">&#9881;</span> Settings
+        </a>
+      </div>
+      <div class="repo-selector">
+        <label for="repoSelect">Repository</label>
+        <select id="repoSelect"><option value="">Loading...</option></select>
+      </div>
+      <div class="service-info" id="serviceInfo">
+        <span class="status-dot"></span>
+        <span id="serviceVersion">--</span>
+      </div>
+    </nav>
+
+    <main id="content">
+      <!-- Dashboard -->
+      <section id="page-dashboard" class="page active">
+        <h2>Dashboard</h2>
+        <div class="stats-grid" id="dashboardStats"></div>
+        <div class="card">
+          <h3>Recent Memories</h3>
+          <div id="recentMemories" class="memory-list"></div>
+        </div>
+      </section>
+
+      <!-- Browser -->
+      <section id="page-browser" class="page">
+        <h2>Memory Browser</h2>
+        <div class="browser-toolbar">
+          <input type="text" id="searchInput" placeholder="Search memories..." class="search-input">
+          <select id="typeFilter" class="filter-select">
+            <option value="">All Types</option>
+            <option value="observation">Observation</option>
+            <option value="insight">Insight</option>
+            <option value="procedure">Procedure</option>
+            <option value="heuristic">Heuristic</option>
+          </select>
+          <button id="searchBtn" class="btn btn-primary">Search</button>
+          <button id="browseBtn" class="btn">Browse All</button>
+        </div>
+        <div class="browser-layout">
+          <div class="memory-list" id="browserResults"></div>
+          <div class="detail-panel" id="detailPanel">
+            <div class="detail-placeholder">Select a memory to view details</div>
+          </div>
+        </div>
+        <div class="pagination" id="browserPagination"></div>
+      </section>
+
+      <!-- Graph -->
+      <section id="page-graph" class="page">
+        <h2>Knowledge Graph</h2>
+        <div class="graph-toolbar">
+          <button id="graphRefresh" class="btn">Refresh</button>
+          <label><input type="range" id="graphLimit" min="20" max="500" value="100"> <span id="graphLimitLabel">100</span> nodes</label>
+        </div>
+        <div class="graph-container">
+          <canvas id="graphCanvas"></canvas>
+        </div>
+        <div class="graph-legend">
+          <span class="legend-item"><span class="dot dot-observation"></span> Observation</span>
+          <span class="legend-item"><span class="dot dot-insight"></span> Insight</span>
+          <span class="legend-item"><span class="dot dot-procedure"></span> Procedure</span>
+          <span class="legend-item"><span class="dot dot-heuristic"></span> Heuristic</span>
+        </div>
+      </section>
+
+      <!-- Timeline -->
+      <section id="page-timeline" class="page">
+        <h2>Timeline</h2>
+        <div class="timeline-container" id="timelineContainer"></div>
+      </section>
+
+      <!-- Settings -->
+      <section id="page-settings" class="page">
+        <h2>Settings</h2>
+        <div class="card">
+          <h3>Service Configuration</h3>
+          <div id="configList" class="config-list"></div>
+        </div>
+        <div class="card">
+          <h3>Actions</h3>
+          <div class="actions-grid">
+            <button class="btn" id="btnIntake">Run Intake</button>
+            <button class="btn" id="btnConsolidate">Consolidate</button>
+            <button class="btn" id="btnMaintenance">Run Maintenance</button>
+            <button class="btn" id="btnExport">Export Markdown</button>
+          </div>
+          <div id="actionResult" class="action-result"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/ui/app.js"></script>
+</body>
+</html>

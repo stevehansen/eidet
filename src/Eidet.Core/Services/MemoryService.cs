@@ -380,6 +380,53 @@ public class MemoryService
     public async Task<DatabaseInfo?> GetStoreInfoAsync(CancellationToken ct = default) =>
         await _store.GetDatabaseInfoAsync(ct);
 
+    // ─── Browse ─────────────────────────────────────────────────────────
+
+    public async Task<List<MemoryEntry>> BrowseAsync(
+        string repoId, int skip = 0, int take = 50, MemoryType? type = null, CancellationToken ct = default)
+    {
+        var normalizedRepoId = RepoIdNormalizer.Normalize(repoId);
+        return await _store.BrowseAsync(normalizedRepoId, skip, take, type, ct);
+    }
+
+    public async Task<List<string>> GetRepoIdsAsync(CancellationToken ct = default) =>
+        await _store.GetDistinctRepoIdsAsync(ct);
+
+    public async Task<GraphData> GetGraphDataAsync(
+        string repoId, int limit = 200, CancellationToken ct = default)
+    {
+        var normalizedRepoId = RepoIdNormalizer.Normalize(repoId);
+        var entries = await _store.BrowseAsync(normalizedRepoId, 0, limit, ct: ct);
+
+        var nodes = entries.Select(e => new GraphNode
+        {
+            Id = e.Id,
+            Type = e.Type,
+            Label = e.OneLiner ?? e.Summary ?? StringUtils.Truncate(e.Content, 60),
+            Importance = e.Importance,
+            Tags = e.Tags,
+        }).ToList();
+
+        var idSet = new HashSet<string>(entries.Select(e => e.Id), StringComparer.OrdinalIgnoreCase);
+        var edges = new List<GraphEdge>();
+
+        foreach (var e in entries)
+        {
+            foreach (var parentId in e.DerivedFrom)
+            {
+                if (idSet.Contains(parentId))
+                    edges.Add(new GraphEdge { From = parentId, To = e.Id, Relation = "derived" });
+            }
+            foreach (var link in e.Links)
+            {
+                if (!string.IsNullOrEmpty(link.TargetMemoryId) && idSet.Contains(link.TargetMemoryId))
+                    edges.Add(new GraphEdge { From = e.Id, To = link.TargetMemoryId, Relation = link.Relation });
+            }
+        }
+
+        return new GraphData { Nodes = nodes, Edges = edges };
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────
 
     private static double ComputeL1Score(MemoryEntry entry, DateTime now)
