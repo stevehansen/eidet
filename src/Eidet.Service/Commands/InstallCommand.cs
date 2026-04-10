@@ -84,7 +84,7 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         }
 
         var createResult = await RunProcessAsync("sc.exe",
-            $"create {serviceName} binPath= \"\\\"{exePath}\\\" serve\" start= auto DisplayName= \"Eidet Memory Service\"", ct);
+            $"create {serviceName} binPath= \"\\\"{exePath}\\\" serve --service\" start= auto DisplayName= \"Eidet Memory Service\"", ct);
 
         if (createResult.ExitCode != 0)
             return $"Failed to create service: {createResult.Output}";
