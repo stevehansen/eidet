@@ -42,6 +42,12 @@ public sealed class EidetWindowsService : BackgroundService
             _logger.LogInformation("Scheduler active (maintenance every {M}h, consolidation every {C}h)",
                 _host.MaintenanceIntervalHours, _host.ConsolidationIntervalHours);
 
+            if (_host.OllamaEnabled)
+            {
+                await _host.StartEnrichmentWorkerAsync(stoppingToken);
+                _logger.LogInformation("Enrichment worker active (RavenDB subscription)");
+            }
+
             await _host.RunAsync(stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

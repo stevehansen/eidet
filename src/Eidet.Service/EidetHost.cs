@@ -16,6 +16,7 @@ public sealed class EidetHost : IDisposable
     private readonly IDocumentStore _store;
     private readonly IEnrichmentService _enrichment;
     private readonly MaintenanceScheduler _scheduler;
+    private readonly EnrichmentWorker _enrichmentWorker;
     private readonly EidetApiServer _apiServer;
 
     public string BindAddress { get; }
@@ -33,12 +34,14 @@ public sealed class EidetHost : IDisposable
     public int HookCount { get; }
 
     private EidetHost(IDocumentStore store, IEnrichmentService enrichment,
-        MaintenanceScheduler scheduler, EidetApiServer apiServer, EidetConfig config,
+        MaintenanceScheduler scheduler, EnrichmentWorker enrichmentWorker,
+        EidetApiServer apiServer, EidetConfig config,
         string bind, int port)
     {
         _store = store;
         _enrichment = enrichment;
         _scheduler = scheduler;
+        _enrichmentWorker = enrichmentWorker;
         _apiServer = apiServer;
         BindAddress = bind;
         Port = port;
@@ -89,8 +92,9 @@ public sealed class EidetHost : IDisposable
             actualBind, actualPort, layerSvc, mcpServer, config.Auth, qualitySvc, enrichment, config);
 
         var scheduler = new MaintenanceScheduler(eidetStore, memorySvc, maintenanceSvc, consolidationSvc, config.Maintenance);
+        var enrichmentWorker = new EnrichmentWorker(store, enrichment);
 
-        return new EidetHost(store, enrichment, scheduler, apiServer, config, actualBind, actualPort);
+        return new EidetHost(store, enrichment, scheduler, enrichmentWorker, apiServer, config, actualBind, actualPort);
     }
 
     public async Task<bool> CheckOllamaAsync(CancellationToken ct = default)
@@ -110,10 +114,13 @@ public sealed class EidetHost : IDisposable
 
     public void StartScheduler() => _scheduler.Start();
 
+    public Task StartEnrichmentWorkerAsync(CancellationToken ct) => _enrichmentWorker.StartAsync(ct);
+
     public Task RunAsync(CancellationToken ct) => _apiServer.RunAsync(ct);
 
     public void Dispose()
     {
+        _enrichmentWorker.Dispose();
         _scheduler.Dispose();
         if (_enrichment is IDisposable d) d.Dispose();
         _store.Dispose();

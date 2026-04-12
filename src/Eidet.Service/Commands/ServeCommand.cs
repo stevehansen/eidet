@@ -129,6 +129,12 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         host.StartScheduler();
         AnsiConsole.MarkupLine($"  Scheduler: [green]Active[/] (maintenance every {host.MaintenanceIntervalHours}h, consolidation every {host.ConsolidationIntervalHours}h)");
 
+        if (host.OllamaEnabled)
+        {
+            await host.StartEnrichmentWorkerAsync(cancellation);
+            AnsiConsole.MarkupLine("  Enrichment: [green]Active[/] (RavenDB subscription — enriches on store)");
+        }
+
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         Console.CancelKeyPress += (_, e) =>
         {
