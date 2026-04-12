@@ -100,6 +100,7 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         var tempPath = targetPath + ".new";
 
         AnsiConsole.MarkupLine($"Downloading v{latestVersion}...");
+        AnsiConsole.MarkupLine($"  Source: {Markup.Escape(latest.Value.AssetUrl!)}");
 
         try
         {

@@ -211,7 +211,8 @@ public class EidetApiServer
         }
         catch (Exception ex)
         {
-            try { await WriteJson(ctx, new { error = ex.Message }, 500); } catch { }
+            Console.Error.WriteLine($"[Eidet] Unhandled error: {ex}");
+            try { await WriteJson(ctx, new { error = "Internal server error" }, 500); } catch { }
         }
     }
 

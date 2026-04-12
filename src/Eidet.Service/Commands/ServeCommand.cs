@@ -71,14 +71,14 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         AnsiConsole.MarkupLine($"[bold]Eidet[/] v{Eidet.Core.EidetVersion.Current}");
 
         if (host.StorageMode == StorageMode.Embedded)
-            AnsiConsole.MarkupLine($"  RavenDB: [green]Embedded[/]");
+            AnsiConsole.MarkupLine($"  RavenDB: [green]Embedded[/] ({Markup.Escape(host.RavenUrl)})");
         else
-            AnsiConsole.MarkupLine($"  RavenDB: [green]Connected[/]");
+            AnsiConsole.MarkupLine($"  RavenDB: [green]Connected[/] ({Markup.Escape(host.RavenUrl)})");
 
         if (host.OllamaEnabled)
         {
             var healthy = await host.CheckOllamaAsync(cancellation);
-            AnsiConsole.MarkupLine($"  Ollama:  {(healthy ? "[green]Connected[/]" : "[yellow]Unavailable[/]")} ({host.OllamaModel})");
+            AnsiConsole.MarkupLine($"  Ollama:  {(healthy ? "[green]Connected[/]" : "[yellow]Unavailable[/]")} ({host.OllamaModel} @ {Markup.Escape(host.OllamaUrl)})");
         }
 
         if (host.AuthEnabled)
@@ -90,6 +90,11 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
             AnsiConsole.MarkupLine("           [yellow]Or disable guard:  eidet config set auth.requireForNonLocalhost false[/]");
             return 1;
         }
+        else
+            AnsiConsole.MarkupLine($"  Auth:    [dim]Disabled[/] (localhost only)");
+
+        if (host.HookCount > 0)
+            AnsiConsole.MarkupLine($"  Hooks:   [yellow]{host.HookCount} configured[/]");
 
         AnsiConsole.MarkupLine($"  API:     [green]http://{host.BindAddress}:{host.Port}[/]");
         AnsiConsole.MarkupLine($"  MCP:     http://{host.BindAddress}:{host.Port}/mcp");

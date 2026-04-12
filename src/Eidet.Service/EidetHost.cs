@@ -28,6 +28,9 @@ public sealed class EidetHost : IDisposable
     public int ApiKeyCount { get; }
     public int MaintenanceIntervalHours { get; }
     public int ConsolidationIntervalHours { get; }
+    public string RavenUrl { get; }
+    public string OllamaUrl { get; }
+    public int HookCount { get; }
 
     private EidetHost(IDocumentStore store, IEnrichmentService enrichment,
         MaintenanceScheduler scheduler, EidetApiServer apiServer, EidetConfig config,
@@ -46,6 +49,13 @@ public sealed class EidetHost : IDisposable
         ApiKeyCount = config.Auth.ApiKeys.Count;
         MaintenanceIntervalHours = config.Maintenance.IntervalHours;
         ConsolidationIntervalHours = config.Maintenance.ConsolidationIntervalHours;
+        RavenUrl = config.Storage.Mode == StorageMode.Embedded
+            ? $"Embedded ({config.Storage.DataDir ?? "default"})"
+            : config.Storage.RavenUrl;
+        OllamaUrl = config.Enrichment.OllamaUrl;
+        HookCount = config.Hooks.PreStore.Count + config.Hooks.PostStore.Count
+            + config.Hooks.PreRecall.Count + config.Hooks.PostRecall.Count
+            + config.Hooks.PreForget.Count + config.Hooks.PostForget.Count;
     }
 
     public static EidetHost Create(string? bindAddress = null, int? port = null)

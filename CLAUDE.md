@@ -232,6 +232,32 @@ curl "http://localhost:19380/api/eidet/graph?repo=P%3A%5CEidet&limit=200"
 # Open http://localhost:19380/ui in browser
 ```
 
+## Security Documentation
+
+### STRIDE.md Threat Model
+
+This repository includes a STRIDE threat model (`STRIDE.md`) for security analysis.
+
+**When to update STRIDE.md:**
+- Adding new authentication/authorization mechanisms
+- Changing data storage, encryption, or secrets handling
+- Adding new external integrations or API endpoints
+- Modifying trust boundaries (new external connections, database access)
+- After security incidents or penetration test findings
+- When addressing security recommendations from the document
+
+**How to update:**
+1. Add new threats to the relevant STRIDE category (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege)
+2. Assess likelihood (Very Low → High) and impact (Low → Critical)
+3. Document existing mitigations or add recommendations
+4. Link GitHub issues for unresolved findings
+5. Update the Review History table
+6. Update version if using frontmatter
+
+**Tracking critical findings:**
+- Critical/High risk findings should have a linked GitHub issue with `security` label
+- Review STRIDE.md annually or after major releases
+
 ## Links
 
 - **GitHub**: https://github.com/stevehansen/eidet (private)
