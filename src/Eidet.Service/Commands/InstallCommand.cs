@@ -243,24 +243,17 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
     {
         try
         {
+            // Claude Code stores MCP servers in ~/.claude.json (user config)
             var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var claudeDir = Path.Combine(home, ".claude");
-            if (!Directory.Exists(claudeDir))
+            var claudeJsonPath = Path.Combine(home, ".claude.json");
+
+            if (!File.Exists(claudeJsonPath))
                 return false;
 
-            var settingsPath = Path.Combine(claudeDir, "settings.json");
-
-            System.Text.Json.Nodes.JsonObject root;
-            if (File.Exists(settingsPath))
-            {
-                var existing = File.ReadAllText(settingsPath);
-                root = System.Text.Json.Nodes.JsonNode.Parse(existing)?.AsObject()
-                    ?? new System.Text.Json.Nodes.JsonObject();
-            }
-            else
-            {
-                root = new System.Text.Json.Nodes.JsonObject();
-            }
+            var existing = File.ReadAllText(claudeJsonPath);
+            var root = System.Text.Json.Nodes.JsonNode.Parse(existing)?.AsObject();
+            if (root is null)
+                return false;
 
             if (!root.ContainsKey("mcpServers"))
                 root["mcpServers"] = new System.Text.Json.Nodes.JsonObject();
@@ -269,14 +262,15 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
             if (servers.ContainsKey("eidet"))
                 return false;
 
+            // Use just "eidet" — the dotnet tool shim is on PATH
             servers["eidet"] = new System.Text.Json.Nodes.JsonObject
             {
-                ["command"] = shimPath,
+                ["command"] = "eidet",
                 ["args"] = new System.Text.Json.Nodes.JsonArray("mcp"),
             };
 
             var json = root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(settingsPath, json);
+            File.WriteAllText(claudeJsonPath, json);
             return true;
         }
         catch
@@ -311,9 +305,10 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
             if (servers.ContainsKey("eidet"))
                 return false;
 
+            // Use just "eidet" — the dotnet tool shim is on PATH
             servers["eidet"] = new System.Text.Json.Nodes.JsonObject
             {
-                ["command"] = shimPath,
+                ["command"] = "eidet",
                 ["args"] = new System.Text.Json.Nodes.JsonArray("mcp"),
             };
 

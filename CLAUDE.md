@@ -168,7 +168,7 @@ eidet feedback   # opens GitHub Issues with version + OS pre-filled
 **Update flow:** `eidet update` checks NuGet for the latest version, stops the running service (scheduled task/launchd/systemd), runs `dotnet tool update -g eidet`, records the update in version history (`version-history.json`), and restarts the service. Version history is shown in `eidet status` and the Web UI.
 
 **MCP configuration:** `eidet install` auto-configures:
-- Claude Code: `~/.claude/settings.json` → `mcpServers.eidet`
+- Claude Code: `~/.claude.json` → `mcpServers.eidet`
 - Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json` (Windows) / `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
 ## MVP Scope
