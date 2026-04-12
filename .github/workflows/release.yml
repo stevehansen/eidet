@@ -58,7 +58,7 @@ jobs:
         shell: bash
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          CODE_VERSION=$(grep -oP 'Current = "\K[^"]+' src/Eidet.Core/EidetVersion.cs)
+          CODE_VERSION=$(sed -n 's/.*Current = "\([^"]*\)".*/\1/p' src/Eidet.Core/EidetVersion.cs)
           if [ "$TAG_VERSION" != "$CODE_VERSION" ]; then
             echo "::error::Tag version ($TAG_VERSION) does not match EidetVersion.Current ($CODE_VERSION)"
             exit 1
