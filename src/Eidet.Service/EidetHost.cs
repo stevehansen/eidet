@@ -86,7 +86,7 @@ public sealed class EidetHost : IDisposable
         var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
             Directory.GetCurrentDirectory(), autoIntake: config.Memory.AutoIntakeOnFirstSession);
         var apiServer = new EidetApiServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
-            actualBind, actualPort, layerSvc, mcpServer, config.Auth, qualitySvc);
+            actualBind, actualPort, layerSvc, mcpServer, config.Auth, qualitySvc, enrichment, config);
 
         var scheduler = new MaintenanceScheduler(eidetStore, memorySvc, maintenanceSvc, consolidationSvc, config.Maintenance);
 

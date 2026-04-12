@@ -1,5 +1,12 @@
 # Eidet
 
+[![CI](https://github.com/stevehansen/eidet/actions/workflows/ci.yml/badge.svg)](https://github.com/stevehansen/eidet/actions/workflows/ci.yml)
+[![NuGet](https://img.shields.io/nuget/v/eidet?label=dotnet%20tool)](https://www.nuget.org/packages/eidet)
+[![NuGet SDK](https://img.shields.io/nuget/v/Eidet.Sdk?label=Eidet.Sdk)](https://www.nuget.org/packages/Eidet.Sdk)
+[![npm](https://img.shields.io/npm/v/@eidet/sdk)](https://www.npmjs.com/package/@eidet/sdk)
+[![PyPI](https://img.shields.io/pypi/v/eidet-sdk)](https://pypi.org/project/eidet-sdk/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 > Long-term memory for AI coding agents — local-first, privacy-absolute, works everywhere.
 
 *From "eidetic" — relating to extraordinarily vivid, detailed recall.*
@@ -9,6 +16,24 @@
 A persistent, semantic memory system that gives AI coding agents the ability to learn and remember across sessions. Built as a standalone local service that any MCP-compatible AI client can use.
 
 **Core philosophy**: The local service is the product. It just works. Complexity is for the app, simplicity is for the user.
+
+## Quick Start
+
+```bash
+# Install (requires .NET 10 SDK)
+dotnet tool install -g eidet
+
+# Interactive setup — configure RavenDB (embedded or external), Ollama, embeddings
+eidet setup
+
+# Register as system service + auto-configure MCP for Claude Code & Desktop
+eidet install
+
+# Verify everything is running
+eidet status
+```
+
+After `eidet install`, the service runs in the background and your MCP client (Claude Code, Claude Desktop) can use Eidet's memory tools immediately.
 
 ## Key Properties
 
@@ -20,24 +45,32 @@ A persistent, semantic memory system that gives AI coding agents the ability to 
 - **Hybrid search**: Vector + full-text + metadata in a single round-trip.
 - **Self-improving**: Echo/fizzle feedback loop tunes recall quality over time.
 - **Privacy-absolute**: Secret scanning gate, localhost-only API, no data leaves the machine.
-- **Always running**: System service (Windows Service / macOS launchd / Linux systemd) with auto-update.
+- **Always running**: System service (scheduled task / launchd / systemd) with managed updates.
 - **Rich TUI**: Interactive setup, connection testing, troubleshooting — built for developers AND AI agents.
 
-## Quick Start
+## Updates & Feedback
 
 ```bash
-# Install and start the service
-eidet install
+# Check for updates
+eidet update --check
 
-# Interactive setup (TUI) — detects RavenDB, configures connections, tests everything
-eidet setup
+# Update (stops service, updates tool, restarts service)
+eidet update
 
-# Verify it's running
-eidet status
-
-# Add to Claude Code MCP config (auto-detected during setup)
-# Start a Claude Code session — memory is available immediately
+# Report an issue (opens GitHub with version pre-filled)
+eidet feedback
 ```
+
+## Distribution
+
+| Channel | Package | What |
+|---------|---------|------|
+| **NuGet** (dotnet tool) | [`eidet`](https://www.nuget.org/packages/eidet) | CLI + MCP server + REST API + system service |
+| **NuGet** (library) | [`Eidet.Sdk`](https://www.nuget.org/packages/Eidet.Sdk) | C# client SDK |
+| **npm** | [`@eidet/sdk`](https://www.npmjs.com/package/@eidet/sdk) | TypeScript client SDK |
+| **PyPI** | [`eidet-sdk`](https://pypi.org/project/eidet-sdk/) | Python client SDK |
+| **GitHub Releases** | [Standalone binaries](https://github.com/stevehansen/eidet/releases) | Self-contained for Docker / non-.NET |
+| **Docker** | `eidet/eidet:latest` | Container image |
 
 ## MVP Scope
 
@@ -61,10 +94,6 @@ Team sync, remote backup, and collaboration features are designed but deferred t
 | [Sync Spec](docs/specs/SyncSpec.md) | *(Future)* Remote sync, E2E encryption, team sharing, orchestrator options |
 | [Integration Spec](docs/specs/IntegrationSpec.md) | Claude Code, Claude Desktop, TerminalHost, Docker containers, CI/CD |
 
-## Origin
-
-Extracted from [TerminalHost](https://github.com/user/TerminalHost)'s Agentic Memory system (Phases 1-7, 123 tests, 13 MCP tools). The core library (`TerminalHost.Memory`) was already a standalone .NET class library with zero project dependencies — this project wraps it in a service host.
-
 ## Project Structure
 
 ```
@@ -73,9 +102,14 @@ eidet/
 │   ├── Eidet.Core/               # Core library (domain, services, indexes)
 │   ├── Eidet.Service/            # System service (MCP, REST, scheduler)
 │   └── Eidet.Sync/              # Sync adapters (future)
+├── sdk/
+│   ├── typescript/              # @eidet/sdk
+│   ├── python/                  # eidet-sdk
+│   └── dotnet/Eidet.Sdk/       # Eidet.Sdk
 ├── tests/
 │   ├── Eidet.Core.Tests/
-│   └── Eidet.Service.Tests/
+│   ├── Eidet.Service.Tests/
+│   └── Eidet.Integration.Tests/
 └── docs/
     └── specs/
 ```
@@ -92,17 +126,6 @@ eidet/
 | `eidet setup` | Interactive TUI for first-time configuration |
 | `eidet doctor` | Connection testing, troubleshooting, health checks |
 
-## Distribution
-
-| Surface | Name |
-|---------|------|
-| Binary | `eidet` |
-| NuGet | `Eidet` / `Eidet.Core` |
-| npm (future) | `@eidet/sdk` |
-| Homebrew | `eidet` |
-| GitHub | `eidet` |
-| Docker | `ghcr.io/eidet/eidet-server` (future) |
-
 ## License
 
-TBD
+[MIT](LICENSE)

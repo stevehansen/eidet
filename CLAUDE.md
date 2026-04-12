@@ -62,7 +62,7 @@ All design decisions are documented in `docs/specs/`:
 - **OllamaEnrichmentService**: IEnrichmentService interface with NullEnrichmentService (zero-overhead no-op) and OllamaEnrichmentService (/api/chat, think:false, 120s timeout, lazy health re-check). 6 enrichment tasks: one-liner, summary, foresight hint, entity extraction (LLM supplement), consolidation merge (>5 observations), conflict detection. Integrated into MaintenanceService (Stage 6b) and ConsolidationService (merge for large groups).
 - **LayerService**: Mount/unmount layers, scope resolution for layer-aware recall, auto-mount by package dependencies. IEidetStore layer CRUD (StoreMountedLayer, UnmountLayer, GetMountedLayers, GetLayer). Non-local de-boost 0.8×, layer-tagged search results. REST API: GET/POST/DELETE /api/eidet/layers.
 - **MCP streamable HTTP transport**: POST /mcp endpoint on EidetApiServer. Reuses McpServer.ProcessRequestAsync for JSON-RPC over HTTP. Supports all 13 tools. 204 No Content for notifications.
-- **System service**: `eidet install` (Windows Service via sc.exe, macOS launchd plist, Linux systemd user unit), `eidet uninstall` (with --purge). Binary copies to ~/.eidet/bin/ (or %APPDATA%\Eidet\bin\).
+- **System service**: `eidet install` (Windows scheduled task, macOS launchd plist, Linux systemd user unit), `eidet uninstall` (with --purge). Uses dotnet tool shim path (`~/.dotnet/tools/eidet`). Auto-configures MCP for Claude Code (`~/.claude/settings.json`) and Claude Desktop.
 - **MaintenanceScheduler**: Background timer for periodic maintenance and consolidation at configured intervals (default 24h/6h). Runs inside `eidet serve`.
 - **Doctor Ollama check**: Verifies model availability (not just connectivity).
 - **InternalsVisibleTo**: Eidet.Service exposes internals to Eidet.Service.Tests.
@@ -74,14 +74,15 @@ All design decisions are documented in `docs/specs/`:
 - **Ollama model management**: `OllamaService` in Core — list models, pull with streaming progress, suggest best model, check availability. `eidet ollama status/pull/list` CLI commands. `RecommendedModels` list (gemma4, gemma3, llama3.2, phi4, qwen3). Auto-enables enrichment after first pull. Spectre.Console progress bar for downloads.
 - **Layer auto-mount on pack import**: `ExportService.ImportPackWithLayerAsync` — imports pack entries and auto-mounts as Base layer via LayerService. Layer ID uses `bundle:{packId}` convention.
 - **`eidet docker`**: Docker/devcontainer integration guide. Shows devcontainer.json, Dockerfile, MCP config snippets. Detects container environment (/.dockerenv, DOTNET_RUNNING_IN_CONTAINER, /proc/1/cgroup). `--json` for programmatic use.
-- **`eidet update`**: Self-update via GitHub Releases API. `--check` (version check only), `--json`, `--force`. Platform-aware asset download (win-x64, osx-arm64, linux-x64). Binary backup/replace with rollback on failure.
+- **`eidet update`**: Update via `dotnet tool update -g eidet`. Checks NuGet for latest version, stops service, updates tool, records in version history, restarts service. `--check` (version check only), `--json`, `--force`.
+- **`eidet feedback`**: Opens GitHub Issues in browser with pre-filled version, OS, and runtime info.
 - **Test coverage**: 157 → 186 tests. Added ConfigHelper (10), InstructionsCommand (5), OllamaService (12), DockerCommand (1), UpdateCommand (1).
 
 ### Phase 6.5 — Polish (Done)
 - **GetDistinctRepoIdsAsync**: New `IEidetStore` method for querying distinct RepoId values. Implemented in `RavenEidetStore` using index projection. Replaced MaintenanceScheduler placeholder — scheduler now discovers all active repos automatically.
 - **Environment variable overrides**: `ConfigManager.Load()` applies env var overrides after loading config: `EIDET_API_URL` (bind address + port), `EIDET_RAVEN_URL`, `EIDET_OLLAMA_URL`, `EIDET_OLLAMA_MODEL`. Enables container and CI/CD configuration without config files.
 - **Auto-intake on first session**: MCP `eidet_context` triggers automatic intake (CLAUDE.md, README, etc.) when no memories exist for the repo. Controlled by `memory.autoIntakeOnFirstSession` config. Only runs once per MCP session.
-- **`eidet install` auto-configures MCP clients**: Detects Claude Code (`~/.claude/`) and Claude Desktop (`%APPDATA%\Claude\`), auto-creates `claude_desktop_config.json` with Eidet MCP server entry. Idempotent — skips if already configured.
+- **`eidet install` auto-configures MCP clients**: Detects Claude Code (`~/.claude/settings.json` → `mcpServers`) and Claude Desktop (`claude_desktop_config.json`). Idempotent — skips if already configured.
 - **Graceful shutdown**: `eidet serve` handles Ctrl+C/SIGTERM cleanly — stops scheduler, disposes enrichment, closes RavenDB store, stops HttpListener. Uses `CancellationTokenSource.CreateLinkedTokenSource`.
 - **Test coverage**: 186 → 193 tests. Added ConfigManager defaults (7), InstallCommand MCP config (1), verified existing patterns.
 
@@ -121,12 +122,54 @@ All design decisions are documented in `docs/specs/`:
 - **Test coverage**: 233 → 253 tests. Added HookRunner (15): NullHookRunner, ParseCommand, HasHooks, HookEvent mapping, defaults, HookContext, HookResult.
 
 ### Phase 10 — Production Readiness (Done)
-- **CI/CD Pipeline**: GitHub Actions workflows — `ci.yml` (build + test on push/PR, matrix: Windows/Ubuntu/macOS, NuGet caching), `release.yml` (on `v*` tag: build self-contained binaries for win-x64/osx-arm64/linux-x64, create GitHub Release with changelog, publish NuGet/npm/PyPI SDK packages). Version validation against `EidetVersion.Current`.
+- **CI/CD Pipeline**: GitHub Actions workflows — `ci.yml` (build + test on push/PR, matrix: Windows/Ubuntu/macOS, NuGet caching), `release.yml` (on `v*` tag: pack dotnet tool + SDK packages, build self-contained binaries, create GitHub Release with changelog, publish to NuGet/npm/PyPI with trusted publishing/OIDC). Version validation against `EidetVersion.Current`.
 - **Docker**: `Dockerfile` (multi-stage, self-contained single-file publish on `runtime-deps:10.0`), `docker-compose.yml` (Eidet + optional RavenDB external + optional Ollama via profiles), `.dockerignore`. New env var overrides: `EIDET_STORAGE_MODE`, `EIDET_DATA_DIR`, `EIDET_AUTH_REQUIRE_NONLOCALHOST`.
 - **Memory Quality Dashboard**: `QualityService` with 8 checks (stale memories, high-fizzle, potential conflicts, orphan observations, tag concentration, type imbalance, low-confidence, missing entities). Overall score 0.0–1.0. `QualityReport` model with issues + breakdown. CLI: `eidet quality --repo ... --json`. API: `GET /api/eidet/quality?repo=...`.
 - **Backup/Restore**: `BackupService` using RavenDB Smuggler API. `.eidetbackup` format (ZIP: `backup.ravendbdump` + `manifest.json` with SHA256 checksum). CLI: `eidet backup create/restore/list/prune`. `BackupConfig`: `backupDir`, `retainCount` (default 10), `autoBackupIntervalHours`.
 - **Integration Tests**: `Eidet.Integration.Tests` project with `EidetApiFixture` (starts real API server on random port with embedded RavenDB, unique database per test class). Tests: health/status, store/recall lifecycle, context, browse, repos, quality, feedback, secret rejection. Uses `SkippableFact` for environments without RavenDB Embedded.
 - **Test coverage**: 253 → 272+ unit tests. Added QualityService (7), BackupService (11). Plus ~11 integration tests (skippable).
+
+### Phase 10.5 — Service Operations (Done)
+- **ServiceLock**: PID/lock file at `{configDir}/eidet.lock` with PID, port, bind address, start time. File-level locking prevents double-serve. Stale lock detection (checks if PID is alive). Cleaned up on shutdown.
+- **Double-serve prevention**: `eidet serve` acquires lock before starting. If another instance is running, reports PID and suggests different port.
+- **Port conflict handling**: Catches `HttpListenerException` for address-in-use, suggests `--port` or `eidet config set service.port`.
+- **Service detection in status/doctor**: `eidet status` reads lock file, shows service PID/port/uptime and health status. `eidet doctor` adds Service health check (process alive + HTTP health endpoint).
+- **Ollama health in /api/status**: Status API endpoint now includes Ollama connectivity check when enrichment is configured (enabled, healthy, model, URL).
+- **HTTP MCP repo override**: `POST /mcp?repo=...` query parameter for per-request repo scoping. `ConcurrentDictionary<string, McpServer>` pool creates per-repo MCP server instances. Used by TerminalHost container overlay.
+- **Test coverage**: 272+ → 290 unit tests. Added ServiceLock (7).
+
+## Installation & Distribution
+
+Eidet is distributed as a **dotnet tool** (primary) and **standalone binaries** (Docker/non-.NET).
+
+```bash
+# Install (requires .NET 10 SDK)
+dotnet tool install -g eidet
+
+# First-time setup
+eidet setup      # interactive wizard for RavenDB (embedded or external), Ollama, embeddings
+eidet install    # registers scheduled task/launchd/systemd, configures Claude Code & Desktop MCP
+
+# Update
+eidet update           # stops service → dotnet tool update → restarts service
+eidet update --check   # check only, don't install
+
+# Feedback / bug reports
+eidet feedback   # opens GitHub Issues with version + OS pre-filled
+```
+
+**Distribution channels:**
+- **NuGet**: `dotnet tool install -g eidet` (tool) + `Eidet.Sdk` (C# client SDK)
+- **npm**: `@eidet/sdk` (TypeScript client SDK)
+- **PyPI**: `eidet-sdk` (Python client SDK)
+- **GitHub Releases**: Self-contained binaries for Docker and non-.NET environments
+- **Docker**: `eidet/eidet:latest`
+
+**Update flow:** `eidet update` checks NuGet for the latest version, stops the running service (scheduled task/launchd/systemd), runs `dotnet tool update -g eidet`, records the update in version history (`version-history.json`), and restarts the service. Version history is shown in `eidet status` and the Web UI.
+
+**MCP configuration:** `eidet install` auto-configures:
+- Claude Code: `~/.claude/settings.json` → `mcpServers.eidet`
+- Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json` (Windows) / `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
 ## MVP Scope
 
@@ -159,12 +202,12 @@ eidet/
 │   │   ├── Domain/               # MemoryEntry, MemoryType, Validity, layers, links, packs, GraphData
 │   │   ├── Gates/                # SecretScanner, SignalGate, WriteGate
 │   │   ├── Indexes/              # Memories_Search, Memories_CountByType
-│   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, OllamaService, ApiKeyService, HookRunner, QualityService, BackupService, enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
+│   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, OllamaService, ApiKeyService, HookRunner, QualityService, BackupService, ServiceLock, enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
 │   │   ├── StringUtils.cs        # Shared string helpers (Truncate)
 │   │   └── Storage/              # IEidetStore, RavenEidetStore, DatabaseProvisioner, DocumentStoreFactory (embedded + external)
 │   ├── Eidet.Service/            # CLI + REST API + system service
 │   │   ├── Api/                  # EidetApiServer (HttpListener + MCP HTTP + embedded Web UI)
-│   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, export, intake, maintain, quality, backup, install, uninstall, config, instructions, ollama, docker, update, api-key
+│   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, export, intake, maintain, quality, backup, install, uninstall, config, instructions, ollama, docker, update, feedback, api-key
 │   │   ├── Mcp/                  # McpServer (stdio + HTTP), McpModels, McpToolDefinitions
 │   │   ├── Scheduler/            # MaintenanceScheduler (background timers)
 │   │   └── wwwroot/              # Web UI SPA (index.html, app.css, app.js) — embedded resources
@@ -174,7 +217,7 @@ eidet/
 │   ├── python/                  # eidet-sdk pip package (EidetClient, httpx, type hints)
 │   └── dotnet/Eidet.Sdk/       # Eidet.Sdk NuGet package (EidetClient, record types)
 ├── tests/
-│   ├── Eidet.Core.Tests/        # 217 tests
+│   ├── Eidet.Core.Tests/        # 224 tests
 │   ├── Eidet.Service.Tests/     # 55 tests
 │   └── Eidet.Integration.Tests/ # ~11 integration tests (skippable, needs embedded RavenDB)
 └── docs/

@@ -31,22 +31,9 @@ public sealed class UninstallCommand : AsyncCommand<UninstallCommand.Settings>
         if (!settings.Json)
             AnsiConsole.MarkupLine($"  Service: [green]{Markup.Escape(result)}[/]");
 
-        // Remove binary
-        var installDir = InstallCommand.GetInstallDir();
-        if (Directory.Exists(installDir))
-        {
-            try
-            {
-                Directory.Delete(installDir, recursive: true);
-                if (!settings.Json)
-                    AnsiConsole.MarkupLine($"  Binary: [green]Removed[/]");
-            }
-            catch (Exception ex)
-            {
-                if (!settings.Json)
-                    AnsiConsole.MarkupLine($"  Binary: [yellow]Could not remove: {Markup.Escape(ex.Message)}[/]");
-            }
-        }
+        // Note: dotnet tool binary is managed by 'dotnet tool uninstall -g eidet'
+        if (!settings.Json)
+            AnsiConsole.MarkupLine("  Binary: [dim]Run 'dotnet tool uninstall -g eidet' to remove the tool[/]");
 
         if (settings.Purge)
         {

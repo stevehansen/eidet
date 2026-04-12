@@ -1,4 +1,6 @@
 using System.Runtime.InteropServices;
+using Eidet.Core;
+using Eidet.Core.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -14,52 +16,58 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
-        var exePath = Environment.ProcessPath ?? throw new InvalidOperationException("Cannot determine executable path");
-        var installDir = GetInstallDir();
-
         if (!settings.Json)
             AnsiConsole.MarkupLine("[bold]Installing Eidet service...[/]");
 
-        // Step 1: Copy binary to well-known location
-        Directory.CreateDirectory(installDir);
-        var targetExe = Path.Combine(installDir, RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? "eidet.exe" : "eidet");
-
-        if (!string.Equals(Path.GetFullPath(exePath), Path.GetFullPath(targetExe), StringComparison.OrdinalIgnoreCase))
+        // Resolve the dotnet tool shim path
+        var shimPath = GetDotnetToolShimPath();
+        if (shimPath == null || !File.Exists(shimPath))
         {
-            File.Copy(exePath, targetExe, overwrite: true);
-            if (!settings.Json)
-                AnsiConsole.MarkupLine($"  Binary: [green]Copied[/] to {Markup.Escape(installDir)}");
-        }
-        else
-        {
-            if (!settings.Json)
-                AnsiConsole.MarkupLine($"  Binary: [green]Already in place[/]");
+            if (settings.Json)
+            {
+                Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    installed = false,
+                    error = "Could not find eidet dotnet tool shim. Install first: dotnet tool install -g eidet",
+                }));
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[red]Could not find eidet dotnet tool.[/]");
+                AnsiConsole.MarkupLine("Install first: [dim]dotnet tool install -g eidet[/]");
+            }
+            return 1;
         }
 
-        // Step 2: Register as system service
-        string result;
+        if (!settings.Json)
+            AnsiConsole.MarkupLine($"  Tool path: [green]{Markup.Escape(shimPath)}[/]");
+
+        // Register as system service
+        string serviceResult;
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            result = await RegisterWindowsServiceAsync(targetExe, cancellation);
+            serviceResult = await RegisterWindowsServiceAsync(shimPath, cancellation);
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            result = await RegisterLaunchdAsync(targetExe, cancellation);
+            serviceResult = await RegisterLaunchdAsync(shimPath, cancellation);
         else
-            result = await RegisterSystemdAsync(targetExe, cancellation);
+            serviceResult = await RegisterSystemdAsync(shimPath, cancellation);
 
-        // Step 3: Auto-configure MCP for Claude Code / Claude Desktop
-        var mcpResult = ConfigureMcpClients(targetExe);
+        // Auto-configure MCP for Claude Code / Claude Desktop
+        var mcpResult = ConfigureMcpClients(shimPath);
+
+        // Record in version history
+        VersionHistory.Record(EidetVersion.Current, null, "dotnet-tool-install");
 
         if (settings.Json)
         {
             var json = System.Text.Json.JsonSerializer.Serialize(new
             {
-                installed = true, exePath = targetExe, service = result, mcpConfigured = mcpResult
+                installed = true, shimPath, service = serviceResult, mcpConfigured = mcpResult
             });
             Console.WriteLine(json);
         }
         else
         {
-            AnsiConsole.MarkupLine($"  Service: [green]{Markup.Escape(result)}[/]");
+            AnsiConsole.MarkupLine($"  Service: [green]{Markup.Escape(serviceResult)}[/]");
             if (mcpResult != null)
                 AnsiConsole.MarkupLine($"  MCP:     [green]{Markup.Escape(mcpResult)}[/]");
             AnsiConsole.WriteLine();
@@ -69,15 +77,21 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         return 0;
     }
 
-    private static async Task<string> RegisterWindowsServiceAsync(string exePath, CancellationToken ct)
+    internal static string? GetDotnetToolShimPath()
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var shimName = OperatingSystem.IsWindows() ? "eidet.exe" : "eidet";
+        var shimPath = Path.Combine(home, ".dotnet", "tools", shimName);
+        return File.Exists(shimPath) ? shimPath : null;
+    }
+
+    private static async Task<string> RegisterWindowsServiceAsync(string shimPath, CancellationToken ct)
     {
         var taskName = "Eidet";
 
         // Remove existing task if present
         await RunProcessAsync("schtasks.exe", $"/delete /tn \"{taskName}\" /f", ct);
 
-        // Write task XML to temp file
-        var xmlPath = Path.Combine(Path.GetTempPath(), "eidet-task.xml");
         var xml = $"""
             <?xml version="1.0" encoding="UTF-16"?>
             <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -107,13 +121,14 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
               </Settings>
               <Actions>
                 <Exec>
-                  <Command>{exePath}</Command>
+                  <Command>{shimPath}</Command>
                   <Arguments>serve</Arguments>
                 </Exec>
               </Actions>
             </Task>
             """;
 
+        var xmlPath = Path.Combine(Path.GetTempPath(), "eidet-task.xml");
         await File.WriteAllTextAsync(xmlPath, xml, ct);
 
         var createResult = await RunProcessAsync("schtasks.exe",
@@ -124,20 +139,22 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         if (createResult.ExitCode != 0)
             return $"Failed to create scheduled task: {createResult.Output}";
 
-        // Start immediately
         var startResult = await RunProcessAsync("schtasks.exe", $"/run /tn \"{taskName}\"", ct);
         return startResult.ExitCode == 0
             ? "Scheduled task registered and started (runs at logon)"
             : "Scheduled task registered (starts at next logon)";
     }
 
-    private static async Task<string> RegisterLaunchdAsync(string exePath, CancellationToken ct)
+    private static async Task<string> RegisterLaunchdAsync(string shimPath, CancellationToken ct)
     {
         var plistDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "Library", "LaunchAgents");
         Directory.CreateDirectory(plistDir);
 
         var plistPath = Path.Combine(plistDir, "dev.eidet.service.plist");
+        var logDir = GetLogDir();
+        Directory.CreateDirectory(logDir);
+
         var plist = $"""
             <?xml version="1.0" encoding="UTF-8"?>
             <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -147,7 +164,7 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 <string>dev.eidet.service</string>
                 <key>ProgramArguments</key>
                 <array>
-                    <string>{exePath}</string>
+                    <string>{shimPath}</string>
                     <string>serve</string>
                 </array>
                 <key>RunAtLoad</key>
@@ -155,16 +172,15 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 <key>KeepAlive</key>
                 <true/>
                 <key>StandardOutPath</key>
-                <string>{GetLogDir()}/eidet.log</string>
+                <string>{logDir}/eidet.log</string>
                 <key>StandardErrorPath</key>
-                <string>{GetLogDir()}/eidet.err</string>
+                <string>{logDir}/eidet.err</string>
             </dict>
             </plist>
             """;
 
         await File.WriteAllTextAsync(plistPath, plist, ct);
 
-        // Unload if already loaded, then load
         await RunProcessAsync("launchctl", $"unload {plistPath}", ct);
         var loadResult = await RunProcessAsync("launchctl", $"load {plistPath}", ct);
         return loadResult.ExitCode == 0
@@ -172,7 +188,7 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
             : $"launchd plist written to {plistPath} (load manually)";
     }
 
-    private static async Task<string> RegisterSystemdAsync(string exePath, CancellationToken ct)
+    private static async Task<string> RegisterSystemdAsync(string shimPath, CancellationToken ct)
     {
         var unitDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".config", "systemd", "user");
@@ -186,7 +202,7 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
 
             [Service]
             Type=simple
-            ExecStart={exePath} serve
+            ExecStart={shimPath} serve
             Restart=on-failure
             RestartSec=5
 
@@ -204,30 +220,72 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
             : $"systemd unit written to {unitPath} (start manually with: systemctl --user start eidet)";
     }
 
-    internal static string? ConfigureMcpClients(string exePath)
+    internal static string? ConfigureMcpClients(string shimPath)
     {
         var configured = new List<string>();
 
-        // Claude Code: ~/.claude/claude_desktop_config.json (Windows) or similar
-        var claudeCodeConfig = GetClaudeCodeMcpPath();
-        if (claudeCodeConfig != null)
-        {
-            var result = ConfigureMcpJson(claudeCodeConfig, exePath);
-            if (result) configured.Add("Claude Code");
-        }
+        // Claude Code: ~/.claude/settings.json (mcpServers key)
+        var claudeCodeResult = ConfigureClaudeCodeMcp(shimPath);
+        if (claudeCodeResult) configured.Add("Claude Code");
 
-        // Claude Desktop
+        // Claude Desktop: platform-specific config
         var claudeDesktopConfig = GetClaudeDesktopConfigPath();
         if (claudeDesktopConfig != null)
         {
-            var result = ConfigureMcpJson(claudeDesktopConfig, exePath);
+            var result = ConfigureMcpJson(claudeDesktopConfig, shimPath);
             if (result) configured.Add("Claude Desktop");
         }
 
         return configured.Count > 0 ? string.Join(", ", configured) : null;
     }
 
-    private static bool ConfigureMcpJson(string configPath, string exePath)
+    private static bool ConfigureClaudeCodeMcp(string shimPath)
+    {
+        try
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var claudeDir = Path.Combine(home, ".claude");
+            if (!Directory.Exists(claudeDir))
+                return false;
+
+            var settingsPath = Path.Combine(claudeDir, "settings.json");
+
+            System.Text.Json.Nodes.JsonObject root;
+            if (File.Exists(settingsPath))
+            {
+                var existing = File.ReadAllText(settingsPath);
+                root = System.Text.Json.Nodes.JsonNode.Parse(existing)?.AsObject()
+                    ?? new System.Text.Json.Nodes.JsonObject();
+            }
+            else
+            {
+                root = new System.Text.Json.Nodes.JsonObject();
+            }
+
+            if (!root.ContainsKey("mcpServers"))
+                root["mcpServers"] = new System.Text.Json.Nodes.JsonObject();
+
+            var servers = root["mcpServers"]!.AsObject();
+            if (servers.ContainsKey("eidet"))
+                return false;
+
+            servers["eidet"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["command"] = shimPath,
+                ["args"] = new System.Text.Json.Nodes.JsonArray("mcp"),
+            };
+
+            var json = root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(settingsPath, json);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool ConfigureMcpJson(string configPath, string shimPath)
     {
         try
         {
@@ -246,19 +304,16 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 root = new System.Text.Json.Nodes.JsonObject();
             }
 
-            // Ensure mcpServers key exists
             if (!root.ContainsKey("mcpServers"))
                 root["mcpServers"] = new System.Text.Json.Nodes.JsonObject();
 
             var servers = root["mcpServers"]!.AsObject();
-
-            // Only add if not already configured
             if (servers.ContainsKey("eidet"))
                 return false;
 
             servers["eidet"] = new System.Text.Json.Nodes.JsonObject
             {
-                ["command"] = exePath,
+                ["command"] = shimPath,
                 ["args"] = new System.Text.Json.Nodes.JsonArray("mcp"),
             };
 
@@ -270,15 +325,6 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         {
             return false;
         }
-    }
-
-    private static string? GetClaudeCodeMcpPath()
-    {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var path = Path.Combine(home, ".claude", "claude_desktop_config.json");
-        // Claude Code uses ~/.claude/ directory — check if it exists
-        var claudeDir = Path.Combine(home, ".claude");
-        return Directory.Exists(claudeDir) ? path : null;
     }
 
     private static string? GetClaudeDesktopConfigPath()
@@ -296,7 +342,7 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         }
         else
         {
-            return null; // No Claude Desktop on Linux
+            return null;
         }
 
         return Directory.Exists(configDir)
@@ -304,16 +350,9 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
             : null;
     }
 
-    internal static string GetInstallDir()
-    {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Eidet", "bin");
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".eidet", "bin");
-    }
-
     internal static string GetLogDir()
     {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        if (OperatingSystem.IsWindows())
             return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Eidet", "logs");
         return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".eidet", "logs");
     }

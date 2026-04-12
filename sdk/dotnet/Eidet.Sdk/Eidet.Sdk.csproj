@@ -10,6 +10,14 @@
     <Authors>Steve Hansen</Authors>
     <PackageTags>eidet;memory;ai;coding-agent;mcp</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/stevehansen/eidet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/stevehansen/eidet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
 </Project>

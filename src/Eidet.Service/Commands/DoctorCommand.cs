@@ -1,4 +1,5 @@
 using Eidet.Core.Configuration;
+using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Raven.Client.Documents;
 using Spectre.Console;
@@ -78,6 +79,9 @@ public sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             }
         }
 
+        // Service check — is the API server running and healthy?
+        checks.Add(await CheckServiceAsync());
+
         // Ollama check (optional)
         checks.Add(await CheckOllamaAsync(config));
 
@@ -91,6 +95,26 @@ public sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
 
         store?.Dispose();
         return checks.All(c => c.Passed || c.Optional) ? 0 : 1;
+    }
+
+    private static async Task<CheckResult> CheckServiceAsync()
+    {
+        var (running, healthy, info) = await ServiceLock.CheckHealthAsync();
+
+        if (!running)
+            return new CheckResult("Service", false,
+                "Not running",
+                Optional: true,
+                Fix: "Start the service: eidet serve\n  Or install as background service: eidet install");
+
+        if (!healthy)
+            return new CheckResult("Service", false,
+                $"Running (PID {info!.Pid}) but not responding on port {info.Port}",
+                Fix: $"The service may be starting up, or port {info.Port} may be blocked.\n  Check: curl http://{info.BindAddress}:{info.Port}/api/health");
+
+        var uptime = DateTimeOffset.UtcNow - info!.StartedAt;
+        return new CheckResult("Service", true,
+            $"Healthy (PID {info.Pid}, port {info.Port}, up {uptime.TotalHours:F0}h {uptime.Minutes}m)");
     }
 
     private static async Task<CheckResult> CheckOllamaAsync(EidetConfig config)

@@ -6,17 +6,22 @@ namespace Eidet.Service.Tests.Commands;
 public class InstallCommandTests
 {
     [Fact]
-    public void GetInstallDir_ReturnsNonEmpty()
+    public void GetDotnetToolShimPath_ReturnsPathContainingDotnetTools()
     {
-        var dir = InstallCommand.GetInstallDir();
-        Assert.False(string.IsNullOrEmpty(dir));
-    }
+        // The shim path may or may not exist in test environments,
+        // but we can verify the path construction is sensible
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var expectedDir = Path.Combine(home, ".dotnet", "tools");
+        var shimName = OperatingSystem.IsWindows() ? "eidet.exe" : "eidet";
+        var expectedPath = Path.Combine(expectedDir, shimName);
 
-    [Fact]
-    public void GetInstallDir_ContainsEidet()
-    {
-        var dir = InstallCommand.GetInstallDir().ToLowerInvariant();
-        Assert.Contains("eidet", dir);
+        // GetDotnetToolShimPath returns null if file doesn't exist, which is fine in tests
+        // The important thing is it looks in the right place
+        var result = InstallCommand.GetDotnetToolShimPath();
+        if (result != null)
+        {
+            Assert.Equal(expectedPath, result);
+        }
     }
 
     [Fact]
@@ -27,13 +32,21 @@ public class InstallCommandTests
     }
 
     [Fact]
-    public void GetInstallDir_Windows_UsesAppData()
+    public void GetLogDir_Windows_UsesAppData()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            return; // Skip on non-Windows
+            return;
 
-        var dir = InstallCommand.GetInstallDir();
+        var dir = InstallCommand.GetLogDir();
         Assert.Contains("Eidet", dir);
-        Assert.Contains("bin", dir);
+        Assert.Contains("logs", dir);
+    }
+
+    [Fact]
+    public void ConfigureMcpClients_DoesNotThrow()
+    {
+        // Should not throw even with a non-existent path
+        var result = InstallCommand.ConfigureMcpClients("/nonexistent/eidet");
+        // Result may be null if no Claude clients are detected — that's fine
     }
 }

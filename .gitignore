@@ -25,9 +25,10 @@ bld/
 *~
 .vscode/
 
-## Node (docs tooling)
+## Node (SDK + docs tooling)
 node_modules/
 package-lock.json
+sdk/typescript/dist/
 
 ## Generated files
 *.pptx

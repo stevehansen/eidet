@@ -19,10 +19,30 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <!-- dotnet tool packaging -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>eidet</ToolCommandName>
+    <PackageId>eidet</PackageId>
+    <Version>0.1.0</Version>
+
+    <!-- NuGet package metadata -->
+    <Authors>Steve Hansen</Authors>
+    <Description>Long-term memory for AI coding agents — local-first, privacy-absolute, works everywhere.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/stevehansen/eidet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/stevehansen/eidet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>ai;memory;coding-agent;mcp;eidetic</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="wwwroot\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>

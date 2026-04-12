@@ -5,13 +5,27 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["eidet", "memory", "ai", "coding-agent", "mcp"],
+  "keywords": [
+    "eidet",
+    "memory",
+    "ai",
+    "coding-agent",
+    "mcp"
+  ],
+  "author": "Steve Hansen",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stevehansen/eidet.git",
+    "directory": "sdk/typescript"
+  },
   "devDependencies": {
     "typescript": "^5.7"
   }

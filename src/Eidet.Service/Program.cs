@@ -60,6 +60,9 @@ app.Configure(config =>
     config.AddCommand<UpdateCommand>("update")
         .WithDescription("Check for and install updates");
 
+    config.AddCommand<FeedbackCommand>("feedback")
+        .WithDescription("Report an issue or give feedback on GitHub");
+
     config.AddBranch("backup", backup =>
     {
         backup.SetDescription("Backup and restore memory data");

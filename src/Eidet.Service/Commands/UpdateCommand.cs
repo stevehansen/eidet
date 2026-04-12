@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Eidet.Core;
+using Eidet.Core.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -21,20 +22,20 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         public bool Force { get; set; }
     }
 
-    private const string GitHubOwner = "stevehansen";
-    private const string GitHubRepo = "eidet";
-    private const string ReleasesApiUrl = $"https://api.github.com/repos/{GitHubOwner}/{GitHubRepo}/releases/latest";
+    private const string NuGetPackageId = "eidet";
+    private const string NuGetIndexUrl = $"https://api.nuget.org/v3-flatcontainer/{NuGetPackageId}/index.json";
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var currentVersion = EidetVersion.Current;
 
-        AnsiConsole.MarkupLine($"Current version: [bold]{currentVersion}[/]");
+        if (!settings.Json)
+            AnsiConsole.MarkupLine($"Current version: [bold]{currentVersion}[/]");
 
-        // Check for latest version
-        var latest = await GetLatestReleaseAsync(cancellation);
+        // Check NuGet for latest version
+        var latestVersion = await GetLatestNuGetVersionAsync(cancellation);
 
-        if (latest == null)
+        if (latestVersion == null)
         {
             if (settings.Json)
             {
@@ -47,13 +48,94 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             else
             {
                 AnsiConsole.MarkupLine("[yellow]Could not check for updates.[/]");
-                AnsiConsole.MarkupLine("[dim]Check manually at https://github.com/stevehansen/eidet/releases[/]");
+                AnsiConsole.MarkupLine("[dim]Check manually: dotnet tool update -g eidet[/]");
             }
             return 1;
         }
 
-        var latestVersion = latest.Value.Version.TrimStart('v');
         var isUpToDate = string.Equals(currentVersion, latestVersion, StringComparison.OrdinalIgnoreCase);
+
+        if (settings.Json && settings.CheckOnly)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                current = currentVersion,
+                latest = latestVersion,
+                upToDate = isUpToDate,
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            return 0;
+        }
+
+        if (isUpToDate && !settings.Force)
+        {
+            if (settings.Json)
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    current = currentVersion,
+                    latest = latestVersion,
+                    upToDate = true,
+                    updated = false,
+                }, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            else
+            {
+                AnsiConsole.MarkupLine($"[green]Already up to date[/] (v{currentVersion})");
+            }
+            return 0;
+        }
+
+        if (!settings.Json)
+            AnsiConsole.MarkupLine($"Latest version:  [green]{latestVersion}[/]");
+
+        if (settings.CheckOnly)
+        {
+            if (!settings.Json)
+            {
+                AnsiConsole.MarkupLine($"[yellow]Update available![/] Run [dim]eidet update[/] to install.");
+            }
+            return 0;
+        }
+
+        // Perform the update: stop service → dotnet tool update → restart service
+        if (!settings.Json)
+            AnsiConsole.MarkupLine("[bold]Updating...[/]");
+
+        // Step 1: Stop the service
+        var serviceWasRunning = await StopServiceAsync(settings, cancellation);
+
+        // Step 2: Run dotnet tool update
+        var updateResult = await RunDotnetToolUpdateAsync(settings, cancellation);
+
+        if (!updateResult.Success)
+        {
+            // Try to restart service even on failure
+            if (serviceWasRunning)
+                await StartServiceAsync(settings, cancellation);
+
+            if (settings.Json)
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    current = currentVersion,
+                    latest = latestVersion,
+                    updated = false,
+                    error = updateResult.Error,
+                }, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            else
+            {
+                AnsiConsole.MarkupLine($"[red]Update failed:[/] {Markup.Escape(updateResult.Error ?? "Unknown error")}");
+            }
+            return 1;
+        }
+
+        // Step 3: Record in version history
+        VersionHistory.Record(latestVersion, currentVersion, "dotnet-tool-update");
+
+        // Step 4: Restart service
+        if (serviceWasRunning)
+            await StartServiceAsync(settings, cancellation);
 
         if (settings.Json)
         {
@@ -61,138 +143,43 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             {
                 current = currentVersion,
                 latest = latestVersion,
-                upToDate = isUpToDate,
-                downloadUrl = latest.Value.AssetUrl,
-                releaseUrl = latest.Value.HtmlUrl,
+                updated = true,
+                upToDate = true,
+                serviceRestarted = serviceWasRunning,
             }, new JsonSerializerOptions { WriteIndented = true }));
-            return 0;
         }
-
-        if (isUpToDate && !settings.Force)
+        else
         {
-            AnsiConsole.MarkupLine($"[green]Already up to date[/] (v{currentVersion})");
-            return 0;
-        }
-
-        AnsiConsole.MarkupLine($"Latest version:  [green]{latestVersion}[/]");
-
-        if (settings.CheckOnly)
-        {
-            if (!isUpToDate)
-            {
-                AnsiConsole.MarkupLine($"[yellow]Update available![/] Run [dim]eidet update[/] to install.");
-                AnsiConsole.MarkupLine($"  Release: {latest.Value.HtmlUrl}");
-            }
-            return 0;
-        }
-
-        // Download and install
-        if (latest.Value.AssetUrl == null)
-        {
-            AnsiConsole.MarkupLine("[yellow]No downloadable asset found for this platform.[/]");
-            AnsiConsole.MarkupLine($"  Download manually from: {latest.Value.HtmlUrl}");
-            return 1;
-        }
-
-        var installDir = InstallCommand.GetInstallDir();
-        var binaryName = OperatingSystem.IsWindows() ? "eidet.exe" : "eidet";
-        var targetPath = Path.Combine(installDir, binaryName);
-        var tempPath = targetPath + ".new";
-
-        AnsiConsole.MarkupLine($"Downloading v{latestVersion}...");
-        AnsiConsole.MarkupLine($"  Source: {Markup.Escape(latest.Value.AssetUrl!)}");
-
-        try
-        {
-            using var http = new HttpClient();
-            http.DefaultRequestHeaders.UserAgent.ParseAdd("Eidet-Updater");
-
-            await using var downloadStream = await http.GetStreamAsync(latest.Value.AssetUrl, cancellation);
-            await using var fileStream = File.Create(tempPath);
-            await downloadStream.CopyToAsync(fileStream, cancellation);
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Download failed:[/] {Markup.Escape(ex.Message)}");
-            if (File.Exists(tempPath)) File.Delete(tempPath);
-            return 1;
-        }
-
-        // Replace binary
-        try
-        {
-            var backupPath = targetPath + ".bak";
-            if (File.Exists(targetPath))
-            {
-                if (File.Exists(backupPath)) File.Delete(backupPath);
-                File.Move(targetPath, backupPath);
-            }
-
-            File.Move(tempPath, targetPath);
-
-            // Set executable permission on Unix
-            if (!OperatingSystem.IsWindows())
-            {
-                Process.Start("chmod", $"+x \"{targetPath}\"")?.WaitForExit();
-            }
-
             AnsiConsole.MarkupLine($"[green]Updated to v{latestVersion}[/]");
-            AnsiConsole.MarkupLine($"  Installed to: {targetPath}");
-
-            // Clean up backup
-            if (File.Exists(backupPath))
-            {
-                try { File.Delete(backupPath); }
-                catch { /* May be locked on Windows — cleanup on next run */ }
-            }
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]Installation failed:[/] {Markup.Escape(ex.Message)}");
-            if (File.Exists(tempPath)) File.Delete(tempPath);
-            return 1;
+            if (serviceWasRunning)
+                AnsiConsole.MarkupLine("  Service restarted.");
         }
 
         return 0;
     }
 
-    internal static async Task<ReleaseInfo?> GetLatestReleaseAsync(CancellationToken ct)
+    internal static async Task<string?> GetLatestNuGetVersionAsync(CancellationToken ct)
     {
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
             http.DefaultRequestHeaders.UserAgent.ParseAdd("Eidet-Updater");
 
-            var json = await http.GetStringAsync(ReleasesApiUrl, ct);
+            var json = await http.GetStringAsync(NuGetIndexUrl, ct);
             using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
 
-            var version = root.TryGetProperty("tag_name", out var tag) ? tag.GetString() ?? "" : "";
-            var htmlUrl = root.TryGetProperty("html_url", out var url) ? url.GetString() : null;
+            if (!doc.RootElement.TryGetProperty("versions", out var versions))
+                return null;
 
-            // Find the right asset for this platform
-            string? assetUrl = null;
-            if (root.TryGetProperty("assets", out var assets))
+            // NuGet returns versions in ascending order — last is latest stable
+            string? latest = null;
+            foreach (var v in versions.EnumerateArray())
             {
-                var suffix = GetPlatformAssetSuffix();
-                foreach (var asset in assets.EnumerateArray())
-                {
-                    var name = asset.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                    if (name.Contains(suffix, StringComparison.OrdinalIgnoreCase))
-                    {
-                        assetUrl = asset.TryGetProperty("browser_download_url", out var dl)
-                            ? dl.GetString() : null;
-                        break;
-                    }
-                }
+                var ver = v.GetString();
+                if (ver != null && !ver.Contains('-')) // skip pre-release
+                    latest = ver;
             }
-
-            return new ReleaseInfo
-            {
-                Version = version,
-                HtmlUrl = htmlUrl,
-                AssetUrl = assetUrl,
-            };
+            return latest;
         }
         catch
         {
@@ -200,24 +187,122 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         }
     }
 
-    private static string GetPlatformAssetSuffix()
+    private static async Task<bool> StopServiceAsync(Settings settings, CancellationToken ct)
     {
-        var arch = RuntimeInformation.OSArchitecture switch
+        try
         {
-            Architecture.X64 => "x64",
-            Architecture.Arm64 => "arm64",
-            _ => "x64",
-        };
+            if (OperatingSystem.IsWindows())
+            {
+                // Check if scheduled task is running
+                var (exitCode, output) = await RunProcessAsync("schtasks.exe", "/query /tn \"Eidet\" /fo CSV /nh", ct);
+                if (exitCode != 0)
+                    return false; // Task doesn't exist
 
-        if (OperatingSystem.IsWindows()) return $"win-{arch}";
-        if (OperatingSystem.IsMacOS()) return $"osx-{arch}";
-        return $"linux-{arch}";
+                if (output.Contains("Running", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!settings.Json)
+                        AnsiConsole.MarkupLine("  Stopping service...");
+                    await RunProcessAsync("schtasks.exe", "/end /tn \"Eidet\"", ct);
+                    // Give the process time to release file locks
+                    await Task.Delay(2000, ct);
+                    return true;
+                }
+                return false;
+            }
+            else if (OperatingSystem.IsMacOS())
+            {
+                var (exitCode, _) = await RunProcessAsync("launchctl", "stop dev.eidet.service", ct);
+                if (exitCode == 0)
+                {
+                    await Task.Delay(2000, ct);
+                    return true;
+                }
+                return false;
+            }
+            else
+            {
+                var (exitCode, output) = await RunProcessAsync("systemctl", "--user is-active eidet.service", ct);
+                if (exitCode == 0 && output.Trim() == "active")
+                {
+                    if (!settings.Json)
+                        AnsiConsole.MarkupLine("  Stopping service...");
+                    await RunProcessAsync("systemctl", "--user stop eidet.service", ct);
+                    await Task.Delay(2000, ct);
+                    return true;
+                }
+                return false;
+            }
+        }
+        catch
+        {
+            return false;
+        }
     }
 
-    internal struct ReleaseInfo
+    private static async Task StartServiceAsync(Settings settings, CancellationToken ct)
     {
-        public string Version;
-        public string? HtmlUrl;
-        public string? AssetUrl;
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                if (!settings.Json)
+                    AnsiConsole.MarkupLine("  Starting service...");
+                await RunProcessAsync("schtasks.exe", "/run /tn \"Eidet\"", ct);
+            }
+            else if (OperatingSystem.IsMacOS())
+            {
+                await RunProcessAsync("launchctl", "start dev.eidet.service", ct);
+            }
+            else
+            {
+                await RunProcessAsync("systemctl", "--user start eidet.service", ct);
+            }
+        }
+        catch { }
+    }
+
+    private static async Task<(bool Success, string? Error)> RunDotnetToolUpdateAsync(Settings settings, CancellationToken ct)
+    {
+        try
+        {
+            if (!settings.Json)
+                AnsiConsole.MarkupLine("  Running dotnet tool update...");
+
+            var (exitCode, output) = await RunProcessAsync("dotnet", "tool update -g eidet", ct);
+
+            if (exitCode == 0)
+                return (true, null);
+
+            return (false, output.Trim());
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    private static async Task<(int ExitCode, string Output)> RunProcessAsync(string fileName, string arguments, CancellationToken ct)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(fileName, arguments)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var proc = Process.Start(psi);
+            if (proc is null) return (-1, "Failed to start process");
+
+            var output = await proc.StandardOutput.ReadToEndAsync(ct);
+            var error = await proc.StandardError.ReadToEndAsync(ct);
+            await proc.WaitForExitAsync(ct);
+            return (proc.ExitCode, string.IsNullOrEmpty(output) ? error : output);
+        }
+        catch (Exception ex)
+        {
+            return (-1, ex.Message);
+        }
     }
 }

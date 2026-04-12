@@ -1,4 +1,5 @@
 using Eidet.Core.Configuration;
+using Eidet.Core.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -57,6 +58,28 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
 
     private static async Task<int> RunAsConsoleAsync(Settings settings, CancellationToken cancellation)
     {
+        var config = ConfigManager.Load();
+        var actualPort = settings.Port ?? config.Service.Port;
+        var actualBind = settings.BindAddress ?? config.Service.BindAddress;
+
+        // Acquire service lock — prevents double-serve
+        var serviceLock = new ServiceLock();
+        if (!serviceLock.TryAcquire(actualPort, actualBind, out var existing))
+        {
+            if (existing != null)
+            {
+                AnsiConsole.MarkupLine($"[red]Eidet is already running[/] (PID {existing.Pid} on {existing.BindAddress}:{existing.Port})");
+                AnsiConsole.MarkupLine($"  Started: {existing.StartedAt.LocalDateTime:yyyy-MM-dd HH:mm}");
+                AnsiConsole.MarkupLine($"  [dim]Stop the existing instance first, or use a different port:[/]");
+                AnsiConsole.MarkupLine($"  [dim]  eidet serve --port {existing.Port + 1}[/]");
+            }
+            else
+            {
+                AnsiConsole.MarkupLine("[red]Could not acquire service lock.[/]");
+            }
+            return 1;
+        }
+
         EidetHost host;
         try
         {
@@ -64,6 +87,7 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         }
         catch (Exception ex)
         {
+            serviceLock.Dispose();
             AnsiConsole.MarkupLine($"  RavenDB: [red]Failed[/] — {ex.Message}");
             return 1;
         }
@@ -88,6 +112,7 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
             AnsiConsole.MarkupLine("  Auth:    [red]DISABLED — binding to non-localhost without auth![/]");
             AnsiConsole.MarkupLine("           [yellow]Create an API key: eidet api-key create \"my-key\"[/]");
             AnsiConsole.MarkupLine("           [yellow]Or disable guard:  eidet config set auth.requireForNonLocalhost false[/]");
+            serviceLock.Dispose();
             return 1;
         }
         else
@@ -116,8 +141,18 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         {
             await host.RunAsync(cts.Token);
         }
+        catch (System.Net.HttpListenerException ex) when (ex.ErrorCode == 183 || ex.ErrorCode == 48)
+        {
+            // ERROR_ALREADY_EXISTS (Windows) or EADDRINUSE (Unix) — port is in use
+            AnsiConsole.MarkupLine($"\n[red]Port {host.Port} is already in use.[/]");
+            AnsiConsole.MarkupLine($"  [dim]Another process is listening on that port.[/]");
+            AnsiConsole.MarkupLine($"  [dim]Try a different port:  eidet serve --port {host.Port + 1}[/]");
+            AnsiConsole.MarkupLine($"  [dim]Or change the default: eidet config set service.port {host.Port + 1}[/]");
+            return 1;
+        }
         finally
         {
+            serviceLock.Dispose();
             host.Dispose();
             AnsiConsole.MarkupLine("[dim]Eidet stopped.[/]");
         }

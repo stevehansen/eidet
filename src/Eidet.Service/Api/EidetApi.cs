@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
@@ -28,6 +29,9 @@ public class EidetApiServer
     private readonly QualityService? _quality;
     private readonly LayerService? _layers;
     private readonly McpServer? _mcpServer;
+    private readonly ConcurrentDictionary<string, McpServer> _mcpServerPool = new();
+    private readonly IEnrichmentService? _enrichment;
+    private readonly EidetConfig? _config;
     private readonly AuthConfig _auth;
     private readonly HttpListener _listener;
     private readonly string _baseUrl;
@@ -36,7 +40,7 @@ public class EidetApiServer
     public EidetApiServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
         MaintenanceService maintenance, ExportService export, string bindAddress, int port,
         LayerService? layers = null, McpServer? mcpServer = null, AuthConfig? auth = null,
-        QualityService? quality = null)
+        QualityService? quality = null, IEnrichmentService? enrichment = null, EidetConfig? config = null)
     {
         _svc = svc;
         _intake = intake;
@@ -46,6 +50,8 @@ public class EidetApiServer
         _quality = quality;
         _layers = layers;
         _mcpServer = mcpServer;
+        _enrichment = enrichment;
+        _config = config;
         _auth = auth ?? new AuthConfig();
         _baseUrl = $"http://{bindAddress}:{port}/";
         _listener = new HttpListener();
@@ -378,6 +384,25 @@ public class EidetApiServer
     private async Task HandleStatus(HttpListenerContext ctx, CancellationToken ct)
     {
         var info = await _svc.GetStoreInfoAsync(ct);
+
+        // Check Ollama health if enrichment is configured
+        object? ollamaStatus = null;
+        if (_config?.Enrichment.OllamaEnabled == true && _enrichment != null)
+        {
+            var healthy = await _enrichment.CheckHealthAsync(ct);
+            ollamaStatus = new
+            {
+                enabled = true,
+                healthy,
+                model = _config.Enrichment.OllamaModel,
+                url = _config.Enrichment.OllamaUrl,
+            };
+        }
+        else if (_config != null)
+        {
+            ollamaStatus = new { enabled = false };
+        }
+
         await WriteJson(ctx, new
         {
             version = Eidet.Core.EidetVersion.Current,
@@ -385,6 +410,7 @@ public class EidetApiServer
             uptime = (DateTime.UtcNow - _startedAt).ToString(@"d\.hh\:mm\:ss"),
             api = _baseUrl,
             database = info,
+            ollama = ollamaStatus,
         });
     }
 
@@ -493,10 +519,17 @@ public class EidetApiServer
             return;
         }
 
+        // Support per-request repo override via query string (used by container overlays)
+        var repoOverride = ctx.Request.QueryString["repo"];
+        var server = string.IsNullOrEmpty(repoOverride)
+            ? _mcpServer
+            : _mcpServerPool.GetOrAdd(repoOverride, id =>
+                new McpServer(_svc, _intake, _consolidation, _maintenance, _export, id));
+
         using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
         var body = await reader.ReadToEndAsync(ct);
 
-        var response = await _mcpServer.ProcessRequestAsync(body, ct);
+        var response = await server.ProcessRequestAsync(body, ct);
 
         if (response is null)
         {
