@@ -35,6 +35,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageTags>ai;memory;coding-agent;mcp;eidetic</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -43,6 +44,7 @@
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\logo-512x512.png" Pack="true" PackagePath="icon.png" />
   </ItemGroup>
 
 </Project>

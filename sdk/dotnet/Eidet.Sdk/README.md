@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="https://raw.githubusercontent.com/stevehansen/eidet/main/logo-512x512.png" alt="Eidet" width="96" height="96">
+</div>
+
 # Eidet.Sdk
 
 C# client SDK for [Eidet](https://github.com/stevehansen/eidet) — long-term memory for AI coding agents.

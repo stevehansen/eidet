@@ -1,6 +1,9 @@
-# Eidet
+<div align="center">
+  <img src="logo-512x512.png" alt="Eidet" width="128" height="128">
 
-[![CI](https://github.com/stevehansen/eidet/actions/workflows/ci.yml/badge.svg)](https://github.com/stevehansen/eidet/actions/workflows/ci.yml)
+  # Eidet
+
+  [![CI](https://github.com/stevehansen/eidet/actions/workflows/ci.yml/badge.svg)](https://github.com/stevehansen/eidet/actions/workflows/ci.yml)
 [![NuGet](https://img.shields.io/nuget/v/eidet?label=dotnet%20tool)](https://www.nuget.org/packages/eidet)
 [![NuGet SDK](https://img.shields.io/nuget/v/Eidet.Sdk?label=Eidet.Sdk)](https://www.nuget.org/packages/Eidet.Sdk)
 [![npm](https://img.shields.io/npm/v/@eidet/sdk)](https://www.npmjs.com/package/@eidet/sdk)
@@ -8,6 +11,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > Long-term memory for AI coding agents — local-first, privacy-absolute, works everywhere.
+
+</div>
 
 *From "eidetic" — relating to extraordinarily vivid, detailed recall.*
 
