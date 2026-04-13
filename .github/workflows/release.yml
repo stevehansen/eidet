@@ -206,22 +206,22 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
-          # No registry-url — let npm CLI handle OIDC auth via trusted publishers
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Publish
         working-directory: sdk/typescript
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           npm version $VERSION --no-git-tag-version --allow-same-version
-          npm install
+          npm ci
           npm run build
 
           # Check if this version already exists (safe re-run)
           if npm view @eidet/sdk@$VERSION version 2>/dev/null; then
             echo "Version $VERSION already published — skipping"
           else
-            npm publish --access public --provenance
+            npm publish --access public
           fi
 
   # Publish eidet-sdk to PyPI (trusted publishing via OIDC)
