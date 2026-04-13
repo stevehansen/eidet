@@ -27,7 +27,6 @@ bld/
 
 ## Node (SDK + docs tooling)
 node_modules/
-package-lock.json
 sdk/typescript/dist/
 
 ## Generated files
