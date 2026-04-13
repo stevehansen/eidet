@@ -207,7 +207,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
+          # No registry-url — let npm CLI handle OIDC auth via trusted publishers
 
       - name: Publish
         working-directory: sdk/typescript
