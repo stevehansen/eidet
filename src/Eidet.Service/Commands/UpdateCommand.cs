@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Eidet.Core;
+using Eidet.Core.Configuration;
 using Eidet.Core.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -97,19 +98,35 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             return 0;
         }
 
-        // Perform the update: stop service → dotnet tool update → restart service
+        // On Windows, the running process locks its own DLLs, so dotnet tool update
+        // will fail with "Access denied". We use a trampoline: stop everything, write
+        // a temp script that does the actual update after we exit, then exit immediately.
+        if (OperatingSystem.IsWindows())
+            return await UpdateViaTrampolineAsync(currentVersion, latestVersion, settings, cancellation);
+
+        return await UpdateDirectAsync(currentVersion, latestVersion, settings, cancellation);
+    }
+
+    /// <summary>
+    /// Direct update for macOS/Linux where loaded DLLs don't hold file locks.
+    /// </summary>
+    private static async Task<int> UpdateDirectAsync(string currentVersion, string latestVersion,
+        Settings settings, CancellationToken cancellation)
+    {
         if (!settings.Json)
             AnsiConsole.MarkupLine("[bold]Updating...[/]");
 
         // Step 1: Stop the service
         var serviceWasRunning = await StopServiceAsync(settings, cancellation);
 
-        // Step 2: Run dotnet tool update
+        // Step 2: Kill other eidet processes (mcp, etc.) that may hold file locks
+        var killed = KillOtherEidetProcesses(settings);
+
+        // Step 3: Run dotnet tool update
         var updateResult = await RunDotnetToolUpdateAsync(settings, cancellation);
 
         if (!updateResult.Success)
         {
-            // Try to restart service even on failure
             if (serviceWasRunning)
                 await StartServiceAsync(settings, cancellation);
 
@@ -130,10 +147,10 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             return 1;
         }
 
-        // Step 3: Record in version history
+        // Step 4: Record in version history
         VersionHistory.Record(latestVersion, currentVersion, "dotnet-tool-update");
 
-        // Step 4: Restart service
+        // Step 5: Restart service
         if (serviceWasRunning)
             await StartServiceAsync(settings, cancellation);
 
@@ -155,6 +172,58 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
                 AnsiConsole.MarkupLine("  Service restarted.");
         }
 
+        return 0;
+    }
+
+    /// <summary>
+    /// Windows trampoline update: generates a script that runs after this process exits,
+    /// because Windows locks loaded DLLs and dotnet can't replace them while we're running.
+    /// </summary>
+    private static async Task<int> UpdateViaTrampolineAsync(string currentVersion, string latestVersion,
+        Settings settings, CancellationToken cancellation)
+    {
+        if (!settings.Json)
+            AnsiConsole.MarkupLine("[bold]Updating...[/]");
+
+        // Step 1: Stop the scheduled task / service
+        var serviceWasRunning = await StopServiceAsync(settings, cancellation);
+
+        // Step 2: Kill all OTHER eidet processes (mcp, serve) — not ourselves
+        var killed = KillOtherEidetProcesses(settings);
+
+        // Step 3: Record version history now (before we exit — the new binary may have
+        // a different version constant, but the history file is just JSON on disk)
+        VersionHistory.Record(latestVersion, currentVersion, "dotnet-tool-update");
+
+        // Step 4: Generate and launch the trampoline script
+        var scriptPath = GenerateWindowsTrampolineScript(currentVersion, latestVersion, serviceWasRunning);
+
+        if (!settings.Json)
+        {
+            AnsiConsole.MarkupLine("  Launching update script...");
+            AnsiConsole.MarkupLine($"  [dim](script: {Markup.Escape(scriptPath)})[/]");
+        }
+
+        LaunchDetachedScript(scriptPath);
+
+        if (settings.Json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                current = currentVersion,
+                latest = latestVersion,
+                trampolineScript = scriptPath,
+                serviceWillRestart = serviceWasRunning,
+            }, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("  Exiting to release file locks...");
+            AnsiConsole.MarkupLine($"  The update script will install v{latestVersion} and restart the service.");
+            AnsiConsole.MarkupLine("  Check [dim]eidet status[/] in a few seconds to verify.");
+        }
+
+        // Exit immediately so our DLLs are unlocked
         return 0;
     }
 
@@ -187,6 +256,68 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         }
     }
 
+    /// <summary>
+    /// Kill all eidet processes except the current one (handles mcp, serve, etc.).
+    /// Returns the count of processes killed.
+    /// </summary>
+    internal static int KillOtherEidetProcesses(Settings? settings = null)
+    {
+        var currentPid = Environment.ProcessId;
+        var killed = 0;
+
+        try
+        {
+            // Find processes by name. The dotnet tool shim creates processes named "eidet"
+            // but the actual runtime process may also appear as "dotnet" running eidet.dll.
+            // We handle both: eidet.exe shim processes and the serve/mcp lock file.
+            foreach (var proc in Process.GetProcessesByName("eidet"))
+            {
+                if (proc.Id == currentPid)
+                    continue;
+
+                try
+                {
+                    if (!proc.HasExited)
+                    {
+                        proc.Kill(entireProcessTree: true);
+                        proc.WaitForExit(5000);
+                        killed++;
+                    }
+                }
+                catch { }
+                finally
+                {
+                    proc.Dispose();
+                }
+            }
+
+            if (killed > 0 && settings is { Json: false })
+                AnsiConsole.MarkupLine($"  Stopped {killed} eidet process{(killed == 1 ? "" : "es")} (mcp/serve)");
+        }
+        catch { }
+
+        return killed;
+    }
+
+    /// <summary>
+    /// Check whether a Windows scheduled task named "Eidet" is registered.
+    /// </summary>
+    internal static async Task<bool> IsScheduledTaskRegisteredAsync(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows())
+            return false;
+
+        try
+        {
+            var (exitCode, _) = await RunProcessAsync("schtasks.exe", "/query /tn \"Eidet\" /fo CSV /nh", ct);
+            return exitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static async Task<bool> StopServiceAsync(Settings settings, CancellationToken ct)
     {
         try
@@ -201,7 +332,7 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
                 if (output.Contains("Running", StringComparison.OrdinalIgnoreCase))
                 {
                     if (!settings.Json)
-                        AnsiConsole.MarkupLine("  Stopping service...");
+                        AnsiConsole.MarkupLine("  Stopping scheduled task...");
                     await RunProcessAsync("schtasks.exe", "/end /tn \"Eidet\"", ct);
                     // Give the process time to release file locks
                     await Task.Delay(2000, ct);
@@ -246,7 +377,7 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             if (OperatingSystem.IsWindows())
             {
                 if (!settings.Json)
-                    AnsiConsole.MarkupLine("  Starting service...");
+                    AnsiConsole.MarkupLine("  Starting scheduled task...");
                 await RunProcessAsync("schtasks.exe", "/run /tn \"Eidet\"", ct);
             }
             else if (OperatingSystem.IsMacOS())
@@ -259,6 +390,104 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             }
         }
         catch { }
+    }
+
+    /// <summary>
+    /// Generate a Windows .cmd script that performs the actual update after this process exits.
+    /// The script waits for our PID to exit, runs dotnet tool update, and restarts the service.
+    /// </summary>
+    internal static string GenerateWindowsTrampolineScript(string currentVersion, string latestVersion, bool restartService)
+    {
+        var myPid = Environment.ProcessId;
+        var configDir = ConfigManager.GetConfigDir();
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"eidet-update-{Guid.NewGuid():N}.cmd");
+        var logPath = Path.Combine(configDir, "update.log");
+
+        // The script:
+        // 1. Waits for the calling process to exit (polls every second, up to 30s)
+        // 2. Kills any remaining eidet processes (belt and suspenders)
+        // 3. Runs dotnet tool update
+        // 4. Restarts the scheduled task if it was running
+        // 5. Writes a brief log file
+        // 6. Cleans itself up
+        var script = $"""
+            @echo off
+            setlocal
+            echo Eidet update trampoline — updating v{currentVersion} to v{latestVersion}
+            echo Waiting for PID {myPid} to exit...
+
+            REM Wait for the calling eidet process to exit (up to 30 seconds)
+            set /a TRIES=0
+            :WAIT_LOOP
+            tasklist /fi "PID eq {myPid}" 2>nul | find "{myPid}" >nul
+            if errorlevel 1 goto DONE_WAITING
+            set /a TRIES+=1
+            if %TRIES% geq 30 (
+                echo WARNING: PID {myPid} did not exit after 30 seconds, proceeding anyway
+                goto DONE_WAITING
+            )
+            timeout /t 1 /nobreak >nul
+            goto WAIT_LOOP
+            :DONE_WAITING
+
+            REM Kill any remaining eidet processes (mcp, serve, etc.)
+            echo Killing remaining eidet processes...
+            taskkill /f /im eidet.exe 2>nul
+            timeout /t 2 /nobreak >nul
+
+            REM Run the actual update
+            echo Running dotnet tool update...
+            dotnet tool update -g eidet
+            if errorlevel 1 (
+                echo UPDATE FAILED >> "{logPath}"
+                echo %date% %time% - Update from v{currentVersion} to v{latestVersion} FAILED >> "{logPath}"
+                echo dotnet tool update -g eidet returned error >> "{logPath}"
+                goto CLEANUP
+            )
+
+            echo %date% %time% - Updated from v{currentVersion} to v{latestVersion} >> "{logPath}"
+            echo Update successful.
+            {(restartService ? """
+            REM Restart the scheduled task
+            echo Restarting Eidet service...
+            schtasks.exe /run /tn "Eidet"
+            if errorlevel 1 (
+                echo WARNING: Could not restart scheduled task. Run: schtasks /run /tn "Eidet"
+                echo %date% %time% - Service restart FAILED >> "{logPath}"
+            ) else (
+                echo Service restarted.
+                echo %date% %time% - Service restarted >> "{logPath}"
+            )
+            """ : $"""
+            echo %date% %time% - Service was not running, skipping restart >> "{logPath}"
+            """)}
+            :CLEANUP
+            REM Clean up this script
+            (goto) 2>nul & del "%~f0"
+            """;
+
+        File.WriteAllText(scriptPath, script);
+        return scriptPath;
+    }
+
+    /// <summary>
+    /// Launch a script in a fully detached process (no parent relationship).
+    /// </summary>
+    private static void LaunchDetachedScript(string scriptPath)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = $"/c \"{scriptPath}\"",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = false,
+            RedirectStandardError = false,
+        };
+
+        var proc = Process.Start(psi);
+        // Don't wait — let it run after we exit
+        proc?.Dispose();
     }
 
     private static async Task<(bool Success, string? Error)> RunDotnetToolUpdateAsync(Settings settings, CancellationToken ct)
@@ -281,7 +510,7 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         }
     }
 
-    private static async Task<(int ExitCode, string Output)> RunProcessAsync(string fileName, string arguments, CancellationToken ct)
+    internal static async Task<(int ExitCode, string Output)> RunProcessAsync(string fileName, string arguments, CancellationToken ct)
     {
         try
         {

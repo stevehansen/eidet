@@ -118,7 +118,10 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
             else if (serviceRunning)
                 AnsiConsole.MarkupLine($"  Service:    [yellow]Running but not responding[/] (PID {serviceInfo!.Pid}, port {serviceInfo.Port})");
             else
-                AnsiConsole.MarkupLine($"  Service:    [dim]Not running[/] — start with [dim]eidet serve[/]");
+            {
+                var restartHint = await GetRestartHintAsync(cancellation);
+                AnsiConsole.MarkupLine($"  Service:    [dim]Not running[/] — start with [dim]{restartHint}[/]");
+            }
 
             AnsiConsole.MarkupLine($"  Storage:    {config.Storage.Mode} RavenDB at [link]{config.Storage.RavenUrl}[/]");
             AnsiConsole.MarkupLine($"  Database:   {config.Storage.DatabaseName}" +
@@ -146,5 +149,39 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Suggest the right way to start the service based on what's installed.
+    /// </summary>
+    private static async Task<string> GetRestartHintAsync(CancellationToken ct)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                if (await UpdateCommand.IsScheduledTaskRegisteredAsync(ct))
+                    return "schtasks /run /tn \"Eidet\"";
+            }
+            else if (OperatingSystem.IsMacOS())
+            {
+                var plistPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    "Library", "LaunchAgents", "dev.eidet.service.plist");
+                if (File.Exists(plistPath))
+                    return "launchctl start dev.eidet.service";
+            }
+            else
+            {
+                var unitPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    ".config", "systemd", "user", "eidet.service");
+                if (File.Exists(unitPath))
+                    return "systemctl --user start eidet.service";
+            }
+        }
+        catch { }
+
+        return "eidet serve";
     }
 }
