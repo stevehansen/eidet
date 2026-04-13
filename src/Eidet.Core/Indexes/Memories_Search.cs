@@ -11,7 +11,12 @@ public class Memories_Search : AbstractIndexCreationTask<MemoryEntry, Memories_S
     public class Result
     {
         public string Content { get; set; } = "";
-        public object? ContentVector { get; set; }
+        /// <summary>
+        /// Composite field: Content + Summary + OneLiner + Tags joined.
+        /// Used for full-text search so queries match across all textual fields.
+        /// </summary>
+        public string SearchText { get; set; } = "";
+        public object? SearchVector { get; set; }
         public string RepoId { get; set; } = "";
         public MemoryType Type { get; set; }
         public string[] Tags { get; set; } = [];
@@ -30,10 +35,16 @@ public class Memories_Search : AbstractIndexCreationTask<MemoryEntry, Memories_S
     public Memories_Search()
     {
         Map = entries => from e in entries
+            let searchText = string.Join(" ",
+                new[] { e.Content, e.Summary, e.OneLiner, e.ForesightHint }
+                    .Where(s => s != null))
+                + " " + string.Join(" ", e.Tags)
+                + " " + string.Join(" ", e.Entities)
             select new Result
             {
                 Content = e.Content,
-                ContentVector = CreateVector(e.Content),
+                SearchText = searchText,
+                SearchVector = CreateVector(searchText),
                 RepoId = e.RepoId,
                 Type = e.Type,
                 Tags = e.Tags.ToArray(),
@@ -49,15 +60,19 @@ public class Memories_Search : AbstractIndexCreationTask<MemoryEntry, Memories_S
                 ForesightHint = e.ForesightHint,
             };
 
-        // Full-text search on content + entities
+        // Full-text search on composite SearchText field (Content + Summary + OneLiner + Tags + Entities)
+        Index("SearchText", FieldIndexing.Search);
+        Analyze("SearchText", "StandardAnalyzer");
+
+        // Keep Content indexed for backward compat
         Index("Content", FieldIndexing.Search);
         Analyze("Content", "StandardAnalyzer");
 
         Index("Entities", FieldIndexing.Search);
         Analyze("Entities", "KeywordAnalyzer");
 
-        // Vector search (RavenDB built-in embeddings)
-        VectorIndexes.Add(x => x.ContentVector, new VectorOptions
+        // Vector search on composite text (includes Summary + OneLiner for richer embeddings)
+        VectorIndexes.Add(x => x.SearchVector, new VectorOptions
         {
             SourceEmbeddingType = VectorEmbeddingType.Text,
             DestinationEmbeddingType = VectorEmbeddingType.Single,

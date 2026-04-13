@@ -7,7 +7,7 @@ public class MemoryQuery
     public List<string> Tags { get; set; } = [];
     public int Limit { get; set; } = 10;
     public bool IncludeExpired { get; set; }
-    public bool CrossRepo { get; set; } = true;
+    public bool CrossRepo { get; set; }
 }
 
 public class MemorySearchResult

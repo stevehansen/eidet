@@ -58,10 +58,14 @@ public class RavenEidetStore : IEidetStore
         IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
     {
         using var session = _store.OpenAsyncSession();
+        // WhereIn MUST come before Search to ensure AND semantics.
+        // RavenDB's Search uses OR by default, so placing it after Where
+        // ensures the repo filter is applied as an AND condition.
         var documentQuery = session.Advanced
             .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
-            .Search("Content", query.Text)
-            .WhereIn("RepoId", repoIds);
+            .WhereIn("RepoId", repoIds)
+            .AndAlso()
+            .Search("SearchText", query.Text);
 
         documentQuery = ApplyFilters(documentQuery, query);
         return await documentQuery.Take(query.Limit * 2).ToListAsync(ct); // Over-fetch 2× for merge quality
@@ -77,7 +81,7 @@ public class RavenEidetStore : IEidetStore
                 .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
                 .WhereIn("RepoId", repoIds)
                 .VectorSearch(
-                    field => field.WithField("ContentVector"),
+                    field => field.WithField("SearchVector"),
                     searchTerm => searchTerm.ByText(query.Text, EmbeddingsTaskId),
                     minimumSimilarity: 0.70f,
                     numberOfCandidates: 30);
@@ -103,7 +107,7 @@ public class RavenEidetStore : IEidetStore
                 .WhereEquals("RepoId", repoId)
                 .WhereEquals("ValidUntil", (DateTime?)null)
                 .VectorSearch(
-                    field => field.WithField("ContentVector"),
+                    field => field.WithField("SearchVector"),
                     searchTerm => searchTerm.ByText(content, EmbeddingsTaskId),
                     minimumSimilarity: threshold,
                     numberOfCandidates: 10)
@@ -305,13 +309,13 @@ public class RavenEidetStore : IEidetStore
         IAsyncDocumentQuery<MemoryEntry> documentQuery, MemoryQuery query)
     {
         if (query.Type.HasValue)
-            documentQuery = documentQuery.WhereEquals("Type", query.Type.Value);
+            documentQuery = documentQuery.AndAlso().WhereEquals("Type", query.Type.Value);
 
         foreach (var tag in query.Tags)
-            documentQuery = documentQuery.WhereIn("Tags", new[] { tag });
+            documentQuery = documentQuery.AndAlso().WhereIn("Tags", new[] { tag });
 
         if (!query.IncludeExpired)
-            documentQuery = documentQuery.WhereEquals("ValidUntil", (DateTime?)null);
+            documentQuery = documentQuery.AndAlso().WhereEquals("ValidUntil", (DateTime?)null);
 
         return documentQuery;
     }
