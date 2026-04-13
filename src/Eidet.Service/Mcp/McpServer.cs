@@ -243,16 +243,17 @@ public class McpServer
 
     private async Task<McpCallToolResult> ExecuteContext(JsonElement args, CancellationToken ct)
     {
-        // Auto-intake on first context call if no memories exist
+        // Auto-intake on first context call if no memories exist for THIS repo
         if (_autoIntake && !_autoIntakeDone)
         {
             _autoIntakeDone = true;
             try
             {
-                var counts = await _svc.GetStoreInfoAsync(ct);
-                if (counts is { DocumentCount: 0 } || counts is null)
+                var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
+                var counts = await _svc.GetCountsByTypeAsync(normalizedRepoId, ct);
+                var totalForRepo = counts.Values.Sum();
+                if (totalForRepo == 0)
                 {
-                    // No memories yet — run auto-intake from the working directory
                     await _intake.IngestAsync(_repoId, _repoId, dryRun: false, ct: ct);
                 }
             }

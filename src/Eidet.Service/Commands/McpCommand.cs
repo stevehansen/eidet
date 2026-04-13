@@ -22,6 +22,7 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
         var config = ConfigManager.Load();
 
         var store = DocumentStoreFactory.CreateFromConfig(config);
+        DatabaseProvisioner.DeployIndexes(store);
         var eidetStore = new RavenEidetStore(store);
         IEnrichmentService enrichment = config.Enrichment.OllamaEnabled
             ? new OllamaEnrichmentService(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)

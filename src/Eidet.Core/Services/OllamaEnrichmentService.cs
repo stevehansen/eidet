@@ -164,6 +164,7 @@ public sealed class OllamaEnrichmentService : IEnrichmentService, IDisposable
                 msg.TryGetProperty("content", out var content))
             {
                 var text = content.GetString()?.Trim();
+                text = StripChainOfThought(text);
                 return string.IsNullOrWhiteSpace(text) ? null : text;
             }
 
@@ -174,6 +175,38 @@ public sealed class OllamaEnrichmentService : IEnrichmentService, IDisposable
             // Enrichment is never critical
             return null;
         }
+    }
+
+    /// <summary>
+    /// Strips chain-of-thought reasoning from model output.
+    /// Some models (e.g., Gemma) output thinking blocks even with think:false.
+    /// The actual answer typically follows a &lt;channel|&gt; delimiter.
+    /// </summary>
+    internal static string? StripChainOfThought(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+
+        // Pattern 1: <channel|> delimiter — actual answer follows the last occurrence
+        const string channelMarker = "<channel|>";
+        var lastIdx = text.LastIndexOf(channelMarker, StringComparison.Ordinal);
+        if (lastIdx >= 0)
+        {
+            text = text[(lastIdx + channelMarker.Length)..].Trim();
+            // Strip any trailing repeated answers (some models repeat after another <channel|>)
+            var secondMarker = text.IndexOf(channelMarker, StringComparison.Ordinal);
+            if (secondMarker > 0)
+                text = text[..secondMarker].Trim();
+        }
+
+        // Pattern 2: <think>...</think> blocks (common in thinking models)
+        if (text.Contains("<think>", StringComparison.OrdinalIgnoreCase))
+        {
+            var thinkEnd = text.LastIndexOf("</think>", StringComparison.OrdinalIgnoreCase);
+            if (thinkEnd >= 0)
+                text = text[(thinkEnd + "</think>".Length)..].Trim();
+        }
+
+        return string.IsNullOrWhiteSpace(text) ? null : text;
     }
 
     public void Dispose() => _http.Dispose();

@@ -71,6 +71,10 @@ public sealed class EidetHost : IDisposable
         var actualBind = bindAddress ?? config.Service.BindAddress;
 
         var store = DocumentStoreFactory.CreateFromConfig(config);
+
+        // Always deploy indexes on startup — idempotent, updates changed definitions
+        DatabaseProvisioner.DeployIndexes(store);
+
         var eidetStore = new RavenEidetStore(store);
 
         IEnrichmentService enrichment = config.Enrichment.OllamaEnabled

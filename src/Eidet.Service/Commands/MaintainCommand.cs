@@ -47,6 +47,7 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
                 AnsiConsole.MarkupLine($"  Dedup merged:   {result.DedupMerged}");
                 AnsiConsole.MarkupLine($"  Decay updated:  {result.DecayUpdated}");
                 AnsiConsole.MarkupLine($"  Orphans:        {result.OrphansCleaned}");
+                AnsiConsole.MarkupLine($"  Enrichment fix: {result.EnrichmentCleaned}");
                 AnsiConsole.MarkupLine($"  Backfill:       {result.BackfillEnriched}");
                 AnsiConsole.MarkupLine($"  Ollama:         {result.OllamaEnriched}");
                 AnsiConsole.MarkupLine($"  Consolidated:   {result.ConsolidatedInsights}");

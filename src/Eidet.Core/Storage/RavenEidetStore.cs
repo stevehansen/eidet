@@ -105,6 +105,7 @@ public class RavenEidetStore : IEidetStore
             var results = await session.Advanced
                 .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
                 .WhereEquals("RepoId", repoId)
+                .AndAlso()
                 .WhereEquals("ValidUntil", (DateTime?)null)
                 .VectorSearch(
                     field => field.WithField("SearchVector"),
@@ -127,7 +128,9 @@ public class RavenEidetStore : IEidetStore
             var candidates = await session.Advanced
                 .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
                 .WhereEquals("RepoId", repoId)
+                .AndAlso()
                 .WhereEquals("ValidUntil", (DateTime?)null)
+                .AndAlso()
                 .Search("Content", searchSnippet)
                 .Take(10)
                 .ToListAsync(ct);

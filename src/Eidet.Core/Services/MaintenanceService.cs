@@ -39,6 +39,9 @@ public class MaintenanceService
         // Stage 5: Orphan Cleanup
         result.OrphansCleaned = await CleanOrphansAsync(repoId, now, ct);
 
+        // Stage 5b: Strip corrupted enrichment (CoT reasoning leaked into summary/oneLiner/foresightHint)
+        result.EnrichmentCleaned = await CleanCorruptedEnrichmentAsync(repoId, ct);
+
         // Stage 6: Backfill Enrichment (entities + one-liners + Ollama enrichment)
         result.BackfillEnriched = await BackfillEnrichmentAsync(repoId, ct);
 
@@ -154,6 +157,51 @@ public class MaintenanceService
             entry.ForgetReason = "Orphan cleanup";
             await _store.UpdateAsync(entry, ct);
             cleaned++;
+        }
+
+        return cleaned;
+    }
+
+    /// <summary>
+    /// Detects and fixes enrichment fields corrupted by LLM chain-of-thought leakage.
+    /// Strips reasoning prefixes, extracts actual answer from &lt;channel|&gt; delimiters.
+    /// Clears fields that are unsalvageable (no answer found) so they get re-enriched.
+    /// </summary>
+    private async Task<int> CleanCorruptedEnrichmentAsync(string repoId, CancellationToken ct)
+    {
+        var entries = await _store.GetTopScoredAsync(repoId, Enum.GetValues<MemoryType>(), 500, ct);
+        var cleaned = 0;
+
+        foreach (var entry in entries)
+        {
+            var changed = false;
+
+            var cleanedSummary = OllamaEnrichmentService.StripChainOfThought(entry.Summary);
+            if (cleanedSummary != entry.Summary)
+            {
+                entry.Summary = cleanedSummary;
+                changed = true;
+            }
+
+            var cleanedOneLiner = OllamaEnrichmentService.StripChainOfThought(entry.OneLiner);
+            if (cleanedOneLiner != entry.OneLiner)
+            {
+                entry.OneLiner = cleanedOneLiner;
+                changed = true;
+            }
+
+            var cleanedHint = OllamaEnrichmentService.StripChainOfThought(entry.ForesightHint);
+            if (cleanedHint != entry.ForesightHint)
+            {
+                entry.ForesightHint = cleanedHint;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                await _store.UpdateAsync(entry, ct);
+                cleaned++;
+            }
         }
 
         return cleaned;
@@ -291,11 +339,12 @@ public class MaintenanceResult
     public int DedupMerged { get; set; }
     public int DecayUpdated { get; set; }
     public int OrphansCleaned { get; set; }
+    public int EnrichmentCleaned { get; set; }
     public int BackfillEnriched { get; set; }
     public int OllamaEnriched { get; set; }
     public int ConsolidatedInsights { get; set; }
     public DateTime CompletedAt { get; set; }
 
     public override string ToString() =>
-        $"Maintenance complete: TTL={ExpiredByTtl}, Retention={ExpiredByRetention}, Dedup={DedupMerged}, Decay={DecayUpdated}, Orphans={OrphansCleaned}, Backfill={BackfillEnriched}, Ollama={OllamaEnriched}, Consolidated={ConsolidatedInsights}";
+        $"Maintenance complete: TTL={ExpiredByTtl}, Retention={ExpiredByRetention}, Dedup={DedupMerged}, Decay={DecayUpdated}, Orphans={OrphansCleaned}, EnrichmentCleaned={EnrichmentCleaned}, Backfill={BackfillEnriched}, Ollama={OllamaEnriched}, Consolidated={ConsolidatedInsights}";
 }

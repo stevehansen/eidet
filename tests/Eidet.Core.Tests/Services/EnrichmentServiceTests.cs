@@ -91,4 +91,74 @@ public class EnrichmentServiceTests
         var oneLiner = await svc.GenerateOneLinerAsync("test content");
         Assert.Null(oneLiner);
     }
+
+    // ─── StripChainOfThought tests ──────────────────────────────────────
+
+    [Fact]
+    public void StripChainOfThought_Null_ReturnsNull()
+    {
+        Assert.Null(OllamaEnrichmentService.StripChainOfThought(null));
+    }
+
+    [Fact]
+    public void StripChainOfThought_Whitespace_ReturnsNull()
+    {
+        // Whitespace-only input has no meaningful content to extract
+        var result = OllamaEnrichmentService.StripChainOfThought("  ");
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void StripChainOfThought_CleanText_PassesThrough()
+    {
+        var text = "Cross-repo search defaults to false, preventing accidental result leakage.";
+        Assert.Equal(text, OllamaEnrichmentService.StripChainOfThought(text));
+    }
+
+    [Fact]
+    public void StripChainOfThought_ChannelMarker_ExtractsAnswer()
+    {
+        var input = "The user wants an ultra-compact summary.\nDrafting options:\n1. First option\n<channel|>Cross-repo search defaults to false.";
+        Assert.Equal("Cross-repo search defaults to false.", OllamaEnrichmentService.StripChainOfThought(input));
+    }
+
+    [Fact]
+    public void StripChainOfThought_MultipleChannelMarkers_TakesLastThenTrims()
+    {
+        var input = "Reasoning...<channel|>First attempt<channel|>Final answer here.";
+        // Takes after LAST <channel|> in the first pass, then trims any inner ones
+        Assert.Equal("Final answer here.", OllamaEnrichmentService.StripChainOfThought(input));
+    }
+
+    [Fact]
+    public void StripChainOfThought_ThinkTags_StripsThinking()
+    {
+        var input = "<think>Let me analyze this...\nThe key change is...</think>The actual summary here.";
+        Assert.Equal("The actual summary here.", OllamaEnrichmentService.StripChainOfThought(input));
+    }
+
+    [Fact]
+    public void StripChainOfThought_ChannelMarkerWithRepeatedAnswer()
+    {
+        // Takes after the last <channel|>, then strips trailing <channel|> segments
+        var input = "Reasoning<channel|>The answer.<channel|>The answer repeated.";
+        // Last <channel|> gives "The answer repeated." — no further markers
+        Assert.Equal("The answer repeated.", OllamaEnrichmentService.StripChainOfThought(input));
+    }
+
+    [Fact]
+    public void StripChainOfThought_RealCorruptedSummary()
+    {
+        var input = "The user wants me to summarize a technical memory change.\nConstraint Checklist:\n1. Yes.\n2. Yes.\n<channel|>The Memories_Search index now uses a composite SearchText field for richer searching.";
+        Assert.Equal("The Memories_Search index now uses a composite SearchText field for richer searching.",
+            OllamaEnrichmentService.StripChainOfThought(input));
+    }
+
+    [Fact]
+    public void StripChainOfThought_RealCorruptedOneLiner()
+    {
+        var input = "The user wants an ultra-compact, 10-word maximum summary.\nDraft 1: option A\nDraft 2: option B\n<channel|>Use AndAlso() in RavenDB queries to enforce AND logic over OR.";
+        Assert.Equal("Use AndAlso() in RavenDB queries to enforce AND logic over OR.",
+            OllamaEnrichmentService.StripChainOfThought(input));
+    }
 }

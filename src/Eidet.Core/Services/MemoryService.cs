@@ -438,6 +438,9 @@ public class MemoryService
     public async Task<DatabaseInfo?> GetStoreInfoAsync(CancellationToken ct = default) =>
         await _store.GetDatabaseInfoAsync(ct);
 
+    public async Task<Dictionary<MemoryType, int>> GetCountsByTypeAsync(string repoId, CancellationToken ct = default) =>
+        await _store.GetCountsByTypeAsync(repoId, ct);
+
     // ─── Browse ─────────────────────────────────────────────────────────
 
     public async Task<List<MemoryEntry>> BrowseAsync(
