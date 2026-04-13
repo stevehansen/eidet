@@ -158,6 +158,30 @@ class EidetClient:
         res.raise_for_status()
         return res.text
 
+    # ─── Usage & Context ───────────────────────────────────────
+
+    def usage(self, repo: str, days: int = 30) -> dict[str, Any]:
+        return self._get("/api/eidet/usage", params={"repo": repo, "days": str(days)})
+
+    def usage_timeseries(
+        self, repo: str, operation: str, days: int = 30
+    ) -> list[dict[str, Any]]:
+        data = self._get(
+            "/api/eidet/usage/timeseries",
+            params={"repo": repo, "operation": operation, "days": str(days)},
+        )
+        return data["data"]
+
+    def usage_hourly(self, repo: str, days: int = 7) -> list[dict[str, Any]]:
+        data = self._get("/api/eidet/usage/hourly", params={"repo": repo, "days": str(days)})
+        return data["buckets"]
+
+    def context_preview(self, repo: str, tokens: int = 600) -> dict[str, Any]:
+        return self._get(
+            "/api/eidet/context/preview",
+            params={"repo": repo, "tokens": str(tokens)},
+        )
+
     # ─── Health ──────────────────────────────────────────────────
 
     def health(self) -> dict[str, Any]:

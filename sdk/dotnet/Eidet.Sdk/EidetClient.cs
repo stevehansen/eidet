@@ -108,6 +108,24 @@ public sealed class EidetClient : IDisposable
         return await res.Content.ReadAsStringAsync(ct);
     }
 
+    // ─── Usage & Context ────────────────────────────────────────
+
+    public async Task<UsageReport> GetUsageAsync(string repo, int days = 30, CancellationToken ct = default) =>
+        await GetAsync<UsageReport>($"api/eidet/usage?repo={Uri.EscapeDataString(repo)}&days={days}", ct);
+
+    public async Task<UsageTimeSeriesResponse> GetUsageTimeSeriesAsync(string repo, string operation,
+        int days = 30, CancellationToken ct = default) =>
+        await GetAsync<UsageTimeSeriesResponse>(
+            $"api/eidet/usage/timeseries?repo={Uri.EscapeDataString(repo)}&operation={Uri.EscapeDataString(operation)}&days={days}", ct);
+
+    public async Task<UsageHourlyResponse> GetUsageHourlyAsync(string repo, int days = 7, CancellationToken ct = default) =>
+        await GetAsync<UsageHourlyResponse>(
+            $"api/eidet/usage/hourly?repo={Uri.EscapeDataString(repo)}&days={days}", ct);
+
+    public async Task<ContextPreview> GetContextPreviewAsync(string repo, int tokens = 600, CancellationToken ct = default) =>
+        await GetAsync<ContextPreview>(
+            $"api/eidet/context/preview?repo={Uri.EscapeDataString(repo)}&tokens={tokens}", ct);
+
     // ─── Health ──────────────────────────────────────────────────
 
     public async Task<HealthResponse> HealthAsync(CancellationToken ct = default) =>
@@ -281,6 +299,73 @@ public record ConsolidateResult
     public int Candidates { get; init; }
     public int InsightsCreated { get; init; }
     public int InsightsBoosted { get; init; }
+}
+
+public record UsageReport
+{
+    public string RepoId { get; init; } = "";
+    public DateTime From { get; init; }
+    public DateTime To { get; init; }
+    public int TotalCalls { get; init; }
+    public List<OperationStats> Operations { get; init; } = [];
+}
+
+public record OperationStats
+{
+    public string Operation { get; init; } = "";
+    public int CallCount { get; init; }
+    public double TotalDurationMs { get; init; }
+    public double AvgDurationMs { get; init; }
+    public double MaxDurationMs { get; init; }
+    public double MinDurationMs { get; init; }
+    public int TotalResults { get; init; }
+    public DateTime FirstCall { get; init; }
+    public DateTime LastCall { get; init; }
+}
+
+public record UsageDataPoint
+{
+    public DateTime Timestamp { get; init; }
+    public double DurationMs { get; init; }
+    public int ResultCount { get; init; }
+}
+
+public record HourlyBucket
+{
+    public DateTime Hour { get; init; }
+    public int TotalCalls { get; init; }
+    public Dictionary<string, int> ByOperation { get; init; } = new();
+}
+
+public record ContextPreview
+{
+    public string Repo { get; init; } = "";
+    public int MaxTokens { get; init; }
+    public string Context { get; init; } = "";
+    public int EstimatedTokens { get; init; }
+    public List<LayerInfo>? Layers { get; init; }
+    public List<string>? CrossRepoScope { get; init; }
+}
+
+public record LayerInfo
+{
+    public string Id { get; init; } = "";
+    public string Name { get; init; } = "";
+    public string Type { get; init; } = "";
+}
+
+public record UsageTimeSeriesResponse
+{
+    public string Repo { get; init; } = "";
+    public string Operation { get; init; } = "";
+    public List<UsageDataPoint> Data { get; init; } = [];
+}
+
+public record UsageHourlyResponse
+{
+    public string Repo { get; init; } = "";
+    public int Days { get; init; }
+    public List<HourlyBucket> Buckets { get; init; } = [];
 }
 
 // Internal response wrappers

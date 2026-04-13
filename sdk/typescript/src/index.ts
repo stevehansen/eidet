@@ -100,6 +100,47 @@ export interface StatusResponse {
   };
 }
 
+export interface UsageReport {
+  repoId: string;
+  from: string;
+  to: string;
+  totalCalls: number;
+  operations: OperationStats[];
+}
+
+export interface OperationStats {
+  operation: string;
+  callCount: number;
+  totalDurationMs: number;
+  avgDurationMs: number;
+  maxDurationMs: number;
+  minDurationMs: number;
+  totalResults: number;
+  firstCall: string;
+  lastCall: string;
+}
+
+export interface UsageDataPoint {
+  timestamp: string;
+  durationMs: number;
+  resultCount: number;
+}
+
+export interface HourlyBucket {
+  hour: string;
+  totalCalls: number;
+  byOperation: Record<string, number>;
+}
+
+export interface ContextPreview {
+  repo: string;
+  maxTokens: number;
+  context: string;
+  estimatedTokens: number;
+  layers?: { id: string; name: string; type: string }[];
+  crossRepoScope?: string[];
+}
+
 export interface EidetClientOptions {
   url?: string;
   apiKey?: string;
@@ -204,6 +245,34 @@ export class EidetClient {
   async exportMarkdown(repo: string): Promise<string> {
     const res = await this.fetch(`/api/eidet/export?repo=${enc(repo)}`);
     return res.text();
+  }
+
+  // ─── Usage & Context ──────────────────────────────────────────────
+
+  async usage(repo: string, days?: number): Promise<UsageReport> {
+    const params = new URLSearchParams({ repo });
+    if (days) params.set('days', String(days));
+    return this.get<UsageReport>(`/api/eidet/usage?${params}`);
+  }
+
+  async usageTimeSeries(repo: string, operation: string, days?: number): Promise<UsageDataPoint[]> {
+    const params = new URLSearchParams({ repo, operation });
+    if (days) params.set('days', String(days));
+    const data = await this.get<{ data: UsageDataPoint[] }>(`/api/eidet/usage/timeseries?${params}`);
+    return data.data;
+  }
+
+  async usageHourly(repo: string, days?: number): Promise<HourlyBucket[]> {
+    const params = new URLSearchParams({ repo });
+    if (days) params.set('days', String(days));
+    const data = await this.get<{ buckets: HourlyBucket[] }>(`/api/eidet/usage/hourly?${params}`);
+    return data.buckets;
+  }
+
+  async contextPreview(repo: string, tokens?: number): Promise<ContextPreview> {
+    const params = new URLSearchParams({ repo });
+    if (tokens) params.set('tokens', String(tokens));
+    return this.get<ContextPreview>(`/api/eidet/context/preview?${params}`);
   }
 
   // ─── Health ──────────────────────────────────────────────────────
