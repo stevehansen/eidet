@@ -41,6 +41,7 @@
     else if (name === 'browser') loadBrowser();
     else if (name === 'graph') loadGraph();
     else if (name === 'timeline') loadTimeline();
+    else if (name === 'usage') loadUsage();
     else if (name === 'settings') loadSettings();
   }
 
@@ -70,6 +71,8 @@
     document.getElementById('btnConsolidate').addEventListener('click', function () { runAction('consolidate'); });
     document.getElementById('btnMaintenance').addEventListener('click', function () { runAction('maintenance'); });
     document.getElementById('btnExport').addEventListener('click', function () { runAction('export'); });
+
+    document.getElementById('usageDays').addEventListener('change', loadUsage);
   }
 
   // ─── API helpers ─────────────────────────────────────────────────
@@ -114,12 +117,24 @@
         select.innerHTML = '<option value="">No repos found</option>';
         return;
       }
-      data.repos.forEach(function (r) {
+      // Sort repos alphabetically by name
+      var repos = data.repos.slice().sort(function (a, b) {
+        return a.repoId.localeCompare(b.repoId, undefined, { sensitivity: 'base' });
+      });
+      repos.forEach(function (r) {
         var opt = document.createElement('option');
         opt.value = r.repoId;
-        // Show short name for display
-        var parts = r.repoId.replace(/\\/g, '/').split('/');
-        opt.textContent = parts[parts.length - 1] || r.repoId;
+        // Show short name + drive/parent for disambiguation
+        var normalized = r.repoId.replace(/\\/g, '/');
+        var parts = normalized.split('/');
+        var name = parts[parts.length - 1] || r.repoId;
+        // Add parent path hint if there are multiple segments
+        if (parts.length > 2) {
+          name = name + '  (' + parts.slice(0, -1).join('/') + ')';
+        } else if (parts.length === 2) {
+          name = name + '  (' + parts[0] + ')';
+        }
+        opt.textContent = name;
         opt.title = r.repoId;
         select.appendChild(opt);
       });
@@ -138,29 +153,103 @@
     grid.innerHTML = '<div class="loading">Loading...</div>';
 
     try {
-      var data = await api('/api/eidet/browse?repo=' + encRepo() + '&skip=0&take=100');
+      var data = await api('/api/eidet/browse?repo=' + encRepo() + '&skip=0&take=10');
       var entries = data.entries;
 
-      // Count by type
+      // Count by type from browse counts (recent 10 for display)
       var counts = { observation: 0, insight: 0, procedure: 0, heuristic: 0 };
-      entries.forEach(function (e) { counts[e.type] = (counts[e.type] || 0) + 1; });
+      var total = 0;
+
+      // Try to get accurate counts from a larger browse
+      try {
+        var allData = await api('/api/eidet/browse?repo=' + encRepo() + '&skip=0&take=1000');
+        allData.entries.forEach(function (e) { counts[e.type] = (counts[e.type] || 0) + 1; });
+        total = allData.entries.length;
+      } catch (_) {
+        entries.forEach(function (e) { counts[e.type] = (counts[e.type] || 0) + 1; });
+        total = entries.length;
+      }
 
       grid.innerHTML =
         statCard('Observations', counts.observation, 'observation') +
         statCard('Insights', counts.insight, 'insight') +
         statCard('Procedures', counts.procedure, 'procedure') +
         statCard('Heuristics', counts.heuristic, 'heuristic') +
-        statCard('Total', entries.length, '');
+        statCard('Total', total, '');
 
       // Recent
-      var recent = entries.slice(0, 10);
-      list.innerHTML = recent.length > 0
-        ? recent.map(memoryItemHtml).join('')
+      list.innerHTML = entries.length > 0
+        ? entries.map(memoryItemHtml).join('')
         : '<div class="empty-state">No memories yet</div>';
 
       setupMemoryClicks(list);
+
+      // Load context preview
+      loadContextPreview();
     } catch (_) {
       grid.innerHTML = '<div class="empty-state">Could not load dashboard</div>';
+    }
+  }
+
+  async function loadContextPreview() {
+    var el = document.getElementById('contextPreview');
+    var crEl = document.getElementById('crossRepoInfo');
+    if (!el) return;
+    el.innerHTML = '<div class="loading">Loading context...</div>';
+
+    try {
+      var data = await api('/api/eidet/context/preview?repo=' + encRepo());
+      var lines = (data.context || '').split('\n');
+      var html = '<div class="context-header">';
+      html += '<span class="context-tokens">~' + data.estimatedTokens + ' tokens</span>';
+      html += '</div>';
+      html += '<pre class="context-block">';
+      lines.forEach(function (line) {
+        if (line.startsWith('[I]')) {
+          html += '<span class="ctx-insight">' + escHtml(line) + '</span>\n';
+        } else if (line.startsWith('[P]')) {
+          html += '<span class="ctx-procedure">' + escHtml(line) + '</span>\n';
+        } else if (line.startsWith('[H]')) {
+          html += '<span class="ctx-heuristic">' + escHtml(line) + '</span>\n';
+        } else if (line.startsWith('[O]')) {
+          html += '<span class="ctx-observation">' + escHtml(line) + '</span>\n';
+        } else if (line.startsWith('[Memory:')) {
+          html += '<span class="ctx-l0">' + escHtml(line) + '</span>\n';
+        } else {
+          html += escHtml(line) + '\n';
+        }
+      });
+      html += '</pre>';
+      el.innerHTML = html;
+
+      // Cross-repo info
+      if (crEl && data.crossRepoScope && data.crossRepoScope.length > 1) {
+        var crHtml = '<div class="cross-repo-label">Cross-Repo Scope (' + data.crossRepoScope.length + ' repos)</div>';
+        crHtml += '<div class="cross-repo-list">';
+        data.crossRepoScope.forEach(function (r) {
+          var normalized = r.replace(/\\/g, '/');
+          var parts = normalized.split('/');
+          var name = parts[parts.length - 1] || r;
+          crHtml += '<span class="cross-repo-chip" title="' + escAttr(r) + '">' + escHtml(name) + '</span>';
+        });
+        crHtml += '</div>';
+        crEl.innerHTML = crHtml;
+      } else if (crEl) {
+        crEl.innerHTML = '';
+      }
+
+      // Layers
+      if (crEl && data.layers && data.layers.length > 0) {
+        var layerHtml = '<div class="cross-repo-label" style="margin-top:8px">Mounted Layers (' + data.layers.length + ')</div>';
+        layerHtml += '<div class="cross-repo-list">';
+        data.layers.forEach(function (l) {
+          layerHtml += '<span class="layer-chip" title="' + escAttr(l.id) + '">' + escHtml(l.name) + ' <span class="layer-type">' + escHtml(l.type) + '</span></span>';
+        });
+        layerHtml += '</div>';
+        crEl.innerHTML += layerHtml;
+      }
+    } catch (_) {
+      el.innerHTML = '<div class="empty-state">Could not load context preview</div>';
     }
   }
 
@@ -517,6 +606,159 @@
       container.innerHTML = html;
     } catch (_) {
       container.innerHTML = '<div class="empty-state">Could not load timeline</div>';
+    }
+  }
+
+  // ─── Usage Analytics ──────────────────────────────────────────────
+
+  async function loadUsage() {
+    if (!currentRepo) return;
+    var summary = document.getElementById('usageSummary');
+    var table = document.getElementById('usageTable');
+    summary.innerHTML = '<div class="loading">Loading usage data...</div>';
+    table.innerHTML = '';
+
+    var days = parseInt(document.getElementById('usageDays').value) || 7;
+
+    try {
+      var data = await api('/api/eidet/usage?repo=' + encRepo() + '&days=' + days);
+
+      if (data.totalCalls === 0) {
+        summary.innerHTML = '<div class="empty-state">No usage data recorded yet for this period.</div>';
+        table.innerHTML = '';
+        clearUsageChart();
+        return;
+      }
+
+      // Summary cards
+      var avgDuration = data.operations.length > 0
+        ? (data.operations.reduce(function (sum, o) { return sum + o.totalDurationMs; }, 0) / data.totalCalls)
+        : 0;
+
+      summary.innerHTML =
+        statCard('Total Calls', data.totalCalls, '') +
+        statCard('Operations', data.operations.length, '') +
+        statCard('Avg Duration', avgDuration.toFixed(0) + 'ms', '') +
+        statCard('Period', days + 'd', '');
+
+      // Operations table
+      if (data.operations.length > 0) {
+        var ops = data.operations.slice().sort(function (a, b) { return b.callCount - a.callCount; });
+        var html = '<table class="usage-table">';
+        html += '<thead><tr><th>Operation</th><th>Calls</th><th>Avg (ms)</th><th>Min (ms)</th><th>Max (ms)</th><th>Results</th><th>Last Call</th></tr></thead>';
+        html += '<tbody>';
+        ops.forEach(function (op) {
+          html += '<tr>';
+          html += '<td><span class="usage-op">' + escHtml(op.operation) + '</span></td>';
+          html += '<td class="num">' + op.callCount + '</td>';
+          html += '<td class="num">' + op.avgDurationMs.toFixed(1) + '</td>';
+          html += '<td class="num">' + op.minDurationMs.toFixed(1) + '</td>';
+          html += '<td class="num">' + op.maxDurationMs.toFixed(1) + '</td>';
+          html += '<td class="num">' + op.totalResults + '</td>';
+          html += '<td class="date">' + formatDate(op.lastCall) + '</td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+        table.innerHTML = html;
+      }
+
+      // Load hourly chart data
+      loadUsageChart(days);
+    } catch (e) {
+      summary.innerHTML = '<div class="empty-state">Could not load usage data' +
+        (e.message && e.message.includes('503') ? ' — usage tracking not available' : '') + '</div>';
+    }
+  }
+
+  async function loadUsageChart(days) {
+    try {
+      var data = await api('/api/eidet/usage/hourly?repo=' + encRepo() + '&days=' + days);
+      renderUsageChart(data.buckets || []);
+    } catch (_) {
+      clearUsageChart();
+    }
+  }
+
+  function clearUsageChart() {
+    var canvas = document.getElementById('usageChart');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var container = canvas.parentElement;
+    canvas.width = container.clientWidth - 40;
+    canvas.height = 200;
+    ctx.fillStyle = '#22263a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#5a5e72';
+    ctx.textAlign = 'center';
+    ctx.font = '13px -apple-system, system-ui, sans-serif';
+    ctx.fillText('No activity data available', canvas.width / 2, canvas.height / 2);
+  }
+
+  function renderUsageChart(buckets) {
+    var canvas = document.getElementById('usageChart');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var container = canvas.parentElement;
+    canvas.width = container.clientWidth - 40;
+    canvas.height = 200;
+    var W = canvas.width;
+    var H = canvas.height;
+    var pad = { top: 20, right: 20, bottom: 40, left: 50 };
+    var chartW = W - pad.left - pad.right;
+    var chartH = H - pad.top - pad.bottom;
+
+    ctx.fillStyle = '#22263a';
+    ctx.fillRect(0, 0, W, H);
+
+    if (buckets.length === 0) {
+      ctx.fillStyle = '#5a5e72';
+      ctx.textAlign = 'center';
+      ctx.font = '13px -apple-system, system-ui, sans-serif';
+      ctx.fillText('No activity data', W / 2, H / 2);
+      return;
+    }
+
+    var maxCalls = Math.max.apply(null, buckets.map(function (b) { return b.totalCalls; }));
+    if (maxCalls === 0) maxCalls = 1;
+
+    var barW = Math.max(2, Math.floor(chartW / buckets.length) - 1);
+
+    // Y-axis gridlines
+    ctx.strokeStyle = 'rgba(90,94,114,0.3)';
+    ctx.lineWidth = 1;
+    ctx.font = '10px -apple-system, system-ui, sans-serif';
+    ctx.fillStyle = '#5a5e72';
+    ctx.textAlign = 'right';
+    for (var i = 0; i <= 4; i++) {
+      var yVal = Math.round(maxCalls * i / 4);
+      var yPos = pad.top + chartH - (chartH * i / 4);
+      ctx.beginPath();
+      ctx.moveTo(pad.left, yPos);
+      ctx.lineTo(W - pad.right, yPos);
+      ctx.stroke();
+      ctx.fillText(String(yVal), pad.left - 6, yPos + 3);
+    }
+
+    // Bars
+    ctx.fillStyle = '#6c8cff';
+    buckets.forEach(function (b, idx) {
+      var x = pad.left + (idx * (chartW / buckets.length));
+      var barH = (b.totalCalls / maxCalls) * chartH;
+      ctx.fillStyle = 'rgba(108,140,255,0.8)';
+      ctx.fillRect(x, pad.top + chartH - barH, barW, barH);
+    });
+
+    // X-axis labels (show a few evenly spaced)
+    ctx.fillStyle = '#5a5e72';
+    ctx.textAlign = 'center';
+    ctx.font = '10px -apple-system, system-ui, sans-serif';
+    var labelCount = Math.min(buckets.length, 8);
+    var step = Math.max(1, Math.floor(buckets.length / labelCount));
+    for (var j = 0; j < buckets.length; j += step) {
+      var xLabel = pad.left + (j * (chartW / buckets.length)) + barW / 2;
+      var d = new Date(buckets[j].hour);
+      var label = (d.getMonth() + 1) + '/' + d.getDate() + ' ' + d.getHours() + ':00';
+      ctx.fillText(label, xLabel, H - pad.bottom + 16);
     }
   }
 

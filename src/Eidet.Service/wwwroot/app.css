@@ -574,6 +574,163 @@ h3 {
   color: var(--text-secondary);
 }
 
+/* Dashboard panels */
+.dashboard-panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .dashboard-panels { grid-template-columns: 1fr; }
+}
+
+/* Context preview */
+.context-preview {
+  font-size: 13px;
+}
+
+.context-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.context-tokens {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.context-block {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 400px;
+  overflow-y: auto;
+  margin: 0;
+}
+
+.ctx-l0 { color: var(--text-muted); }
+.ctx-insight { color: var(--color-insight); }
+.ctx-procedure { color: var(--color-procedure); }
+.ctx-heuristic { color: var(--color-heuristic); }
+.ctx-observation { color: var(--color-observation); }
+
+/* Cross-repo info */
+.cross-repo-info {
+  margin-top: 12px;
+}
+
+.cross-repo-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.cross-repo-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cross-repo-chip {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(108,140,255,0.1);
+  color: var(--accent);
+  border: 1px solid rgba(108,140,255,0.2);
+}
+
+.layer-chip {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(78,203,141,0.1);
+  color: var(--color-procedure);
+  border: 1px solid rgba(78,203,141,0.2);
+}
+
+.layer-type {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+/* Usage Analytics */
+.usage-period {
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usage-period label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.usage-table th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.usage-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.usage-table tr:hover td {
+  background: var(--bg-hover);
+}
+
+.usage-table .num {
+  text-align: right;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+}
+
+.usage-table .date {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.usage-op {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+#usageChart {
+  display: block;
+  width: 100%;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

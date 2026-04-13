@@ -33,6 +33,7 @@ public class EidetApiServer
     private readonly IEnrichmentService? _enrichment;
     private readonly EidetConfig? _config;
     private readonly AuthConfig _auth;
+    private readonly UsageTracker? _usage;
     private readonly HttpListener _listener;
     private readonly string _baseUrl;
     private readonly DateTime _startedAt = DateTime.UtcNow;
@@ -40,7 +41,8 @@ public class EidetApiServer
     public EidetApiServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
         MaintenanceService maintenance, ExportService export, string bindAddress, int port,
         LayerService? layers = null, McpServer? mcpServer = null, AuthConfig? auth = null,
-        QualityService? quality = null, IEnrichmentService? enrichment = null, EidetConfig? config = null)
+        QualityService? quality = null, IEnrichmentService? enrichment = null, EidetConfig? config = null,
+        UsageTracker? usage = null)
     {
         _svc = svc;
         _intake = intake;
@@ -53,6 +55,7 @@ public class EidetApiServer
         _enrichment = enrichment;
         _config = config;
         _auth = auth ?? new AuthConfig();
+        _usage = usage;
         _baseUrl = $"http://{bindAddress}:{port}/";
         _listener = new HttpListener();
         _listener.Prefixes.Add(_baseUrl);
@@ -194,6 +197,18 @@ public class EidetApiServer
             else if (method == "GET" && path == "/api/eidet/quality")
                 await HandleQuality(ctx, ct);
 
+            else if (method == "GET" && path == "/api/eidet/context/preview")
+                await HandleContextPreview(ctx, ct);
+
+            else if (method == "GET" && path == "/api/eidet/usage")
+                await HandleUsage(ctx, ct);
+
+            else if (method == "GET" && path == "/api/eidet/usage/timeseries")
+                await HandleUsageTimeSeries(ctx, ct);
+
+            else if (method == "GET" && path == "/api/eidet/usage/hourly")
+                await HandleUsageHourly(ctx, ct);
+
             else if (method == "GET" && path == "/api/eidet/repos")
                 await HandleGetRepos(ctx, ct);
 
@@ -212,8 +227,11 @@ public class EidetApiServer
             else if (path.StartsWith("/ui/"))
                 await ServeEmbeddedFile(ctx, path["/ui/".Length..]);
 
+            else if (path == "/" || path == "")
+                await HandleRoot(ctx);
+
             else
-                await WriteJson(ctx, new { error = "Not found" }, 404);
+                await WriteJson(ctx, new { error = "Not found", hint = "Try /ui for the Web UI, or /api/health for the API." }, 404);
         }
         catch (Exception ex)
         {
@@ -230,7 +248,9 @@ public class EidetApiServer
             await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
             return;
         }
+        using var scope = _usage?.StartScope(repo, "Context");
         var context = await _svc.GetContextAsync(repo, ct: ct);
+        scope?.SetResultCount(1);
         await WriteJson(ctx, new { repo, context });
     }
 
@@ -244,15 +264,19 @@ public class EidetApiServer
             return;
         }
 
+        var crossRepo = ctx.Request.QueryString["cross_repo"];
         var query = new MemoryQuery
         {
             Text = q,
             Limit = int.TryParse(ctx.Request.QueryString["limit"], out var lim) ? lim : 10,
             Type = Enum.TryParse<MemoryType>(ctx.Request.QueryString["type"], true, out var t) ? t : null,
             Tags = ctx.Request.QueryString["tags"]?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList() ?? [],
+            CrossRepo = string.Equals(crossRepo, "true", StringComparison.OrdinalIgnoreCase),
         };
 
+        using var scope = _usage?.StartScope(repo, "Search");
         var results = await _svc.RecallAsync(repo, query, ct);
+        scope?.SetResultCount(results.Count);
         await WriteJson(ctx, new { repo, query = q, results });
     }
 
@@ -277,6 +301,7 @@ public class EidetApiServer
             return;
         }
 
+        using var scope = _usage?.StartScope(req.Repo, "Store");
         var result = await _svc.StoreAsync(
             repoId: req.Repo,
             content: req.Content,
@@ -299,6 +324,7 @@ public class EidetApiServer
             return;
         }
 
+        scope?.SetResultCount(1);
         await WriteJson(ctx, new { id = result.Id }, 201);
     }
 
@@ -321,6 +347,9 @@ public class EidetApiServer
             return;
         }
 
+        // Extract repo from memory ID (format: memories/{repoSlug}/...)
+        var repoHint = ExtractRepoFromMemoryId(req.MemoryId);
+        using var scope = repoHint != null ? _usage?.StartScope(repoHint, "Feedback") : null;
         var ok = await _svc.ApplyFeedbackAsync(req.MemoryId, req.WasUsed, ct);
         if (ok) await WriteJson(ctx, new { applied = true });
         else await WriteJson(ctx, new { error = "Memory not found" }, 404);
@@ -353,7 +382,9 @@ public class EidetApiServer
             await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
             return;
         }
+        using var scope = _usage?.StartScope(repo, "Intake");
         var result = await _intake.IngestAsync(repo, repo, ct: ct);
+        scope?.SetResultCount(result.NewCount);
         await WriteJson(ctx, new { newCount = result.NewCount, skippedCount = result.SkippedCount, dependencies = result.DetectedLinks.Count });
     }
 
@@ -365,7 +396,9 @@ public class EidetApiServer
             await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
             return;
         }
+        using var scope = _usage?.StartScope(repo, "Consolidate");
         var result = await _consolidation.ConsolidateAsync(RepoIdNormalizer.Normalize(repo), ct: ct);
+        scope?.SetResultCount(result.InsightsCreated + result.InsightsBoosted);
         await WriteJson(ctx, new { candidates = result.Candidates.Count, insightsCreated = result.InsightsCreated, insightsBoosted = result.InsightsBoosted });
     }
 
@@ -377,6 +410,7 @@ public class EidetApiServer
             await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
             return;
         }
+        using var scope = _usage?.StartScope(repo, "Maintenance");
         var result = await _maintenance.RunAsync(RepoIdNormalizer.Normalize(repo), ct: ct);
         await WriteJson(ctx, result);
     }
@@ -595,7 +629,9 @@ public class EidetApiServer
         var take = int.TryParse(ctx.Request.QueryString["take"], out var t) ? t : 50;
         var type = Enum.TryParse<MemoryType>(ctx.Request.QueryString["type"], true, out var mt) ? mt : (MemoryType?)null;
 
+        using var scope = _usage?.StartScope(repo, "Browse");
         var entries = await _svc.BrowseAsync(repo, skip, take, type, ct);
+        scope?.SetResultCount(entries.Count);
         await WriteJson(ctx, new { repo, skip, take, count = entries.Count, entries });
     }
 
@@ -608,7 +644,9 @@ public class EidetApiServer
             return;
         }
         var limit = int.TryParse(ctx.Request.QueryString["limit"], out var lim) ? lim : 200;
+        using var scope = _usage?.StartScope(repo, "Graph");
         var graph = await _svc.GetGraphDataAsync(repo, limit, ct);
+        scope?.SetResultCount(graph.Nodes.Count);
         await WriteJson(ctx, graph);
     }
 
@@ -617,8 +655,114 @@ public class EidetApiServer
         if (_quality is null) { await WriteJson(ctx, new { error = "Quality service not available" }, 503); return; }
         var repo = ctx.Request.QueryString["repo"];
         if (string.IsNullOrEmpty(repo)) { await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400); return; }
+        using var scope = _usage?.StartScope(repo, "Quality");
         var report = await _quality.AnalyzeAsync(repo, ct);
         await WriteJson(ctx, report);
+    }
+
+    private async Task HandleContextPreview(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var repo = ctx.Request.QueryString["repo"];
+        if (string.IsNullOrEmpty(repo))
+        {
+            await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
+            return;
+        }
+
+        var maxTokens = int.TryParse(ctx.Request.QueryString["tokens"], out var t) ? t : 600;
+        var contextText = await _svc.GetContextAsync(repo, maxTokens, ct);
+
+        // Gather cross-repo scope info
+        List<object>? layerInfo = null;
+        List<string>? scope = null;
+        if (_layers != null)
+        {
+            var normalizedRepoId = RepoIdNormalizer.Normalize(repo);
+            var layers = await _layers.GetApplicableLayersAsync(normalizedRepoId, ct: ct);
+            layerInfo = layers.Select(l => (object)new { l.Id, l.Name, type = l.Type.ToString() }).ToList();
+            scope = await _layers.ResolveScopeAsync(normalizedRepoId, crossRepo: true, ct: ct);
+        }
+
+        await WriteJson(ctx, new
+        {
+            repo,
+            maxTokens,
+            context = contextText.Trim(),
+            estimatedTokens = (int)Math.Ceiling(contextText.Length / 4.0),
+            layers = layerInfo,
+            crossRepoScope = scope,
+        });
+    }
+
+    private async Task HandleRoot(HttpListenerContext ctx)
+    {
+        var userAgent = ctx.Request.Headers["User-Agent"] ?? "";
+        var isBrowser = userAgent.Contains("Mozilla/") || userAgent.Contains("Chrome/")
+            || userAgent.Contains("Safari/") || userAgent.Contains("Edge/");
+
+        if (isBrowser)
+        {
+            ctx.Response.StatusCode = 302;
+            ctx.Response.Headers.Add("Location", "/ui");
+            ctx.Response.Close();
+            return;
+        }
+
+        await WriteJson(ctx, new
+        {
+            service = "Eidet Memory Service",
+            version = Eidet.Core.EidetVersion.Current,
+            endpoints = new
+            {
+                ui = "/ui",
+                health = "/api/health",
+                status = "/api/status",
+                docs = "https://github.com/stevehansen/eidet",
+            },
+        });
+    }
+
+    private async Task HandleUsage(HttpListenerContext ctx, CancellationToken ct)
+    {
+        if (_usage is null) { await WriteJson(ctx, new { error = "Usage tracking not available" }, 503); return; }
+        var repo = ctx.Request.QueryString["repo"];
+        if (string.IsNullOrEmpty(repo)) { await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400); return; }
+        var days = int.TryParse(ctx.Request.QueryString["days"], out var d) ? d : 30;
+        var report = await _usage.GetUsageAsync(repo, DateTime.UtcNow.AddDays(-days));
+        await WriteJson(ctx, report);
+    }
+
+    private async Task HandleUsageTimeSeries(HttpListenerContext ctx, CancellationToken ct)
+    {
+        if (_usage is null) { await WriteJson(ctx, new { error = "Usage tracking not available" }, 503); return; }
+        var repo = ctx.Request.QueryString["repo"];
+        var op = ctx.Request.QueryString["operation"];
+        if (string.IsNullOrEmpty(repo) || string.IsNullOrEmpty(op))
+        {
+            await WriteJson(ctx, new { error = "Missing 'repo' and 'operation' parameters" }, 400);
+            return;
+        }
+        var days = int.TryParse(ctx.Request.QueryString["days"], out var d) ? d : 30;
+        var data = await _usage.GetTimeSeriesAsync(repo, op, DateTime.UtcNow.AddDays(-days));
+        await WriteJson(ctx, new { repo, operation = op, data });
+    }
+
+    private async Task HandleUsageHourly(HttpListenerContext ctx, CancellationToken ct)
+    {
+        if (_usage is null) { await WriteJson(ctx, new { error = "Usage tracking not available" }, 503); return; }
+        var repo = ctx.Request.QueryString["repo"];
+        if (string.IsNullOrEmpty(repo)) { await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400); return; }
+        var days = int.TryParse(ctx.Request.QueryString["days"], out var d) ? d : 7;
+        var buckets = await _usage.GetHourlyBreakdownAsync(repo, days);
+        await WriteJson(ctx, new { repo, days, buckets });
+    }
+
+    private static string? ExtractRepoFromMemoryId(string memoryId)
+    {
+        // Memory IDs follow: memories/{repoSlug}/{type}/{hash}
+        if (!memoryId.StartsWith("memories/", StringComparison.OrdinalIgnoreCase)) return null;
+        var parts = memoryId.Split('/');
+        return parts.Length >= 3 ? parts[1].Replace("--", ":\\").Replace('-', '\\') : null;
     }
 
     private static readonly Dictionary<string, string> MimeTypes = new(StringComparer.OrdinalIgnoreCase)

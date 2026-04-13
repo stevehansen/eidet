@@ -30,6 +30,9 @@
         <a href="#timeline" class="nav-link" data-page="timeline">
           <span class="icon">&#9202;</span> Timeline
         </a>
+        <a href="#usage" class="nav-link" data-page="usage">
+          <span class="icon">&#9636;</span> Usage
+        </a>
         <a href="#settings" class="nav-link" data-page="settings">
           <span class="icon">&#9881;</span> Settings
         </a>
@@ -49,9 +52,16 @@
       <section id="page-dashboard" class="page active">
         <h2>Dashboard</h2>
         <div class="stats-grid" id="dashboardStats"></div>
-        <div class="card">
-          <h3>Recent Memories</h3>
-          <div id="recentMemories" class="memory-list"></div>
+        <div class="dashboard-panels">
+          <div class="card">
+            <h3>Agent Context Preview</h3>
+            <div id="contextPreview" class="context-preview"></div>
+            <div id="crossRepoInfo" class="cross-repo-info"></div>
+          </div>
+          <div class="card">
+            <h3>Recent Memories</h3>
+            <div id="recentMemories" class="memory-list"></div>
+          </div>
         </div>
       </section>
 
@@ -101,6 +111,30 @@
       <section id="page-timeline" class="page">
         <h2>Timeline</h2>
         <div class="timeline-container" id="timelineContainer"></div>
+      </section>
+
+      <!-- Usage -->
+      <section id="page-usage" class="page">
+        <h2>Usage Analytics</h2>
+        <div class="usage-period">
+          <label>Period:
+            <select id="usageDays" class="filter-select">
+              <option value="1">Last 24 hours</option>
+              <option value="7" selected>Last 7 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="90">Last 90 days</option>
+            </select>
+          </label>
+        </div>
+        <div class="stats-grid" id="usageSummary"></div>
+        <div class="card">
+          <h3>Operations Breakdown</h3>
+          <div id="usageTable"></div>
+        </div>
+        <div class="card">
+          <h3>Activity Over Time</h3>
+          <canvas id="usageChart" height="200"></canvas>
+        </div>
       </section>
 
       <!-- Settings -->
