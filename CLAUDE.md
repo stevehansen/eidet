@@ -94,11 +94,12 @@ All design decisions are documented in `docs/specs/`:
 - **Test coverage**: 193 → 220 tests. Added ApiKeyService (16), AuthConfig (3), DocumentStoreFactory (4), ConfigHelper auth keys (4).
 
 ### Phase 8 — Done
-- **Local Web UI**: SPA served at `http://localhost:19380/ui` from embedded resources. Dark-themed, responsive. 5 pages:
-  - **Dashboard**: Repo selector, memory counts by type, recent memories list.
+- **Local Web UI**: SPA served at `http://localhost:19380/ui` from embedded resources. Dark-themed, responsive. 6 pages:
+  - **Dashboard**: Repo selector, memory counts by type, recent memories list, agent context preview (L0+L1 text, token estimate, cross-repo scope, mounted layers).
   - **Memory Browser**: Full-text search + browse with type filter, paginated results, detail panel (content, entities, tags, importance, confidence, provenance, echo/fizzle counts).
   - **Knowledge Graph**: Canvas-based force-directed graph. Nodes colored by type (blue=observation, purple=insight, green=procedure, orange=heuristic), sized by importance. Edges from DerivedFrom/Links. Interactive drag, hover tooltips.
   - **Timeline**: Chronological view grouped by date, type badges, tag chips.
+  - **Usage**: Operations breakdown table (calls, avg/min/max duration, results) + hourly activity bar chart. Configurable period (24h/7d/30d/90d).
   - **Settings**: Service status display (version, uptime, database info). Action buttons: intake, consolidate, maintenance, export.
 - **New API endpoints**: `GET /api/eidet/repos` (list all repo IDs), `GET /api/eidet/browse` (paginated browse with type filter, no search query required), `GET /api/eidet/graph` (graph data — nodes + edges for visualization).
 - **BrowseAsync**: New `IEidetStore.BrowseAsync` method for paginated memory listing by repo, ordered by creation date. `MemoryService.BrowseAsync` and `GetGraphDataAsync` wrappers.
@@ -137,6 +138,22 @@ All design decisions are documented in `docs/specs/`:
 - **Ollama health in /api/status**: Status API endpoint now includes Ollama connectivity check when enrichment is configured (enabled, healthy, model, URL).
 - **HTTP MCP repo override**: `POST /mcp?repo=...` query parameter for per-request repo scoping. `ConcurrentDictionary<string, McpServer>` pool creates per-repo MCP server instances. Used by TerminalHost container overlay.
 - **Test coverage**: 272+ → 290 unit tests. Added ServiceLock (7).
+
+### Phase 11 — Search Quality + Usage Analytics (Done)
+- **Search bug fix (critical)**: RavenDB `Search()` uses OR semantics by default — `.Search("Content", text).WhereIn("RepoId", ids)` was effectively `content matches text OR repoId IN ids`, returning results from ALL repos. Fixed with explicit `WhereIn().AndAlso().Search()` and `AndAlso()` on all filter clauses in `ApplyFilters`.
+- **Composite SearchText index**: New `SearchText` field in `Memories_Search` index concatenates Content + Summary + OneLiner + ForesightHint + Tags + Entities. Full-text search now matches across all textual fields. `SearchVector` (renamed from `ContentVector`) uses composite text for richer vector embeddings. BREAKING: Index schema change requires RavenDB re-index on next serve start.
+- **CrossRepo default changed**: `MemoryQuery.CrossRepo` default changed from `true` to `false`. MCP `eidet_recall` still explicitly passes `cross_repo=true`. REST API `/api/eidet/search` accepts `cross_repo` query param (defaults to false). Prevents accidental cross-repo result leakage.
+- **Usage statistics tracking**: `UsageTracker` service records per-repo API call metrics using RavenDB time series on `RepoUsage` anchor documents. Each operation type records duration and result count via `UsageScope` (Stopwatch-based, fire-and-forget). `NullUsageTracker` for zero-overhead when disabled. Instrumented all API handlers and MCP tool execution.
+- **Usage API endpoints**: `GET /api/eidet/usage` (aggregated stats per repo), `GET /api/eidet/usage/timeseries` (raw time series per operation), `GET /api/eidet/usage/hourly` (hourly bucketed call counts).
+- **Context preview API**: `GET /api/eidet/context/preview` returns context text + layers + cross-repo scope for debugging.
+- **`eidet context`**: New CLI command to preview L0+L1 context, mounted layers, and cross-repo scope. Rich TUI output with Spectre.Console Panel. `--json` support.
+- **`eidet help <command>`**: Translates to `<command> --help` (Spectre.Console compat).
+- **`eidet recall --cross-repo`**: Opt-in flag for cross-repo search (default off).
+- **`eidet mcp --repo <ID>`**: Explicit repo identifier for Claude Desktop integration where no working directory concept exists.
+- **Web UI enhancements**: New "Usage" page (operations table + hourly bar chart), dashboard context preview panel (L0+L1 text color-coded by type, token estimate, cross-repo scope, mounted layers), repo dropdown sorted alphabetically with parent path disambiguation.
+- **Root URL handling**: Browser redirect to `/ui`, helpful JSON for API clients, 404 hint messages.
+- **SDK updates**: All three SDKs (TypeScript, Python, C#) now expose `usage()`, `usageTimeSeries()`, `usageHourly()`, `contextPreview()` with full type definitions.
+- **Test coverage**: 290 → 315 tests. Added UsageTracker (14).
 
 ## Installation & Distribution
 
@@ -199,15 +216,15 @@ eidet/
 ├── src/
 │   ├── Eidet.Core/               # Core library
 │   │   ├── Configuration/        # EidetConfig, ConfigManager, StorageMode
-│   │   ├── Domain/               # MemoryEntry, MemoryType, Validity, layers, links, packs, GraphData
+│   │   ├── Domain/               # MemoryEntry, MemoryType, Validity, layers, links, packs, GraphData, RepoUsage
 │   │   ├── Gates/                # SecretScanner, SignalGate, WriteGate
 │   │   ├── Indexes/              # Memories_Search, Memories_CountByType
-│   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, OllamaService, ApiKeyService, HookRunner, QualityService, BackupService, ServiceLock, enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
+│   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, OllamaService, ApiKeyService, HookRunner, QualityService, BackupService, ServiceLock, UsageTracker, enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
 │   │   ├── StringUtils.cs        # Shared string helpers (Truncate)
 │   │   └── Storage/              # IEidetStore, RavenEidetStore, DatabaseProvisioner, DocumentStoreFactory (embedded + external)
 │   ├── Eidet.Service/            # CLI + REST API + system service
 │   │   ├── Api/                  # EidetApiServer (HttpListener + MCP HTTP + embedded Web UI)
-│   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, export, intake, maintain, quality, backup, install, uninstall, config, instructions, ollama, docker, update, feedback, api-key
+│   │   ├── Commands/             # setup, mcp, serve, doctor, status, recall, store, stats, context, export, intake, maintain, quality, backup, install, uninstall, config, instructions, ollama, docker, update, feedback, api-key
 │   │   ├── Mcp/                  # McpServer (stdio + HTTP), McpModels, McpToolDefinitions
 │   │   ├── Scheduler/            # MaintenanceScheduler (background timers)
 │   │   └── wwwroot/              # Web UI SPA (index.html, app.css, app.js) — embedded resources
@@ -217,8 +234,8 @@ eidet/
 │   ├── python/                  # eidet-sdk pip package (EidetClient, httpx, type hints)
 │   └── dotnet/Eidet.Sdk/       # Eidet.Sdk NuGet package (EidetClient, record types)
 ├── tests/
-│   ├── Eidet.Core.Tests/        # 224 tests
-│   ├── Eidet.Service.Tests/     # 55 tests
+│   ├── Eidet.Core.Tests/        # 242 tests
+│   ├── Eidet.Service.Tests/     # 62 tests
 │   └── Eidet.Integration.Tests/ # ~11 integration tests (skippable, needs embedded RavenDB)
 └── docs/
     └── specs/
@@ -239,6 +256,9 @@ eidet/
 - **CORS enabled**: All responses include `Access-Control-Allow-Origin: *` for browser/Web UI access.
 - **Embedded Web UI**: SPA compiled as embedded resources — no external files to manage, ships with the binary. Vanilla HTML/CSS/JS with canvas-based graph (no framework dependencies). Dark theme, responsive.
 - **Hooks system**: Claude Code-inspired lifecycle hooks. External commands receive JSON context on stdin, pre-hooks gate operations (non-zero exit = reject), post-hooks fire-and-forget. Configurable per-event with timeout and enable/disable. Zero overhead when no hooks configured (NullHookRunner).
+- **Composite search index**: `SearchText` field concatenates Content + Summary + OneLiner + ForesightHint + Tags + Entities for full-text search. `SearchVector` embeds the same composite text. Ensures AI-enriched content is searchable.
+- **Single-repo search by default**: `MemoryQuery.CrossRepo` defaults to `false`. MCP `eidet_recall` passes `true` explicitly. REST API and CLI default to single-repo to prevent accidental cross-repo leakage.
+- **Usage tracking via RavenDB time series**: Fire-and-forget recording of per-operation timing via `UsageScope`. Zero overhead when no tracker configured (NullUsageTracker). Time series on per-repo anchor documents.
 
 ## API Quick Reference
 
@@ -271,7 +291,16 @@ curl http://localhost:19380/api/eidet/repos
 # Graph data for visualization
 curl "http://localhost:19380/api/eidet/graph?repo=P%3A%5CEidet&limit=200"
 
-# Web UI
+# Context preview (with layers + cross-repo scope)
+curl "http://localhost:19380/api/eidet/context/preview?repo=P%3A%5CEidet"
+
+# Usage stats (last 30 days)
+curl "http://localhost:19380/api/eidet/usage?repo=P%3A%5CEidet&days=30"
+
+# Usage hourly breakdown
+curl "http://localhost:19380/api/eidet/usage/hourly?repo=P%3A%5CEidet&days=7"
+
+# Web UI (browser auto-redirects from root /)
 # Open http://localhost:19380/ui in browser
 ```
 
