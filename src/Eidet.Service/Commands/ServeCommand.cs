@@ -136,6 +136,15 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         }
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+
+        // Start background health monitor — prints timestamped updates when dependency status changes
+        var healthMonitor = host.StartHealthMonitor(cts.Token);
+        healthMonitor.OnStatusChanged += (component, healthy, detail) =>
+        {
+            var timestamp = DateTime.Now.ToString("HH:mm:ss");
+            var status = healthy ? $"[green]{Markup.Escape(detail)}[/]" : $"[yellow]{Markup.Escape(detail)}[/]";
+            AnsiConsole.MarkupLine($"  [dim]{timestamp}[/] {component}: {status}");
+        };
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;

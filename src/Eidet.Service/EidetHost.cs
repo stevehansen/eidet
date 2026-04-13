@@ -14,10 +14,12 @@ namespace Eidet.Service;
 public sealed class EidetHost : IDisposable
 {
     private readonly IDocumentStore _store;
+    private readonly IEidetStore _eidetStore;
     private readonly IEnrichmentService _enrichment;
     private readonly MaintenanceScheduler _scheduler;
     private readonly EnrichmentWorker _enrichmentWorker;
     private readonly EidetApiServer _apiServer;
+    private HealthMonitor? _healthMonitor;
 
     public string BindAddress { get; }
     public int Port { get; }
@@ -33,12 +35,13 @@ public sealed class EidetHost : IDisposable
     public string OllamaUrl { get; }
     public int HookCount { get; }
 
-    private EidetHost(IDocumentStore store, IEnrichmentService enrichment,
+    private EidetHost(IDocumentStore store, IEidetStore eidetStore, IEnrichmentService enrichment,
         MaintenanceScheduler scheduler, EnrichmentWorker enrichmentWorker,
         EidetApiServer apiServer, EidetConfig config,
         string bind, int port)
     {
         _store = store;
+        _eidetStore = eidetStore;
         _enrichment = enrichment;
         _scheduler = scheduler;
         _enrichmentWorker = enrichmentWorker;
@@ -94,7 +97,7 @@ public sealed class EidetHost : IDisposable
         var scheduler = new MaintenanceScheduler(eidetStore, memorySvc, maintenanceSvc, consolidationSvc, config.Maintenance);
         var enrichmentWorker = new EnrichmentWorker(store, enrichment);
 
-        return new EidetHost(store, enrichment, scheduler, enrichmentWorker, apiServer, config, actualBind, actualPort);
+        return new EidetHost(store, eidetStore, enrichment, scheduler, enrichmentWorker, apiServer, config, actualBind, actualPort);
     }
 
     public async Task<bool> CheckOllamaAsync(CancellationToken ct = default)
@@ -116,10 +119,29 @@ public sealed class EidetHost : IDisposable
 
     public Task StartEnrichmentWorkerAsync(CancellationToken ct) => _enrichmentWorker.StartAsync(ct);
 
+    /// <summary>
+    /// Starts a background health monitor that checks RavenDB and Ollama every 30 seconds
+    /// and fires OnStatusChanged when a dependency's health state changes.
+    /// </summary>
+    public HealthMonitor StartHealthMonitor(CancellationToken ct)
+    {
+        _healthMonitor = new HealthMonitor(
+            _eidetStore,
+            OllamaEnabled,
+            OllamaModel,
+            OllamaUrl,
+            RavenUrl,
+            OllamaHealthy,
+            ct);
+        _healthMonitor.Start();
+        return _healthMonitor;
+    }
+
     public Task RunAsync(CancellationToken ct) => _apiServer.RunAsync(ct);
 
     public void Dispose()
     {
+        _healthMonitor?.Dispose();
         _enrichmentWorker.Dispose();
         _scheduler.Dispose();
         if (_enrichment is IDisposable d) d.Dispose();
