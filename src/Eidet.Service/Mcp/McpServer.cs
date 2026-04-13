@@ -19,12 +19,14 @@ public class McpServer
     private readonly ConsolidationService _consolidation;
     private readonly MaintenanceService _maintenance;
     private readonly ExportService _export;
+    private readonly UsageTracker? _usage;
     private readonly string _repoId;
     private readonly bool _autoIntake;
     private bool _autoIntakeDone;
 
     public McpServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
-        MaintenanceService maintenance, ExportService export, string repoId, bool autoIntake = true)
+        MaintenanceService maintenance, ExportService export, string repoId, bool autoIntake = true,
+        UsageTracker? usage = null)
     {
         _svc = svc;
         _intake = intake;
@@ -33,6 +35,7 @@ public class McpServer
         _export = export;
         _repoId = repoId;
         _autoIntake = autoIntake;
+        _usage = usage;
     }
 
     public async Task RunStdioAsync(CancellationToken ct)
@@ -130,11 +133,30 @@ public class McpServer
         return JsonRpcResponse.Success(request.Id, result);
     }
 
+    private static readonly Dictionary<string, string> ToolToOperation = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["eidet_store"] = "Store",
+        ["eidet_recall"] = "Recall",
+        ["eidet_context"] = "Context",
+        ["eidet_forget"] = "Forget",
+        ["eidet_feedback"] = "Feedback",
+        ["eidet_history"] = "History",
+        ["eidet_intake"] = "Intake",
+        ["eidet_link"] = "Store",
+        ["eidet_consolidate"] = "Consolidate",
+        ["eidet_maintenance"] = "Maintenance",
+        ["eidet_export"] = "Export",
+        ["eidet_pack_export"] = "Export",
+        ["eidet_pack_import"] = "Intake",
+    };
+
     private async Task<McpCallToolResult> ExecuteToolAsync(string name, JsonElement args, CancellationToken ct)
     {
+        var opName = ToolToOperation.GetValueOrDefault(name);
+        using var scope = opName != null ? _usage?.StartScope(_repoId, opName) : null;
         try
         {
-            return name switch
+            var result = name switch
             {
                 "eidet_store" => await ExecuteStore(args, ct),
                 "eidet_recall" => await ExecuteRecall(args, ct),
@@ -151,6 +173,7 @@ public class McpServer
                 "eidet_pack_import" => await ExecutePackImport(args, ct),
                 _ => McpCallToolResult.Error($"Unknown tool: {name}"),
             };
+            return result;
         }
         catch (Exception ex)
         {
