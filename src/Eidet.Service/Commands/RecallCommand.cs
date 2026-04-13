@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
 using Eidet.Core.Services;
@@ -23,6 +24,10 @@ public sealed class RecallCommand : AsyncCommand<RecallCommand.Settings>
         [CommandOption("-l|--limit <LIMIT>")]
         public int? Limit { get; set; }
 
+        [CommandOption("--cross-repo")]
+        [Description("Search across linked repos and layers")]
+        public bool CrossRepo { get; set; }
+
         [CommandOption("--json")]
         public bool Json { get; set; }
     }
@@ -43,6 +48,7 @@ public sealed class RecallCommand : AsyncCommand<RecallCommand.Settings>
             Text = settings.Query,
             Limit = settings.Limit ?? 10,
             Type = !string.IsNullOrEmpty(settings.Type) && Enum.TryParse<MemoryType>(settings.Type, true, out var t) ? t : null,
+            CrossRepo = settings.CrossRepo,
         };
 
         try

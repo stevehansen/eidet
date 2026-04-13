@@ -12,6 +12,9 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
     {
         [CommandOption("--workdir <PATH>")]
         public string? WorkDir { get; set; }
+
+        [CommandOption("--repo <REPO>")]
+        public string? Repo { get; set; }
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
@@ -34,7 +37,7 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
         var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc, enrichment);
         var exportSvc = new ExportService(eidetStore);
 
-        var workDir = settings.WorkDir ?? Directory.GetCurrentDirectory();
+        var workDir = settings.Repo ?? settings.WorkDir ?? Directory.GetCurrentDirectory();
         var server = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc, workDir,
             autoIntake: config.Memory.AutoIntakeOnFirstSession);
 

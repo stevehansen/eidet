@@ -2,6 +2,23 @@ using Eidet.Core;
 using Eidet.Service.Commands;
 using Spectre.Console.Cli;
 
+// Translate "eidet help <command>" to "eidet <command> --help"
+if (args.Length >= 1 && string.Equals(args[0], "help", StringComparison.OrdinalIgnoreCase))
+{
+    if (args.Length == 1)
+    {
+        args = ["--help"];
+    }
+    else
+    {
+        // "help recall" → "recall --help"
+        var newArgs = new string[args.Length];
+        Array.Copy(args, 1, newArgs, 0, args.Length - 1);
+        newArgs[^1] = "--help";
+        args = newArgs;
+    }
+}
+
 var app = new CommandApp();
 
 app.Configure(config =>
@@ -26,6 +43,9 @@ app.Configure(config =>
 
     config.AddCommand<RecallCommand>("recall")
         .WithDescription("Search memories");
+
+    config.AddCommand<ContextCommand>("context")
+        .WithDescription("Preview the L0+L1 context sent to AI agents");
 
     config.AddCommand<StoreCommand>("store")
         .WithDescription("Store a memory");
