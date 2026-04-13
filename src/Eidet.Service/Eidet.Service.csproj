@@ -24,7 +24,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>eidet</ToolCommandName>
     <PackageId>eidet</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.4.0</Version>
 
     <!-- NuGet package metadata -->
     <Authors>Steve Hansen</Authors>

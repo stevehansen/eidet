@@ -151,11 +151,10 @@ AI clients launch the binary with `mcp` subcommand:
 ```
 
 The `eidet mcp` subcommand:
-1. Connects to the running Eidet service via localhost REST API
-2. Translates stdio JSON-RPC ↔ REST calls
-3. If the service isn't running, attempts to start it (or returns clear error with instructions)
-
-This is a thin bridge — MCP protocol handling + REST proxy. All logic stays in the service.
+1. Deploys indexes (idempotent — ensures schema changes take effect)
+2. Connects directly to RavenDB via MemoryService (no HTTP hop)
+3. Processes JSON-RPC over stdio
+4. Auto-intake on first `eidet_context` call if no memories exist for this repo
 
 ### Streamable HTTP Transport
 

@@ -281,10 +281,16 @@ public class Memories_Search : AbstractIndexCreationTask<MemoryEntry, Memories_S
     public Memories_Search()
     {
         Map = entries => from e in entries
+            let searchText = string.Join(" ",
+                new[] { e.Content, e.Summary, e.OneLiner, e.ForesightHint }
+                    .Where(s => s != null))
+                + " " + string.Join(" ", e.Tags)
+                + " " + string.Join(" ", e.Entities)
             select new
             {
                 e.Content,
-                ContentVector = CreateVector(e.Content),
+                SearchText = searchText,
+                SearchVector = CreateVector(searchText),
                 e.RepoId, e.Type, Tags = e.Tags.ToArray(),
                 e.CreatedAt, ValidUntil = e.Validity.ValidUntil,
                 e.Importance, e.AccessCount, e.Summary,
@@ -292,10 +298,16 @@ public class Memories_Search : AbstractIndexCreationTask<MemoryEntry, Memories_S
                 Entities = e.Entities.ToArray(),
             };
 
+        // Composite full-text search across all textual fields
+        Index("SearchText", FieldIndexing.Search);
+        Analyze("SearchText", "StandardAnalyzer");
+
+        // Keep Content indexed for backward compat
         Index("Content", FieldIndexing.Search);
         Analyze("Content", "StandardAnalyzer");
 
-        VectorIndexes.Add(x => x.ContentVector, new VectorOptions
+        // Vector search on composite text (richer embeddings)
+        VectorIndexes.Add(x => x.SearchVector, new VectorOptions
         {
             SourceEmbeddingType = VectorEmbeddingType.Text,
             DestinationEmbeddingType = VectorEmbeddingType.Single,
@@ -307,6 +319,8 @@ public class Memories_Search : AbstractIndexCreationTask<MemoryEntry, Memories_S
     }
 }
 ```
+
+**Index deployment**: Indexes are deployed on every `eidet serve` and `eidet mcp` startup (not just `eidet setup`). RavenDB's `IndexCreation.CreateIndexes` is idempotent — only updates changed definitions. This ensures schema changes take effect automatically.
 
 ---
 
@@ -365,6 +379,8 @@ Rejects content that fails to clear the signal threshold:
 ### Duplicate Gate
 
 Near-duplicate detection: vector similarity > 0.92 against existing valid memories in same repo. If found, returns existing memory ID and asks the agent to decide: update importance, supersede, or skip.
+
+**Implementation note**: RavenDB queries combining `WhereEquals` and `Search`/`VectorSearch` MUST use explicit `AndAlso()` chaining to enforce AND semantics. Without it, RavenDB defaults to OR, causing cross-repo or cross-validity matches.
 
 ---
 
@@ -452,6 +468,7 @@ Periodic background pipeline (default: every 24h). Runs per-repo.
 | 3 | Dedup Sweep | Jaccard word similarity > 0.85 within same type → merge (keep higher importance). |
 | 4 | Importance Decay | FadeMem differential curves per type. Skip recently accessed (< 7d). Floor: 0.05. |
 | 5 | Orphan Cleanup | Remove empty-content and old low-signal system notes. |
+| 5b | Enrichment Cleanup | Strip corrupted CoT reasoning from `summary`/`oneLiner`/`foresightHint` fields. |
 | 6 | Backfill Enrichment | Entity extraction, heuristic one-liners, Ollama enrichment for missing fields. |
 | 7 | Auto-Consolidation | Trigger consolidation alongside maintenance. |
 
@@ -562,6 +579,8 @@ Local LLM enrichment — opt-in, privacy-preserving, background-only.
 | Conflict Detection | Flag contradictions with existing knowledge |
 
 **Implementation**: Uses `/api/chat` with `think: false` (supports thinking models). 120s HttpClient timeout for cold starts. Lazy health re-check. Fire-and-forget for conflict detection. `NullEnricher` when disabled (zero overhead).
+
+**CoT stripping**: Some models (e.g., Gemma4) output chain-of-thought reasoning in the response content despite `think: false`. `StripChainOfThought()` extracts the actual answer after `<channel|>` delimiters or `<think>...</think>` blocks. Applied both to new responses and as a maintenance cleanup stage (Stage 5b) for existing data.
 
 **Key principle**: Ollama enrichment is always additive and asynchronous. The core memory system works perfectly without it.
 

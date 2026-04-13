@@ -46,7 +46,7 @@ All design decisions are documented in `docs/specs/`:
 - **Full 13-tool MCP surface**: eidet_store, eidet_recall, eidet_context, eidet_forget, eidet_feedback, eidet_history, eidet_intake, eidet_link, eidet_consolidate, eidet_maintenance, eidet_export, eidet_pack_export, eidet_pack_import
 - **IntakeService**: Ingests CLAUDE.md, MEMORY.md, README.md, .editorconfig, NuGet/npm deps. Splits by headings, deduplicates by content hash, extracts entities and one-liners.
 - **ConsolidationService**: Groups observations by tag overlap (union-find), creates insights from groups of 3+ (or boosts existing insights if topic already covered via vector similarity > 0.85), FadeMem differential decay (per-type half-lives).
-- **MaintenanceService**: 7-stage pipeline — TTL expiry, observation retention, dedup sweep (Jaccard 0.85), importance decay, orphan cleanup, backfill enrichment (entities + one-liners), auto-consolidation.
+- **MaintenanceService**: 8-stage pipeline — TTL expiry, observation retention, dedup sweep (Jaccard 0.85), importance decay, orphan cleanup, enrichment cleanup (CoT stripping), backfill enrichment (entities + one-liners), auto-consolidation.
 - **ExportService**: Markdown export, .eidet pack export/import with session field stripping.
 - **REST API expanded**: /api/eidet/intake, /api/eidet/consolidate, /api/maintenance, /api/eidet/export, /api/status, /api/eidet/links, /api/eidet/packs/export, /api/eidet/packs/import
 - **Recall access tracking**: Bumps access count on local memories during recall (spec compliance).
@@ -155,6 +155,14 @@ All design decisions are documented in `docs/specs/`:
 - **SDK updates**: All three SDKs (TypeScript, Python, C#) now expose `usage()`, `usageTimeSeries()`, `usageHourly()`, `contextPreview()` with full type definitions.
 - **Test coverage**: 290 → 315 tests. Added UsageTracker (14).
 
+### Phase 11.5 — Data Quality Fixes (Done)
+- **Index deployment on startup**: `DeployIndexes()` now runs during `eidet serve` and `eidet mcp` startup (not just `eidet setup`). Ensures index schema changes (like SearchText/SearchVector) take effect without manual re-setup. RavenDB's `IndexCreation.CreateIndexes` is idempotent.
+- **Ollama CoT stripping**: `OllamaEnrichmentService.StripChainOfThought()` strips chain-of-thought reasoning from model responses. Some models (e.g., Gemma4) output `<channel|>` delimited reasoning even with `think:false`. Extracts actual answer after the last delimiter. Also handles `<think>...</think>` blocks.
+- **Duplicate detection fix**: `FindDuplicateAsync` had the same RavenDB OR semantics bug as the main search — missing `AndAlso()` between `WhereEquals` and `Search`/`VectorSearch` clauses. Both Strategy 1 (vector) and Strategy 2 (full-text fallback) now chain filters correctly.
+- **Per-repo auto-intake**: Auto-intake on first `eidet_context` call now checks per-repo memory count (`GetCountsByTypeAsync`) instead of global database document count. Previously, once any repo had memories, auto-intake would never trigger for new repos.
+- **Maintenance Stage 5b — Enrichment cleanup**: New stage strips corrupted CoT reasoning from existing `summary`/`oneLiner`/`foresightHint` fields. Runs before backfill enrichment so cleaned fields get re-enriched.
+- **Test coverage**: 315 → 319 tests. Added StripChainOfThought (9).
+
 ## Installation & Distribution
 
 Eidet is distributed as a **dotnet tool** (primary) and **standalone binaries** (Docker/non-.NET).
@@ -234,8 +242,8 @@ eidet/
 │   ├── python/                  # eidet-sdk pip package (EidetClient, httpx, type hints)
 │   └── dotnet/Eidet.Sdk/       # Eidet.Sdk NuGet package (EidetClient, record types)
 ├── tests/
-│   ├── Eidet.Core.Tests/        # 242 tests
-│   ├── Eidet.Service.Tests/     # 62 tests
+│   ├── Eidet.Core.Tests/        # 251 tests
+│   ├── Eidet.Service.Tests/     # 68 tests
 │   └── Eidet.Integration.Tests/ # ~11 integration tests (skippable, needs embedded RavenDB)
 └── docs/
     └── specs/
@@ -259,6 +267,8 @@ eidet/
 - **Composite search index**: `SearchText` field concatenates Content + Summary + OneLiner + ForesightHint + Tags + Entities for full-text search. `SearchVector` embeds the same composite text. Ensures AI-enriched content is searchable.
 - **Single-repo search by default**: `MemoryQuery.CrossRepo` defaults to `false`. MCP `eidet_recall` passes `true` explicitly. REST API and CLI default to single-repo to prevent accidental cross-repo leakage.
 - **Usage tracking via RavenDB time series**: Fire-and-forget recording of per-operation timing via `UsageScope`. Zero overhead when no tracker configured (NullUsageTracker). Time series on per-repo anchor documents.
+- **Index deployment on startup**: `DeployIndexes()` runs on every `serve`/`mcp` startup, not just `setup`. Ensures index schema changes apply automatically. Idempotent via RavenDB's `IndexCreation.CreateIndexes`.
+- **Enrichment CoT stripping**: `StripChainOfThought()` extracts actual answer from Ollama responses that contain `<channel|>` reasoning delimiters or `<think>` blocks. Applied both on new responses and as a maintenance cleanup stage for existing data.
 
 ## API Quick Reference
 

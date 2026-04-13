@@ -81,12 +81,15 @@ eidet feedback
 
 The initial release is **local-only**:
 - Local RavenDB (embedded or connect to existing instance)
-- Local optional Ollama enrichment
-- MCP server (stdio for AI clients)
+- Local optional Ollama enrichment (with CoT reasoning stripping)
+- MCP server (stdio for AI clients, HTTP for network)
 - REST API (for tools and custom integrations)
 - Rich TUI for setup, configuration, troubleshooting
 - Docker container integration (devcontainers, custom containers)
 - Full 13-tool MCP surface
+- System service with always-on scheduling (maintenance, consolidation, enrichment)
+- Local Web UI at `http://localhost:19380/ui` (dashboard, memory browser, knowledge graph)
+- Client SDKs (TypeScript, Python, C#)
 
 Team sync, remote backup, and collaboration features are designed but deferred to a future release. See [SyncSpec](docs/specs/SyncSpec.md) for the planned architecture.
 

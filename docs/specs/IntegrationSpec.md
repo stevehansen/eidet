@@ -86,7 +86,8 @@ The `eidet install` command auto-configures this if Claude Code is detected — 
 3. Claude Code auto-hook (PostToolUse: initialize):
    → Calls eidet_context → L0+L1 injected into conversation
    → ~600 tokens of persistent project knowledge
-   → If no memories exist, auto-intake runs (CLAUDE.md, README, etc.)
+   → If no memories exist for THIS repo, auto-intake runs (CLAUDE.md, README, etc.)
+   → Per-repo check via GetCountsByTypeAsync (not global DB document count)
 
 4. During session:
    → Agent calls eidet_store, eidet_recall, eidet_feedback, etc.
