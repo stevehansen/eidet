@@ -197,6 +197,9 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     environment: npm
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -206,7 +209,7 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Publish (trusted publishing)
+      - name: Publish
         working-directory: sdk/typescript
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -218,10 +221,8 @@ jobs:
           if npm view @eidet/sdk@$VERSION version 2>/dev/null; then
             echo "Version $VERSION already published — skipping"
           else
-            npm publish --access public
+            npm publish --access public --provenance
           fi
-        env:
-          NODE_AUTH_TOKEN: ""
 
   # Publish eidet-sdk to PyPI (trusted publishing via OIDC)
   publish-pypi:
