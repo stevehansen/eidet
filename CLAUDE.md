@@ -163,6 +163,16 @@ All design decisions are documented in `docs/specs/`:
 - **Maintenance Stage 5b — Enrichment cleanup**: New stage strips corrupted CoT reasoning from existing `summary`/`oneLiner`/`foresightHint` fields. Runs before backfill enrichment so cleaned fields get re-enriched.
 - **Test coverage**: 315 → 319 tests. Added StripChainOfThought (9).
 
+### Phase 11.6 — Web UI Fixes + Service Reliability (Done)
+- **Web UI intake fix**: Intake API was passing normalized repo ID (e.g., `P--claude`) as the filesystem path, causing `DirectoryNotFoundException`. `RepoUsage` anchor documents now track `OriginalPath`. `HandleIntake` resolves the real path via explicit `path` param, `LooksLikePath()` check, or `UsageTracker.GetOriginalPathAsync()` lookup. Returns 400 with clear message if path can't be resolved.
+- **Repo path backfill**: `RepoUsage.TryInferPath()` reverses the common `X--Name` → `X:\Name` pattern (verified against filesystem). `GetAllRepoPathsAsync()` infers and persists paths for existing anchor documents on first access.
+- **Stdio MCP usage tracking**: `McpCommand` was creating `McpServer` without a `UsageTracker`, so `OriginalPath` was never recorded from Claude Code sessions. Now wired in.
+- **Repos API with original paths**: `GET /api/eidet/repos` returns `originalPath` alongside `repoId`. Web UI dropdown shows real paths with smart abbreviation (`formatRepoDisplay`: deep paths show `Name  (drive:\...\parent)`).
+- **Web UI error handling**: `apiPost()` extracts JSON error messages from non-200 responses for clean display instead of generic "API error: 500".
+- **EidetLog file logger**: `EidetLog` static class in `Eidet.Core` — writes timestamped entries to `{configDir}/logs/eidet.log`. 4 levels (Info/Warn/Error/Error+Exception), 5MB rotation with `.log.1` backup, thread-safe, never throws. Logs startup, shutdown, crashes, and unhandled API errors with full stack traces.
+- **Service restart reliability**: Scheduled task `RestartOnFailure` count increased from 3 to 999. `ServeCommand` catches unexpected exceptions with non-zero exit code so Task Scheduler triggers restart. `OperationCanceledException` from Ctrl+C exits cleanly (code 0).
+- **Status log path**: `eidet status` now shows the log file path.
+
 ## Installation & Distribution
 
 Eidet is distributed as a **dotnet tool** (primary) and **standalone binaries** (Docker/non-.NET).
@@ -228,6 +238,7 @@ eidet/
 │   │   ├── Gates/                # SecretScanner, SignalGate, WriteGate
 │   │   ├── Indexes/              # Memories_Search, Memories_CountByType
 │   │   ├── Services/             # MemoryService, EntityExtractor, LayerService, OllamaService, ApiKeyService, HookRunner, QualityService, BackupService, ServiceLock, UsageTracker, enrichment (IEnrichmentService, OllamaEnrichmentService, NullEnrichmentService)
+│   │   ├── EidetLog.cs            # File logger ({configDir}/logs/eidet.log, 5MB rotation)
 │   │   ├── StringUtils.cs        # Shared string helpers (Truncate)
 │   │   └── Storage/              # IEidetStore, RavenEidetStore, DatabaseProvisioner, DocumentStoreFactory (embedded + external)
 │   ├── Eidet.Service/            # CLI + REST API + system service
@@ -269,6 +280,8 @@ eidet/
 - **Usage tracking via RavenDB time series**: Fire-and-forget recording of per-operation timing via `UsageScope`. Zero overhead when no tracker configured (NullUsageTracker). Time series on per-repo anchor documents.
 - **Index deployment on startup**: `DeployIndexes()` runs on every `serve`/`mcp` startup, not just `setup`. Ensures index schema changes apply automatically. Idempotent via RavenDB's `IndexCreation.CreateIndexes`.
 - **Enrichment CoT stripping**: `StripChainOfThought()` extracts actual answer from Ollama responses that contain `<channel|>` reasoning delimiters or `<think>` blocks. Applied both on new responses and as a maintenance cleanup stage for existing data.
+- **Repo path tracking via RepoUsage**: `OriginalPath` field on existing per-repo anchor documents maps normalized IDs back to filesystem paths. Populated by `UsageTracker.RecordAsync` when it sees a path-like repo ID. `TryInferPath()` backfills existing docs for the common `X--Name` → `X:\Name` pattern. Enables Web UI intake and other path-dependent operations.
+- **EidetLog file logger**: Lightweight static logger writing to `{configDir}/logs/eidet.log`. Thread-safe, never throws, 5MB rotation. Used by serve command (startup/shutdown/crash) and API server (unhandled request errors). Visible via `eidet status`.
 
 ## API Quick Reference
 
