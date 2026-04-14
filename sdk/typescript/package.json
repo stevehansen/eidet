@@ -1,6 +1,6 @@
 {
   "name": "@eidet/sdk",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "TypeScript client SDK for Eidet — long-term memory for AI coding agents",
   "type": "module",
   "main": "./dist/index.js",
