@@ -38,9 +38,10 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
         var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc, enrichment);
         var exportSvc = new ExportService(eidetStore);
 
+        var usageTracker = new UsageTracker(store);
         var workDir = settings.Repo ?? settings.WorkDir ?? Directory.GetCurrentDirectory();
         var server = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc, workDir,
-            autoIntake: config.Memory.AutoIntakeOnFirstSession);
+            autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker);
 
         try
         {

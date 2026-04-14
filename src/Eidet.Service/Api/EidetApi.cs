@@ -3,6 +3,7 @@ using System.Net;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Eidet.Core;
 using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
 using Eidet.Core.Services;
@@ -236,6 +237,7 @@ public class EidetApiServer
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[Eidet] Unhandled error: {ex}");
+            EidetLog.Error($"Unhandled API error on {ctx.Request.HttpMethod} {ctx.Request.Url?.AbsolutePath}", ex);
             try { await WriteJson(ctx, new { error = "Internal server error" }, 500); } catch { }
         }
     }
@@ -382,8 +384,22 @@ public class EidetApiServer
             await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
             return;
         }
+
+        // Resolve the filesystem path: use explicit path param, the repo value if it looks
+        // like a path, or look up the original path from the usage anchor document.
+        var path = ctx.Request.QueryString["path"];
+        if (string.IsNullOrEmpty(path))
+            path = RepoUsage.LooksLikePath(repo) ? repo : null;
+        if (string.IsNullOrEmpty(path) && _usage is not null)
+            path = await _usage.GetOriginalPathAsync(repo);
+        if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
+        {
+            await WriteJson(ctx, new { error = $"Cannot resolve filesystem path for repo '{repo}'. The path '{path ?? "(unknown)"}' does not exist." }, 400);
+            return;
+        }
+
         using var scope = _usage?.StartScope(repo, "Intake");
-        var result = await _intake.IngestAsync(repo, repo, ct: ct);
+        var result = await _intake.IngestAsync(repo, path, ct: ct);
         scope?.SetResultCount(result.NewCount);
         await WriteJson(ctx, new { newCount = result.NewCount, skippedCount = result.SkippedCount, dependencies = result.DetectedLinks.Count });
     }
@@ -614,7 +630,17 @@ public class EidetApiServer
     private async Task HandleGetRepos(HttpListenerContext ctx, CancellationToken ct)
     {
         var repos = await _svc.GetRepoIdsAsync(ct);
-        await WriteJson(ctx, new { repos = repos.Select(r => new { repoId = r }) });
+        var pathMap = _usage is not null
+            ? await _usage.GetAllRepoPathsAsync()
+            : new Dictionary<string, string?>();
+        await WriteJson(ctx, new
+        {
+            repos = repos.Select(r => new
+            {
+                repoId = r,
+                originalPath = pathMap.TryGetValue(r, out var p) ? p : null,
+            })
+        });
     }
 
     private async Task HandleBrowse(HttpListenerContext ctx, CancellationToken ct)

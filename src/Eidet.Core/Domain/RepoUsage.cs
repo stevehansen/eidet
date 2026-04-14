@@ -10,6 +10,46 @@ public class RepoUsage
     public string RepoId { get; set; } = "";
     public DateTime CreatedAt { get; set; }
 
+    /// <summary>
+    /// The original filesystem path (e.g., "P:\claude") before normalization.
+    /// Used by Web UI to run intake and other path-dependent operations.
+    /// </summary>
+    public string? OriginalPath { get; set; }
+
     public static string MakeId(string repoId) =>
         $"usage/{RepoIdNormalizer.Normalize(repoId).Replace('\\', '-').Replace('/', '-').Replace(':', '-')}";
+
+    /// <summary>
+    /// Returns true if the given string looks like a filesystem path (not already normalized).
+    /// </summary>
+    public static bool LooksLikePath(string value) =>
+        value.Contains(':') || value.Contains('\\') || value.Contains('/');
+
+    /// <summary>
+    /// Attempts to infer the original filesystem path from a normalized repo ID.
+    /// Only handles the common "X--Name" → "X:\Name" pattern on Windows.
+    /// Returns null if the pattern doesn't match or the directory doesn't exist.
+    /// </summary>
+    public static string? TryInferPath(string normalizedRepoId)
+    {
+        if (string.IsNullOrEmpty(normalizedRepoId) || normalizedRepoId.Length < 4)
+            return null;
+
+        // Pattern: single letter, then "--", then folder name with no further dashes
+        // e.g. "P--Eidet" → "P:\Eidet"
+        if (normalizedRepoId[1] == '-' && normalizedRepoId[2] == '-'
+            && char.IsLetter(normalizedRepoId[0]))
+        {
+            var folderPart = normalizedRepoId[3..];
+            // Only handle simple single-folder names (no extra dashes that could be ambiguous)
+            if (!folderPart.Contains('-'))
+            {
+                var candidate = $"{normalizedRepoId[0]}:\\{folderPart}";
+                if (Directory.Exists(candidate))
+                    return candidate;
+            }
+        }
+
+        return null;
+    }
 }

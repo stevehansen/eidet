@@ -30,7 +30,7 @@ public class UsageTracker
             var docId = RepoUsage.MakeId(repoId);
             using var session = _store.OpenAsyncSession();
 
-            // Ensure anchor document exists
+            // Ensure anchor document exists and track original path
             var existing = await session.LoadAsync<RepoUsage>(docId);
             if (existing is null)
             {
@@ -39,8 +39,13 @@ public class UsageTracker
                     Id = docId,
                     RepoId = RepoIdNormalizer.Normalize(repoId),
                     CreatedAt = DateTime.UtcNow,
+                    OriginalPath = RepoUsage.LooksLikePath(repoId) ? repoId : null,
                 };
                 await session.StoreAsync(usage, docId);
+            }
+            else if (existing.OriginalPath is null && RepoUsage.LooksLikePath(repoId))
+            {
+                existing.OriginalPath = repoId;
             }
 
             // Append time series entry
@@ -201,6 +206,59 @@ public class UsageTracker
     }
 
     /// <summary>
+    /// Gets the original filesystem path for a normalized repo ID from the anchor document.
+    /// Returns null if no path mapping is stored.
+    /// </summary>
+    public async Task<string?> GetOriginalPathAsync(string repoId)
+    {
+        try
+        {
+            var docId = RepoUsage.MakeId(repoId);
+            using var session = _store.OpenAsyncSession();
+            var doc = await session.LoadAsync<RepoUsage>(docId);
+            return doc?.OriginalPath;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Gets all repo IDs with their original paths from anchor documents.
+    /// Infers and backfills paths for existing docs that predate the OriginalPath field.
+    /// </summary>
+    public async Task<Dictionary<string, string?>> GetAllRepoPathsAsync()
+    {
+        var result = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var session = _store.OpenAsyncSession();
+            var docs = await session.Advanced.AsyncDocumentQuery<RepoUsage>()
+                .Take(1000)
+                .ToListAsync();
+            var dirty = false;
+            foreach (var doc in docs)
+            {
+                if (doc.OriginalPath is null)
+                {
+                    var inferred = RepoUsage.TryInferPath(doc.RepoId);
+                    if (inferred is not null)
+                    {
+                        doc.OriginalPath = inferred;
+                        dirty = true;
+                    }
+                }
+                result[doc.RepoId] = doc.OriginalPath;
+            }
+            if (dirty)
+                await session.SaveChangesAsync();
+        }
+        catch { }
+        return result;
+    }
+
+    /// <summary>
     /// Creates a Stopwatch-based scope that records on dispose. Use with `using`.
     /// </summary>
     public UsageScope StartScope(string repoId, string operation) =>
@@ -255,6 +313,12 @@ public sealed class NullUsageTracker : UsageTracker
 
     public new Task<List<HourlyBucket>> GetHourlyBreakdownAsync(string repoId, int days = 7) =>
         Task.FromResult(new List<HourlyBucket>());
+
+    public new Task<string?> GetOriginalPathAsync(string repoId) =>
+        Task.FromResult<string?>(null);
+
+    public new Task<Dictionary<string, string?>> GetAllRepoPathsAsync() =>
+        Task.FromResult(new Dictionary<string, string?>());
 
     public new UsageScope StartScope(string repoId, string operation) => new(this, repoId, operation);
 }

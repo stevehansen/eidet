@@ -4,6 +4,7 @@
 
   const API = '';
   let currentRepo = '';
+  let repoPathMap = {}; // normalized repoId → original filesystem path
   let browseSkip = 0;
   const browseTake = 30;
 
@@ -85,7 +86,14 @@
 
   async function apiPost(path) {
     var res = await fetch(API + path, { method: 'POST' });
-    if (!res.ok) throw new Error('API error: ' + res.status);
+    if (!res.ok) {
+      var ct = res.headers.get('content-type') || '';
+      if (ct.includes('json')) {
+        var body = await res.json();
+        throw new Error(body.error || 'API error: ' + res.status);
+      }
+      throw new Error('API error: ' + res.status);
+    }
     var ct = res.headers.get('content-type') || '';
     if (ct.includes('json')) return res.json();
     return res.text();
@@ -117,25 +125,17 @@
         select.innerHTML = '<option value="">No repos found</option>';
         return;
       }
-      // Sort repos alphabetically by name
+      // Sort repos alphabetically by name and build path map
+      repoPathMap = {};
       var repos = data.repos.slice().sort(function (a, b) {
         return a.repoId.localeCompare(b.repoId, undefined, { sensitivity: 'base' });
       });
       repos.forEach(function (r) {
+        if (r.originalPath) repoPathMap[r.repoId] = r.originalPath;
         var opt = document.createElement('option');
         opt.value = r.repoId;
-        // Show short name + drive/parent for disambiguation
-        var normalized = r.repoId.replace(/\\/g, '/');
-        var parts = normalized.split('/');
-        var name = parts[parts.length - 1] || r.repoId;
-        // Add parent path hint if there are multiple segments
-        if (parts.length > 2) {
-          name = name + '  (' + parts.slice(0, -1).join('/') + ')';
-        } else if (parts.length === 2) {
-          name = name + '  (' + parts[0] + ')';
-        }
-        opt.textContent = name;
-        opt.title = r.repoId;
+        opt.textContent = formatRepoDisplay(r.originalPath || r.repoId);
+        opt.title = r.originalPath || r.repoId;
         select.appendChild(opt);
       });
       currentRepo = select.value;
@@ -804,7 +804,9 @@
         var res = await fetch('/api/eidet/export?repo=' + encRepo());
         data = await res.text();
       } else if (action === 'intake') {
-        data = await apiPost('/api/eidet/intake?repo=' + encRepo());
+        var intakeUrl = '/api/eidet/intake?repo=' + encRepo();
+        if (repoPathMap[currentRepo]) intakeUrl += '&path=' + encodeURIComponent(repoPathMap[currentRepo]);
+        data = await apiPost(intakeUrl);
       } else if (action === 'consolidate') {
         data = await apiPost('/api/eidet/consolidate?repo=' + encRepo());
       } else if (action === 'maintenance') {
@@ -850,6 +852,24 @@
   function truncate(s, len) {
     if (!s) return '';
     return s.length > len ? s.substring(0, len) + '...' : s;
+  }
+
+  // Smart display for repo paths:
+  //   P:\Eidet            → P:\Eidet
+  //   C:\Users\steve\Projects\MyApp → MyApp  (C:\...\Projects)
+  function formatRepoDisplay(pathOrId) {
+    if (!pathOrId) return '';
+    var sep = pathOrId.indexOf('\\') >= 0 ? '\\' : '/';
+    var parts = pathOrId.split(sep).filter(Boolean);
+    // Normalized IDs use dashes — show as-is
+    if (parts.length <= 1) return pathOrId;
+    var name = parts[parts.length - 1];
+    // Short paths (drive + folder): show full
+    if (parts.length <= 2) return pathOrId;
+    // Deep paths: show "Name  (drive:\...\parent)"
+    var drive = parts[0];
+    var parent = parts[parts.length - 2];
+    return name + '  (' + drive + sep + '...' + sep + parent + ')';
   }
 
   function formatDate(iso) {

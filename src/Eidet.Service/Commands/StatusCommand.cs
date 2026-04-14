@@ -132,6 +132,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
 
             AnsiConsole.MarkupLine($"  Ollama:     {(config.Enrichment.OllamaEnabled ? config.Enrichment.OllamaUrl : "[dim]Disabled[/]")}");
             AnsiConsole.MarkupLine($"  Config:     {ConfigManager.GetConfigPath()}");
+            AnsiConsole.MarkupLine($"  Logs:       {Path.Combine(ConfigManager.GetConfigDir(), "logs", "eidet.log")}");
 
             // Show recent version history
             if (versionHistory.Count > 1)

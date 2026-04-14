@@ -116,7 +116,7 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
                 <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
                 <RestartOnFailure>
                   <Interval>PT1M</Interval>
-                  <Count>3</Count>
+                  <Count>999</Count>
                 </RestartOnFailure>
               </Settings>
               <Actions>

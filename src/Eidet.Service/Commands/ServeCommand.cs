@@ -1,3 +1,4 @@
+using Eidet.Core;
 using Eidet.Core.Configuration;
 using Eidet.Core.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -87,11 +88,13 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         }
         catch (Exception ex)
         {
+            EidetLog.Error("Failed to start Eidet host", ex);
             serviceLock.Dispose();
             AnsiConsole.MarkupLine($"  RavenDB: [red]Failed[/] — {ex.Message}");
             return 1;
         }
 
+        EidetLog.Info($"Eidet v{Eidet.Core.EidetVersion.Current} starting on {host.BindAddress}:{host.Port}");
         AnsiConsole.MarkupLine($"[bold]Eidet[/] v{Eidet.Core.EidetVersion.Current}");
 
         if (host.StorageMode == StorageMode.Embedded)
@@ -156,6 +159,10 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         {
             await host.RunAsync(cts.Token);
         }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            // Graceful shutdown via Ctrl+C — exit 0
+        }
         catch (System.Net.HttpListenerException ex) when (ex.ErrorCode == 183 || ex.ErrorCode == 48)
         {
             // ERROR_ALREADY_EXISTS (Windows) or EADDRINUSE (Unix) — port is in use
@@ -165,8 +172,16 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
             AnsiConsole.MarkupLine($"  [dim]Or change the default: eidet config set service.port {host.Port + 1}[/]");
             return 1;
         }
+        catch (Exception ex)
+        {
+            // Unexpected crash — exit non-zero so Task Scheduler triggers RestartOnFailure
+            EidetLog.Error("Eidet crashed", ex);
+            AnsiConsole.MarkupLine($"\n[red]Eidet crashed:[/] {Markup.Escape(ex.Message)}");
+            return 1;
+        }
         finally
         {
+            EidetLog.Info("Eidet stopped");
             serviceLock.Dispose();
             host.Dispose();
             AnsiConsole.MarkupLine("[dim]Eidet stopped.[/]");
