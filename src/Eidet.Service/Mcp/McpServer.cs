@@ -18,21 +18,19 @@ public class McpServer
     private readonly IntakeService _intake;
     private readonly ConsolidationService _consolidation;
     private readonly MaintenanceService _maintenance;
-    private readonly ExportService _export;
     private readonly UsageTracker? _usage;
     private readonly string _repoId;
     private readonly bool _autoIntake;
     private bool _autoIntakeDone;
 
     public McpServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
-        MaintenanceService maintenance, ExportService export, string repoId, bool autoIntake = true,
+        MaintenanceService maintenance, string repoId, bool autoIntake = true,
         UsageTracker? usage = null)
     {
         _svc = svc;
         _intake = intake;
         _consolidation = consolidation;
         _maintenance = maintenance;
-        _export = export;
         _repoId = repoId;
         _autoIntake = autoIntake;
         _usage = usage;
@@ -145,9 +143,6 @@ public class McpServer
         ["eidet_link"] = "Store",
         ["eidet_consolidate"] = "Consolidate",
         ["eidet_maintenance"] = "Maintenance",
-        ["eidet_export"] = "Export",
-        ["eidet_pack_export"] = "Export",
-        ["eidet_pack_import"] = "Intake",
         ["eidet_edit"] = "Store",
     };
 
@@ -169,9 +164,6 @@ public class McpServer
                 "eidet_link" => await ExecuteLink(args, ct),
                 "eidet_consolidate" => await ExecuteConsolidate(args, ct),
                 "eidet_maintenance" => await ExecuteMaintenance(args, ct),
-                "eidet_export" => await ExecuteExport(args, ct),
-                "eidet_pack_export" => await ExecutePackExport(args, ct),
-                "eidet_pack_import" => await ExecutePackImport(args, ct),
                 "eidet_edit" => await ExecuteEdit(args, ct),
                 _ => McpCallToolResult.Error($"Unknown tool: {name}"),
             };
@@ -412,62 +404,6 @@ public class McpServer
         var isActive = _svc.IsRepoActive(normalizedRepoId);
         var result = await _maintenance.RunAsync(normalizedRepoId, isRepoActive: isActive, ct: ct);
         return McpCallToolResult.Text(result.ToString());
-    }
-
-    private async Task<McpCallToolResult> ExecuteExport(JsonElement args, CancellationToken ct)
-    {
-        var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
-        var markdown = await _export.ExportMarkdownAsync(normalizedRepoId, ct);
-
-        var outputPath = GetString(args, "output_path");
-        if (!string.IsNullOrEmpty(outputPath))
-        {
-            await File.WriteAllTextAsync(outputPath, markdown, ct);
-            return McpCallToolResult.Text($"Exported {markdown.Length} chars to {outputPath}");
-        }
-
-        return McpCallToolResult.Text(markdown);
-    }
-
-    private async Task<McpCallToolResult> ExecutePackExport(JsonElement args, CancellationToken ct)
-    {
-        var bundleId = GetString(args, "bundle_id");
-        if (string.IsNullOrEmpty(bundleId)) return McpCallToolResult.Error("Missing: bundle_id");
-        var name = GetString(args, "name");
-        if (string.IsNullOrEmpty(name)) return McpCallToolResult.Error("Missing: name");
-        var version = GetString(args, "version");
-        if (string.IsNullOrEmpty(version)) return McpCallToolResult.Error("Missing: version");
-
-        var types = GetStringArray(args, "types")
-            .Select(t => Enum.TryParse<MemoryType>(t, true, out var mt) ? mt : (MemoryType?)null)
-            .Where(t => t != null).Select(t => t!.Value).ToList();
-
-        var tags = GetStringArray(args, "tags");
-        var packages = GetStringArray(args, "applicable_packages");
-        var outputPath = GetString(args, "output_path");
-
-        var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
-        var pack = await _export.ExportPackAsync(normalizedRepoId, bundleId, name, version, "user",
-            types.Count > 0 ? types : null, tags.Count > 0 ? tags : null,
-            packages.Count > 0 ? packages : null, ct);
-
-        if (!string.IsNullOrEmpty(outputPath))
-        {
-            await _export.ExportPackToFileAsync(pack, outputPath, ct);
-            return McpCallToolResult.Text($"Bundle exported: {pack.Entries.Count} entries -> {outputPath}");
-        }
-
-        return McpCallToolResult.Text($"Bundle created: {pack.Id} v{pack.Version} with {pack.Entries.Count} entries.");
-    }
-
-    private async Task<McpCallToolResult> ExecutePackImport(JsonElement args, CancellationToken ct)
-    {
-        var path = GetString(args, "path");
-        if (string.IsNullOrEmpty(path)) return McpCallToolResult.Error("Missing: path");
-
-        var pack = await _export.ImportPackFromFileAsync(path, ct);
-        var count = await _export.ImportPackAsync(pack, ct);
-        return McpCallToolResult.Text($"Bundle imported: {pack.Name} v{pack.Version} — {count} entries loaded.");
     }
 
     private async Task<McpCallToolResult> ExecuteEdit(JsonElement args, CancellationToken ct)

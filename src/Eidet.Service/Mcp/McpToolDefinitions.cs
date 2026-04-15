@@ -107,36 +107,6 @@ public static class McpToolDefinitions
         },
         new()
         {
-            Name = "eidet_export",
-            Description = "Export memories as formatted markdown.",
-            InputSchema = Schema([
-                PropOptional("output_path", "string", "File path to write to (returns text if omitted)."),
-            ], []),
-        },
-        new()
-        {
-            Name = "eidet_pack_export",
-            Description = "Export memories as a shareable .eidet pack file for other projects.",
-            InputSchema = Schema([
-                Prop("bundle_id", "string", "Unique bundle identifier."),
-                Prop("name", "string", "Human-readable bundle name."),
-                Prop("version", "string", "Semver version string."),
-                PropOptional("types", "array", "Memory types to include (default: insight, procedure, heuristic).", items: "string"),
-                PropOptional("tags", "array", "Filter by tags.", items: "string"),
-                PropOptional("applicable_packages", "array", "NuGet/npm packages this bundle covers.", items: "string"),
-                PropOptional("output_path", "string", "File path for the .eidet pack."),
-            ], ["bundle_id", "name", "version"]),
-        },
-        new()
-        {
-            Name = "eidet_pack_import",
-            Description = "Import a .eidet pack as a read-only memory layer.",
-            InputSchema = Schema([
-                Prop("path", "string", "Path to the .eidet pack file."),
-            ], ["path"]),
-        },
-        new()
-        {
             Name = "eidet_edit",
             Description = "Edit an existing memory. Can update content (creates new version), tags, importance, confidence, or type. Use for curating and correcting memories.",
             InputSchema = Schema([

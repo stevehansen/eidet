@@ -5,10 +5,10 @@ namespace Eidet.Service.Tests.Mcp;
 public class McpToolDefinitionsTests
 {
     [Fact]
-    public void GetAll_Returns14Tools()
+    public void GetAll_Returns11Tools()
     {
         var tools = McpToolDefinitions.GetAll();
-        Assert.Equal(14, tools.Count);
+        Assert.Equal(11, tools.Count);
     }
 
     [Fact]
@@ -55,9 +55,6 @@ public class McpToolDefinitionsTests
     [InlineData("eidet_link")]
     [InlineData("eidet_consolidate")]
     [InlineData("eidet_maintenance")]
-    [InlineData("eidet_export")]
-    [InlineData("eidet_pack_export")]
-    [InlineData("eidet_pack_import")]
     [InlineData("eidet_edit")]
     public void GetAll_ContainsTool(string toolName)
     {

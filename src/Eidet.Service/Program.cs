@@ -83,6 +83,17 @@ app.Configure(config =>
     config.AddCommand<FeedbackCommand>("feedback")
         .WithDescription("Report an issue or give feedback on GitHub");
 
+    config.AddBranch("layer", layer =>
+    {
+        layer.SetDescription("Manage memory layers");
+
+        layer.AddCommand<LayerSyncCommand>("sync")
+            .WithDescription("Sync a .eidet pack file into a layer (add/update/remove)");
+
+        layer.AddCommand<LayerListCommand>("list")
+            .WithDescription("List mounted layers for a repo");
+    });
+
     config.AddBranch("backup", backup =>
     {
         backup.SetDescription("Backup and restore memory data");

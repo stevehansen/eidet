@@ -308,6 +308,38 @@ public class RavenEidetStore : IEidetStore
         return await session.LoadAsync<MemoryLayer>(layerId, ct);
     }
 
+    public async Task<List<MemoryEntry>> GetByLayerIdAsync(string layerId, CancellationToken ct = default)
+    {
+        var allEntries = new List<MemoryEntry>();
+        using var session = _store.OpenAsyncSession();
+        var skip = 0;
+        const int pageSize = 256;
+        while (true)
+        {
+            var batch = await session.Advanced
+                .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
+                .WhereEquals("LayerId", layerId)
+                .Skip(skip)
+                .Take(pageSize)
+                .ToListAsync(ct);
+
+            allEntries.AddRange(batch);
+            if (batch.Count < pageSize) break;
+            skip += pageSize;
+        }
+        return allEntries;
+    }
+
+    public async Task<bool> HardDeleteAsync(string id, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+        var entry = await session.LoadAsync<MemoryEntry>(id, ct);
+        if (entry is null) return false;
+        session.Delete(entry);
+        await session.SaveChangesAsync(ct);
+        return true;
+    }
+
     private static IAsyncDocumentQuery<MemoryEntry> ApplyFilters(
         IAsyncDocumentQuery<MemoryEntry> documentQuery, MemoryQuery query)
     {

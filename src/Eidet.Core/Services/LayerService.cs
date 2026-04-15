@@ -26,6 +26,7 @@ public class LayerService
         List<string>? applicableRepos = null,
         List<string>? applicablePackages = null,
         string? sourcePath = null,
+        string? version = null,
         CancellationToken ct = default)
     {
         // Check if already mounted
@@ -40,6 +41,7 @@ public class LayerService
             Type = type,
             ReadOnly = type != LayerType.Local,
             SourcePath = sourcePath,
+            Version = version,
             MountedAt = DateTime.UtcNow,
             Priority = type switch
             {
@@ -52,6 +54,18 @@ public class LayerService
             ApplicablePackages = applicablePackages ?? [],
         };
 
+        await _store.StoreMountedLayerAsync(layer, ct);
+        return layer;
+    }
+
+    public async Task<MemoryLayer?> UpdateVersionAsync(
+        string layerId, string version, CancellationToken ct = default)
+    {
+        var layer = await _store.GetLayerAsync(layerId, ct);
+        if (layer is null) return null;
+
+        layer.Version = version;
+        layer.LastSyncedAt = DateTime.UtcNow;
         await _store.StoreMountedLayerAsync(layer, ct);
         return layer;
     }

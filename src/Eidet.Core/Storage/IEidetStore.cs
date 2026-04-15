@@ -25,6 +25,8 @@ public interface IEidetStore
     Task<bool> UnmountLayerAsync(string layerId, CancellationToken ct = default);
     Task<List<MemoryLayer>> GetMountedLayersAsync(string repoId, CancellationToken ct = default);
     Task<MemoryLayer?> GetLayerAsync(string layerId, CancellationToken ct = default);
+    Task<List<MemoryEntry>> GetByLayerIdAsync(string layerId, CancellationToken ct = default);
+    Task<bool> HardDeleteAsync(string id, CancellationToken ct = default);
 }
 
 public record DatabaseInfo(

@@ -29,6 +29,7 @@ public class EidetApiServer
     private readonly ExportService _export;
     private readonly QualityService? _quality;
     private readonly LayerService? _layers;
+    private readonly LayerSyncService? _layerSync;
     private readonly McpServer? _mcpServer;
     private readonly ConcurrentDictionary<string, McpServer> _mcpServerPool = new();
     private readonly IEnrichmentService? _enrichment;
@@ -42,7 +43,8 @@ public class EidetApiServer
 
     public EidetApiServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
         MaintenanceService maintenance, ExportService export, string bindAddress, int port,
-        LayerService? layers = null, McpServer? mcpServer = null, AuthConfig? auth = null,
+        LayerService? layers = null, LayerSyncService? layerSync = null,
+        McpServer? mcpServer = null, AuthConfig? auth = null,
         QualityService? quality = null, IEnrichmentService? enrichment = null, EidetConfig? config = null,
         UsageTracker? usage = null, ScheduledTaskService? scheduledTasks = null)
     {
@@ -53,6 +55,7 @@ public class EidetApiServer
         _export = export;
         _quality = quality;
         _layers = layers;
+        _layerSync = layerSync;
         _mcpServer = mcpServer;
         _enrichment = enrichment;
         _config = config;
@@ -190,6 +193,9 @@ public class EidetApiServer
 
             else if (method == "POST" && path == "/api/eidet/layers/mount")
                 await HandleMountLayer(ctx, ct);
+
+            else if (method == "POST" && path == "/api/eidet/layers/sync")
+                await HandleLayerSync(ctx, ct);
 
             else if (method == "PUT" && path.StartsWith("/api/eidet/") && !path.Contains("/links"))
                 await HandleUpdateMemory(ctx, path["/api/eidet/".Length..], ct);
@@ -591,7 +597,7 @@ public class EidetApiServer
         var server = string.IsNullOrEmpty(repoOverride)
             ? _mcpServer
             : _mcpServerPool.GetOrAdd(repoOverride, id =>
-                new McpServer(_svc, _intake, _consolidation, _maintenance, _export, id));
+                new McpServer(_svc, _intake, _consolidation, _maintenance, id));
 
         using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
         var body = await reader.ReadToEndAsync(ct);
@@ -631,8 +637,30 @@ public class EidetApiServer
             return;
         }
         var layer = await _layers.MountAsync(req.LayerId, req.Name, req.Type,
-            req.ApplicableRepos, req.ApplicablePackages, req.SourcePath, ct);
+            req.ApplicableRepos, req.ApplicablePackages, req.SourcePath, ct: ct);
         await WriteJson(ctx, layer, 201);
+    }
+
+    private async Task HandleLayerSync(HttpListenerContext ctx, CancellationToken ct)
+    {
+        if (_layerSync is null) { await WriteJson(ctx, new { error = "Layer sync service not available" }, 501); return; }
+        var req = await ReadJson<LayerSyncRequest>(ctx);
+        if (req is null || string.IsNullOrEmpty(req.Path))
+        {
+            await WriteJson(ctx, new { error = "Missing required field: path" }, 400);
+            return;
+        }
+
+        if (req.Preview == true)
+        {
+            var preview = await _layerSync.PreviewAsync(req.Path, req.LayerId, ct);
+            await WriteJson(ctx, preview);
+        }
+        else
+        {
+            var result = await _layerSync.SyncAsync(req.Path, req.LayerId, req.RemoveStale ?? true, ct);
+            await WriteJson(ctx, result);
+        }
     }
 
     private async Task HandleUnmountLayer(HttpListenerContext ctx, string layerId, CancellationToken ct)
@@ -1072,6 +1100,14 @@ public record MountLayerRequest
     public List<string>? ApplicableRepos { get; init; }
     public List<string>? ApplicablePackages { get; init; }
     public string? SourcePath { get; init; }
+}
+
+public record LayerSyncRequest
+{
+    public string Path { get; init; } = "";
+    public string? LayerId { get; init; }
+    public bool? Preview { get; init; }
+    public bool? RemoveStale { get; init; }
 }
 
 public record UpdateMemoryRequest

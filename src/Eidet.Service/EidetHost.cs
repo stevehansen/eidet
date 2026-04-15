@@ -95,11 +95,12 @@ public sealed class EidetHost : IDisposable
         var exportSvc = new ExportService(eidetStore);
         var qualitySvc = new QualityService(eidetStore);
         var usageTracker = new UsageTracker(store);
-        var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
+        var layerSyncSvc = new LayerSyncService(eidetStore, layerSvc);
+        var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc,
             Directory.GetCurrentDirectory(), autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker);
         var scheduler = new ScheduledTaskService(store, eidetStore, memorySvc, maintenanceSvc, consolidationSvc, config.Maintenance);
         var apiServer = new EidetApiServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
-            actualBind, actualPort, layerSvc, mcpServer, config.Auth, qualitySvc, enrichment, config, usageTracker, scheduler);
+            actualBind, actualPort, layerSvc, layerSyncSvc, mcpServer, config.Auth, qualitySvc, enrichment, config, usageTracker, scheduler);
         var enrichmentWorker = new EnrichmentWorker(store, enrichment);
 
         return new EidetHost(store, eidetStore, enrichment, scheduler, enrichmentWorker, apiServer, config, actualBind, actualPort);
