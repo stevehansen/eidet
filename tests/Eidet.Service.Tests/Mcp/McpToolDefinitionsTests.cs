@@ -5,10 +5,10 @@ namespace Eidet.Service.Tests.Mcp;
 public class McpToolDefinitionsTests
 {
     [Fact]
-    public void GetAll_Returns13Tools()
+    public void GetAll_Returns14Tools()
     {
         var tools = McpToolDefinitions.GetAll();
-        Assert.Equal(13, tools.Count);
+        Assert.Equal(14, tools.Count);
     }
 
     [Fact]
@@ -58,6 +58,7 @@ public class McpToolDefinitionsTests
     [InlineData("eidet_export")]
     [InlineData("eidet_pack_export")]
     [InlineData("eidet_pack_import")]
+    [InlineData("eidet_edit")]
     public void GetAll_ContainsTool(string toolName)
     {
         var tools = McpToolDefinitions.GetAll();
@@ -90,5 +91,27 @@ public class McpToolDefinitionsTests
         var forget = tools.First(t => t.Name == "eidet_forget");
         var required = forget.InputSchema["required"]!.AsArray();
         Assert.Contains(required, r => r!.ToString() == "id");
+    }
+
+    [Fact]
+    public void Edit_RequiresId()
+    {
+        var tools = McpToolDefinitions.GetAll();
+        var edit = tools.First(t => t.Name == "eidet_edit");
+        var required = edit.InputSchema["required"]!.AsArray();
+        Assert.Contains(required, r => r!.ToString() == "id");
+    }
+
+    [Fact]
+    public void Edit_HasOptionalFields()
+    {
+        var tools = McpToolDefinitions.GetAll();
+        var edit = tools.First(t => t.Name == "eidet_edit");
+        var props = edit.InputSchema["properties"]!.AsObject();
+        Assert.True(props.ContainsKey("content"));
+        Assert.True(props.ContainsKey("tags"));
+        Assert.True(props.ContainsKey("importance"));
+        Assert.True(props.ContainsKey("confidence"));
+        Assert.True(props.ContainsKey("type"));
     }
 }

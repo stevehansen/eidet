@@ -441,6 +441,138 @@ public class MemoryService
     public async Task<Dictionary<MemoryType, int>> GetCountsByTypeAsync(string repoId, CancellationToken ct = default) =>
         await _store.GetCountsByTypeAsync(repoId, ct);
 
+    // ─── Update (curation) ────────────────────────────────────────────────
+
+    public async Task<bool> UpdateMemoryAsync(
+        string id,
+        string? content = null,
+        List<string>? tags = null,
+        float? importance = null,
+        float? confidence = null,
+        MemoryType? type = null,
+        string? oneLiner = null,
+        string? summary = null,
+        string? foresightHint = null,
+        CancellationToken ct = default)
+    {
+        var entry = await _store.GetAsync(id, ct);
+        if (entry is null) return false;
+
+        var contentChanged = content != null && content != entry.Content;
+
+        if (contentChanged)
+        {
+            // Content change: validate through gates
+            var secretResult = SecretScanner.Scan(content!);
+            if (!secretResult.Passed) return false;
+
+            var signalResult = SignalGate.Check(content!, type ?? entry.Type);
+            if (!signalResult.Passed) return false;
+
+            // Create new version (supersession)
+            entry.IsLatest = false;
+            entry.Validity.ValidUntil = DateTime.UtcNow;
+            entry.ForgetReason = "Superseded by user edit";
+            await _store.UpdateAsync(entry, ct);
+
+            var now = DateTime.UtcNow;
+            var newEntry = new MemoryEntry
+            {
+                Id = MemoryIdGenerator.Generate(entry.RepoId, type ?? entry.Type, content!, now),
+                RepoId = entry.RepoId,
+                Type = type ?? entry.Type,
+                Content = content!,
+                Tags = tags ?? entry.Tags,
+                Importance = importance.HasValue ? Math.Clamp(importance.Value, 0f, 1f) : entry.Importance,
+                Confidence = confidence.HasValue ? Math.Clamp(confidence.Value, 0f, 1f) : entry.Confidence,
+                Source = entry.Source,
+                SourceSessionId = entry.SourceSessionId,
+                CreatedAt = now,
+                Validity = new Validity { ValidFrom = now },
+                ParentMemoryId = entry.Id,
+                IsLatest = true,
+                Provenance = MemoryProvenance.UserStated,
+                Entities = EntityExtractor.Extract(content!),
+                OneLiner = EntityExtractor.GenerateHeuristicOneLiner(content!),
+                EchoCount = entry.EchoCount,
+                FizzleCount = entry.FizzleCount,
+                AccessCount = entry.AccessCount,
+                Links = entry.Links,
+                DerivedFrom = entry.DerivedFrom,
+            };
+
+            await _store.StoreAsync(newEntry, ct);
+        }
+        else
+        {
+            // Metadata-only update: modify in place
+            if (tags != null) entry.Tags = tags;
+            if (importance.HasValue) entry.Importance = Math.Clamp(importance.Value, 0f, 1f);
+            if (confidence.HasValue) entry.Confidence = Math.Clamp(confidence.Value, 0f, 1f);
+            if (type.HasValue) entry.Type = type.Value;
+            if (oneLiner != null) entry.OneLiner = oneLiner;
+            if (summary != null) entry.Summary = summary;
+            if (foresightHint != null) entry.ForesightHint = foresightHint;
+            await _store.UpdateAsync(entry, ct);
+        }
+
+        InvalidateCache();
+        return true;
+    }
+
+    // ─── Add Link ────────────────────────────────────────────────────────
+
+    public async Task<bool> AddLinkAsync(
+        string memoryId,
+        string targetRepoId,
+        string relation,
+        string? targetMemoryId = null,
+        CancellationToken ct = default)
+    {
+        var entry = await _store.GetAsync(memoryId, ct);
+        if (entry is null) return false;
+
+        // Avoid duplicate links
+        var normalized = RepoIdNormalizer.Normalize(targetRepoId);
+        var exists = entry.Links.Any(l =>
+            string.Equals(l.TargetRepoId, normalized, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(l.Relation, relation, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(l.TargetMemoryId, targetMemoryId, StringComparison.OrdinalIgnoreCase));
+        if (exists) return true; // idempotent
+
+        entry.Links.Add(new MemoryLink
+        {
+            TargetRepoId = normalized,
+            TargetMemoryId = targetMemoryId,
+            Relation = relation,
+        });
+
+        await _store.UpdateAsync(entry, ct);
+        InvalidateCache();
+        return true;
+    }
+
+    public async Task<bool> RemoveLinkAsync(
+        string memoryId,
+        string targetRepoId,
+        string relation,
+        CancellationToken ct = default)
+    {
+        var entry = await _store.GetAsync(memoryId, ct);
+        if (entry is null) return false;
+
+        var normalized = RepoIdNormalizer.Normalize(targetRepoId);
+        var removed = entry.Links.RemoveAll(l =>
+            string.Equals(l.TargetRepoId, normalized, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(l.Relation, relation, StringComparison.OrdinalIgnoreCase));
+
+        if (removed == 0) return false;
+
+        await _store.UpdateAsync(entry, ct);
+        InvalidateCache();
+        return true;
+    }
+
     // ─── Browse ─────────────────────────────────────────────────────────
 
     public async Task<List<MemoryEntry>> BrowseAsync(

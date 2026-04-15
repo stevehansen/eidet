@@ -182,6 +182,17 @@ All design decisions are documented in `docs/specs/`:
 - **Deep dive documentation**: `docs/deep-dive.md` — comprehensive narrative guide covering architecture, memory lifecycle (creation through gates, retrieval with scoring, context loading, feedback, decay, consolidation), RavenDB storage model, write gates, Ollama enrichment, layers, MCP surface, hooks, Web UI, security, service operations, Docker, SDKs, quality/backup, configuration, and glossary.
 - **Test coverage**: 319 → 328 tests. Added ScheduledTask (9).
 
+### Phase 13 — Memory Curation + AI Enrichment UI (Done)
+- **Memory update/edit API**: `PUT /api/eidet/{id}` — update content (creates versioned supersession), tags, importance, confidence, type, oneLiner, summary, foresightHint. Content changes go through write gates (secret scanning + signal gate) and create new version with `ParentMemoryId` chain. Metadata-only changes update in place. `MemoryService.UpdateMemoryAsync` with full field support.
+- **Memory link management API**: `POST /api/eidet/{id}/links` (add link to existing memory), `DELETE /api/eidet/{id}/links` (remove link). `MemoryService.AddLinkAsync` with dedup, `RemoveLinkAsync`. Memory IDs with slashes handled via `ExtractMemoryIdFromLinkPath` helper.
+- **AI enrichment API**: `POST /api/eidet/enrich` — on-demand enrichment generation using Ollama. Supports 4 tasks: `oneliner`, `summary`, `foresight`, `entities`. Returns generated text for user review before applying. Used by Web UI for interactive AI-assisted curation.
+- **MCP `eidet_edit` tool**: 14th MCP tool for editing memories from AI coding agents. Supports content, tags, importance, confidence, type updates. Wired through `McpServer.ExecuteEdit`.
+- **Web UI Memory Browser curation**: Enhanced detail panel with action bar (Edit, Echo, Fizzle, Forget buttons). Edit mode with inline content editing, tag modification, importance/confidence sliders, type selector. AI enrichment buttons (Regenerate one-liner/summary/foresight) with "Apply" action to save generated text directly to the memory. Link display with remove buttons.
+- **Web UI Create Memory dialog**: Modal dialog for manually creating memories from the browser. Type selector, content textarea (20+ char validation), tags input, importance slider. Creates via `POST /api/eidet` with `source: web-ui`.
+- **Web UI Repo Links**: Settings page section for managing cross-repo relationships. Target repo dropdown, relationship selector (depends-on, uses-library, supports, related, conflicts, forked-from, refines). Shows existing links with remove buttons.
+- **Enrichment availability detection**: Web UI checks `/api/status` for Ollama health on load. AI buttons only shown when enrichment service is available and healthy.
+- **Test coverage**: 328 → 342 tests. Added CurationApiTests (11): ExtractMemoryIdFromLinkPath (3), auth scope for PUT/POST/DELETE curation endpoints (4), request model validation (4). Updated McpToolDefinitionsTests: 14 tools, eidet_edit tool schema (2).
+
 ## Installation & Distribution
 
 Eidet is distributed as a **dotnet tool** (primary) and **standalone binaries** (Docker/non-.NET).
@@ -292,6 +303,8 @@ eidet/
 - **Repo path tracking via RepoUsage**: `OriginalPath` field on existing per-repo anchor documents maps normalized IDs back to filesystem paths. Populated by `UsageTracker.RecordAsync` when it sees a path-like repo ID. `TryInferPath()` backfills existing docs for the common `X--Name` → `X:\Name` pattern. Enables Web UI intake and other path-dependent operations.
 - **EidetLog file logger**: Lightweight static logger writing to `{configDir}/logs/eidet.log`. Thread-safe, never throws, 5MB rotation. Used by serve command (startup/shutdown/crash) and API server (unhandled request errors). Visible via `eidet status`.
 - **Persisted scheduler via RavenDB Refresh**: `ScheduledTaskService` replaces in-memory `MaintenanceScheduler`. Task documents (`scheduledtasks/maintenance`, `scheduledtasks/consolidation`) use `@refresh` metadata to schedule execution at a future time. RavenDB modifies the document when the refresh time arrives. A 1-minute polling loop detects due tasks. Survives restarts — overdue tasks execute within 30 seconds of startup. Full run history tracked (counts, durations, errors, status).
+- **Memory curation via versioned updates**: Content changes create new versions (supersession chain) preserving full history. Metadata-only changes (tags, importance, confidence, enrichment fields) update in place. Write gates still enforced on content changes. Web UI provides inline editing with AI-assisted enrichment regeneration.
+- **On-demand AI enrichment**: `/api/eidet/enrich` endpoint exposes Ollama enrichment for interactive use. Users can preview generated one-liners, summaries, foresight hints before applying them. Decouples enrichment from the background pipeline, enabling manual curation workflows.
 
 ## API Quick Reference
 
@@ -335,6 +348,21 @@ curl "http://localhost:19380/api/eidet/usage/hourly?repo=P%3A%5CEidet&days=7"
 
 # Scheduled tasks status
 curl http://localhost:19380/api/eidet/scheduled-tasks
+
+# Update a memory (metadata-only or content change with versioning)
+curl -X PUT http://localhost:19380/api/eidet/memories%2FP--Eidet%2Finsight%2Fabc123 \
+  -H "Content-Type: application/json" \
+  -d '{"tags":["updated","tags"],"importance":0.8}'
+
+# Add a link to an existing memory
+curl -X POST http://localhost:19380/api/eidet/memories%2FP--Eidet%2Finsight%2Fabc123/links \
+  -H "Content-Type: application/json" \
+  -d '{"targetRepoId":"P:\\Other","relation":"depends-on"}'
+
+# AI enrichment (requires Ollama)
+curl -X POST http://localhost:19380/api/eidet/enrich \
+  -H "Content-Type: application/json" \
+  -d '{"content":"Memory content here","task":"oneliner"}'
 
 # Web UI (browser auto-redirects from root /)
 # Open http://localhost:19380/ui in browser

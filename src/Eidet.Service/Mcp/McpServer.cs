@@ -148,6 +148,7 @@ public class McpServer
         ["eidet_export"] = "Export",
         ["eidet_pack_export"] = "Export",
         ["eidet_pack_import"] = "Intake",
+        ["eidet_edit"] = "Store",
     };
 
     private async Task<McpCallToolResult> ExecuteToolAsync(string name, JsonElement args, CancellationToken ct)
@@ -171,6 +172,7 @@ public class McpServer
                 "eidet_export" => await ExecuteExport(args, ct),
                 "eidet_pack_export" => await ExecutePackExport(args, ct),
                 "eidet_pack_import" => await ExecutePackImport(args, ct),
+                "eidet_edit" => await ExecuteEdit(args, ct),
                 _ => McpCallToolResult.Error($"Unknown tool: {name}"),
             };
             return result;
@@ -466,6 +468,29 @@ public class McpServer
         var pack = await _export.ImportPackFromFileAsync(path, ct);
         var count = await _export.ImportPackAsync(pack, ct);
         return McpCallToolResult.Text($"Bundle imported: {pack.Name} v{pack.Version} — {count} entries loaded.");
+    }
+
+    private async Task<McpCallToolResult> ExecuteEdit(JsonElement args, CancellationToken ct)
+    {
+        var id = args.GetProperty("id").GetString()!;
+        var content = GetString(args, "content");
+        var tags = GetStringArray(args, "tags");
+        var importance = args.TryGetProperty("importance", out var imp) && imp.ValueKind == JsonValueKind.Number ? (float?)imp.GetSingle() : null;
+        var confidence = args.TryGetProperty("confidence", out var conf) && conf.ValueKind == JsonValueKind.Number ? (float?)conf.GetSingle() : null;
+        var typeStr = GetString(args, "type");
+        MemoryType? type = typeStr != null && Enum.TryParse<MemoryType>(typeStr, true, out var t) ? t : null;
+
+        var ok = await _svc.UpdateMemoryAsync(id,
+            content: content,
+            tags: tags.Count > 0 ? tags : null,
+            importance: importance,
+            confidence: confidence,
+            type: type,
+            ct: ct);
+
+        return ok
+            ? McpCallToolResult.Text($"Memory {id} updated successfully.")
+            : McpCallToolResult.Error($"Memory not found or update rejected: {id}");
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────

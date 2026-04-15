@@ -191,6 +191,15 @@ public class EidetApiServer
             else if (method == "POST" && path == "/api/eidet/layers/mount")
                 await HandleMountLayer(ctx, ct);
 
+            else if (method == "PUT" && path.StartsWith("/api/eidet/") && !path.Contains("/links"))
+                await HandleUpdateMemory(ctx, path["/api/eidet/".Length..], ct);
+
+            else if (method == "POST" && path.EndsWith("/links") && path.StartsWith("/api/eidet/") && path != "/api/eidet/links")
+                await HandleAddMemoryLink(ctx, ExtractMemoryIdFromLinkPath(path), ct);
+
+            else if (method == "DELETE" && path.EndsWith("/links") && path.StartsWith("/api/eidet/") && path != "/api/eidet/links")
+                await HandleRemoveMemoryLink(ctx, ExtractMemoryIdFromLinkPath(path), ct);
+
             else if (method == "DELETE" && path.StartsWith("/api/eidet/layers/"))
                 await HandleUnmountLayer(ctx, path["/api/eidet/layers/".Length..], ct);
 
@@ -211,6 +220,9 @@ public class EidetApiServer
 
             else if (method == "GET" && path == "/api/eidet/usage/hourly")
                 await HandleUsageHourly(ctx, ct);
+
+            else if (method == "POST" && path == "/api/eidet/enrich")
+                await HandleEnrich(ctx, ct);
 
             else if (method == "GET" && path == "/api/eidet/scheduled-tasks")
                 await HandleScheduledTasks(ctx, ct);
@@ -800,6 +812,127 @@ public class EidetApiServer
         await WriteJson(ctx, new { repo, days, buckets });
     }
 
+    private async Task HandleEnrich(HttpListenerContext ctx, CancellationToken ct)
+    {
+        if (_enrichment is null || !_enrichment.IsAvailable)
+        {
+            await WriteJson(ctx, new { error = "Enrichment service not available. Configure Ollama in eidet setup." }, 503);
+            return;
+        }
+
+        var req = await ReadJson<EnrichRequest>(ctx);
+        if (req is null || string.IsNullOrEmpty(req.Content) || string.IsNullOrEmpty(req.Task))
+        {
+            await WriteJson(ctx, new { error = "Missing required fields: content, task" }, 400);
+            return;
+        }
+
+        try
+        {
+            string? result = req.Task switch
+            {
+                "oneliner" => await _enrichment.GenerateOneLinerAsync(req.Content, ct),
+                "summary" => await _enrichment.GenerateSummaryAsync(req.Content, ct),
+                "foresight" => await _enrichment.GenerateForesightHintAsync(req.Content, ct),
+                "entities" => string.Join(", ", await _enrichment.ExtractEntitiesAsync(req.Content, ct)),
+                _ => null,
+            };
+
+            if (result is null)
+                await WriteJson(ctx, new { error = $"Unknown task: {req.Task}. Use: oneliner, summary, foresight, entities" }, 400);
+            else
+                await WriteJson(ctx, new { task = req.Task, result });
+        }
+        catch (Exception ex)
+        {
+            await WriteJson(ctx, new { error = $"Enrichment failed: {ex.Message}" }, 500);
+        }
+    }
+
+    private async Task HandleUpdateMemory(HttpListenerContext ctx, string id, CancellationToken ct)
+    {
+        var decoded = Uri.UnescapeDataString(id);
+        var req = await ReadJson<UpdateMemoryRequest>(ctx);
+        if (req is null)
+        {
+            await WriteJson(ctx, new { error = "Invalid request body" }, 400);
+            return;
+        }
+
+        MemoryType? type = null;
+        if (!string.IsNullOrEmpty(req.Type) && Enum.TryParse<MemoryType>(req.Type, true, out var t))
+            type = t;
+
+        var ok = await _svc.UpdateMemoryAsync(
+            decoded,
+            content: req.Content,
+            tags: req.Tags,
+            importance: req.Importance,
+            confidence: req.Confidence,
+            type: type,
+            oneLiner: req.OneLiner,
+            summary: req.Summary,
+            foresightHint: req.ForesightHint,
+            ct: ct);
+
+        if (ok) await WriteJson(ctx, new { updated = true, id = decoded });
+        else await WriteJson(ctx, new { error = "Memory not found or update rejected" }, 404);
+    }
+
+    private async Task HandleAddMemoryLink(HttpListenerContext ctx, string memoryId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(memoryId))
+        {
+            await WriteJson(ctx, new { error = "Invalid memory ID in path" }, 400);
+            return;
+        }
+        var decoded = Uri.UnescapeDataString(memoryId);
+        var req = await ReadJson<AddMemoryLinkRequest>(ctx);
+        if (req is null || string.IsNullOrEmpty(req.TargetRepoId) || string.IsNullOrEmpty(req.Relation))
+        {
+            await WriteJson(ctx, new { error = "Missing required fields: targetRepoId, relation" }, 400);
+            return;
+        }
+
+        var ok = await _svc.AddLinkAsync(decoded, req.TargetRepoId, req.Relation, req.TargetMemoryId, ct);
+        if (ok) await WriteJson(ctx, new { linked = true }, 201);
+        else await WriteJson(ctx, new { error = "Memory not found" }, 404);
+    }
+
+    private async Task HandleRemoveMemoryLink(HttpListenerContext ctx, string memoryId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(memoryId))
+        {
+            await WriteJson(ctx, new { error = "Invalid memory ID in path" }, 400);
+            return;
+        }
+        var decoded = Uri.UnescapeDataString(memoryId);
+        var targetRepo = ctx.Request.QueryString["targetRepoId"];
+        var relation = ctx.Request.QueryString["relation"];
+        if (string.IsNullOrEmpty(targetRepo) || string.IsNullOrEmpty(relation))
+        {
+            await WriteJson(ctx, new { error = "Missing query params: targetRepoId, relation" }, 400);
+            return;
+        }
+
+        var ok = await _svc.RemoveLinkAsync(decoded, targetRepo, relation, ct);
+        if (ok) await WriteJson(ctx, new { removed = true });
+        else await WriteJson(ctx, new { error = "Link or memory not found" }, 404);
+    }
+
+    /// <summary>
+    /// Extract memory ID from paths like /api/eidet/{memoryId}/links.
+    /// Memory IDs contain slashes (memories/repoSlug/type/hash), so we take everything between /api/eidet/ and /links.
+    /// </summary>
+    private static string ExtractMemoryIdFromLinkPath(string path)
+    {
+        var prefix = "/api/eidet/";
+        var suffix = "/links";
+        if (path.StartsWith(prefix) && path.EndsWith(suffix) && path.Length > prefix.Length + suffix.Length)
+            return path[prefix.Length..^suffix.Length];
+        return "";
+    }
+
     private static string? ExtractRepoFromMemoryId(string memoryId)
     {
         // Memory IDs follow: memories/{repoSlug}/{type}/{hash}
@@ -939,4 +1072,29 @@ public record MountLayerRequest
     public List<string>? ApplicableRepos { get; init; }
     public List<string>? ApplicablePackages { get; init; }
     public string? SourcePath { get; init; }
+}
+
+public record UpdateMemoryRequest
+{
+    public string? Content { get; init; }
+    public List<string>? Tags { get; init; }
+    public float? Importance { get; init; }
+    public float? Confidence { get; init; }
+    public string? Type { get; init; }
+    public string? OneLiner { get; init; }
+    public string? Summary { get; init; }
+    public string? ForesightHint { get; init; }
+}
+
+public record AddMemoryLinkRequest
+{
+    public string TargetRepoId { get; init; } = "";
+    public string? TargetMemoryId { get; init; }
+    public string Relation { get; init; } = "";
+}
+
+public record EnrichRequest
+{
+    public string Content { get; init; } = "";
+    public string Task { get; init; } = "";  // oneliner, summary, foresight, entities
 }

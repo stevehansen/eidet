@@ -7,6 +7,8 @@
   let repoPathMap = {}; // normalized repoId → original filesystem path
   let browseSkip = 0;
   const browseTake = 30;
+  let currentDetailEntry = null; // currently displayed memory entry
+  let enrichmentAvailable = null; // cached enrichment availability
 
   // ─── Init ────────────────────────────────────────────────────────
 
@@ -15,8 +17,10 @@
   async function init() {
     setupNavigation();
     setupEventListeners();
+    setupCurationListeners();
     await loadServiceInfo();
     await loadRepos();
+    checkEnrichmentAvailable();
     navigateToHash();
   }
 
@@ -75,6 +79,7 @@
     document.getElementById('btnExport').addEventListener('click', function () { runAction('export'); });
 
     document.getElementById('usageDays').addEventListener('change', loadUsage);
+    document.getElementById('btnCreateRepoLink').addEventListener('click', createRepoLink);
   }
 
   // ─── API helpers ─────────────────────────────────────────────────
@@ -344,37 +349,449 @@
 
     try {
       var entry = await api('/api/eidet/' + encodeURIComponent(id));
-      panel.innerHTML =
-        '<div class="detail-section"><label>Type</label>' +
-        '<span class="memory-type ' + entry.type + '">' + entry.type + '</span></div>' +
-        '<div class="detail-section"><label>Content</label><div class="value">' + escHtml(entry.content) + '</div></div>' +
-        (entry.oneLiner ? '<div class="detail-section"><label>One-liner</label><div class="value">' + escHtml(entry.oneLiner) + '</div></div>' : '') +
-        (entry.summary ? '<div class="detail-section"><label>Summary</label><div class="value">' + escHtml(entry.summary) + '</div></div>' : '') +
-        (entry.foresightHint ? '<div class="detail-section"><label>Foresight</label><div class="value">' + escHtml(entry.foresightHint) + '</div></div>' : '') +
-        '<div class="detail-section"><label>Tags</label><div class="memory-tags">' +
-        (entry.tags || []).map(function (t) { return '<span class="tag">' + escHtml(t) + '</span>'; }).join('') +
-        '</div></div>' +
-        '<div class="detail-section"><label>Entities</label><div class="value">' +
-        (entry.entities || []).map(function (e) { return escHtml(e); }).join(', ') +
-        '</div></div>' +
-        '<div class="detail-meta">' +
-        metaItem('Importance', (entry.importance * 100).toFixed(0) + '%') +
-        metaItem('Confidence', (entry.confidence * 100).toFixed(0) + '%') +
-        metaItem('Accessed', entry.accessCount + 'x') +
-        metaItem('Echoes', entry.echoCount + ' / Fizzles: ' + entry.fizzleCount) +
-        metaItem('Created', formatDate(entry.createdAt)) +
-        metaItem('Provenance', entry.provenance || '--') +
-        metaItem('Source', entry.source || '--') +
-        metaItem('ID', '<span style="font-size:10px;word-break:break-all">' + escHtml(entry.id) + '</span>') +
-        '</div>';
+      currentDetailEntry = entry;
+      renderDetailView(entry);
     } catch (_) {
       panel.innerHTML = '<div class="detail-placeholder">Could not load memory details</div>';
     }
   }
 
+  function renderDetailView(entry) {
+    var panel = document.getElementById('detailPanel');
+    if (!panel) return;
+
+    var html = '';
+
+    // Action bar
+    html += '<div class="detail-actions">';
+    html += '<button class="btn btn-primary" onclick="window.__eidetEdit()">Edit</button>';
+    html += '<button class="btn btn-success" onclick="window.__eidetEcho()">Echo</button>';
+    html += '<button class="btn btn-warning" onclick="window.__eidetFizzle()">Fizzle</button>';
+    html += '<button class="btn btn-danger" onclick="window.__eidetForgetCurrent()">Forget</button>';
+    html += '</div>';
+
+    // Type
+    html += '<div class="detail-section"><label>Type</label>' +
+      '<span class="memory-type ' + entry.type + '">' + entry.type + '</span></div>';
+
+    // Content
+    html += '<div class="detail-section"><label>Content</label><div class="value">' + escHtml(entry.content) + '</div></div>';
+
+    // Enrichments with AI buttons
+    html += '<div class="detail-section"><label>One-liner</label>';
+    html += '<div class="value">' + escHtml(entry.oneLiner || '(none)') + '</div>';
+    if (enrichmentAvailable) {
+      html += '<div class="ai-enrich-bar"><span class="ai-label">AI</span>';
+      html += '<button class="btn btn-ai" onclick="window.__eidetAiEnrich(\'oneliner\')">Regenerate</button>';
+      html += '</div>';
+    }
+    html += '</div>';
+
+    html += '<div class="detail-section"><label>Summary</label>';
+    html += '<div class="value">' + escHtml(entry.summary || '(none)') + '</div>';
+    if (enrichmentAvailable) {
+      html += '<div class="ai-enrich-bar"><span class="ai-label">AI</span>';
+      html += '<button class="btn btn-ai" onclick="window.__eidetAiEnrich(\'summary\')">Regenerate</button>';
+      html += '</div>';
+    }
+    html += '</div>';
+
+    html += '<div class="detail-section"><label>Foresight</label>';
+    html += '<div class="value">' + escHtml(entry.foresightHint || '(none)') + '</div>';
+    if (enrichmentAvailable) {
+      html += '<div class="ai-enrich-bar"><span class="ai-label">AI</span>';
+      html += '<button class="btn btn-ai" onclick="window.__eidetAiEnrich(\'foresight\')">Regenerate</button>';
+      html += '</div>';
+    }
+    html += '</div>';
+
+    // AI result area (shared for enrichment output)
+    html += '<div id="aiResultArea" style="display:none"></div>';
+
+    // Tags
+    html += '<div class="detail-section"><label>Tags</label><div class="memory-tags">' +
+      (entry.tags || []).map(function (t) { return '<span class="tag">' + escHtml(t) + '</span>'; }).join('') +
+      '</div></div>';
+
+    // Entities
+    html += '<div class="detail-section"><label>Entities</label><div class="value">' +
+      (entry.entities || []).map(function (e) { return escHtml(e); }).join(', ') +
+      '</div></div>';
+
+    // Links
+    html += '<div class="detail-section"><label>Links</label>';
+    if (entry.links && entry.links.length > 0) {
+      html += '<div class="link-list">';
+      entry.links.forEach(function (l) {
+        html += '<div class="link-item">';
+        html += '<span class="link-relation">' + escHtml(l.relation) + '</span>';
+        html += '<span class="link-target">' + escHtml(l.targetMemoryId || l.targetRepoId) + '</span>';
+        html += '<span class="link-remove" title="Remove link" onclick="window.__eidetRemoveLink(\'' + escAttr(l.targetRepoId) + '\',\'' + escAttr(l.relation) + '\')">&times;</span>';
+        html += '</div>';
+      });
+      html += '</div>';
+    } else {
+      html += '<div class="value" style="color:var(--text-muted)">(no links)</div>';
+    }
+    html += '</div>';
+
+    // Meta grid
+    html += '<div class="detail-meta">' +
+      metaItem('Importance', (entry.importance * 100).toFixed(0) + '%') +
+      metaItem('Confidence', (entry.confidence * 100).toFixed(0) + '%') +
+      metaItem('Accessed', entry.accessCount + 'x') +
+      metaItem('Echoes', entry.echoCount + ' / Fizzles: ' + entry.fizzleCount) +
+      metaItem('Created', formatDate(entry.createdAt)) +
+      metaItem('Provenance', entry.provenance || '--') +
+      metaItem('Source', entry.source || '--') +
+      metaItem('ID', '<span style="font-size:10px;word-break:break-all">' + escHtml(entry.id) + '</span>') +
+      '</div>';
+
+    panel.innerHTML = html;
+  }
+
+  function renderEditView(entry) {
+    var panel = document.getElementById('detailPanel');
+    if (!panel) return;
+
+    var html = '';
+    html += '<h3 style="margin-bottom:12px">Edit Memory</h3>';
+
+    // Type
+    html += '<div class="edit-form-group"><label>Type</label>';
+    html += '<select id="editType" class="edit-select">';
+    ['observation', 'insight', 'procedure', 'heuristic'].forEach(function (t) {
+      html += '<option value="' + t + '"' + (entry.type === t ? ' selected' : '') + '>' + t + '</option>';
+    });
+    html += '</select></div>';
+
+    // Content
+    html += '<div class="edit-form-group"><label>Content</label>';
+    html += '<textarea id="editContent" class="edit-textarea" rows="6">' + escHtml(entry.content) + '</textarea>';
+    if (enrichmentAvailable) {
+      html += '<div class="ai-enrich-bar" style="margin-top:6px"><span class="ai-label">AI</span>';
+      html += '<button class="btn btn-ai" onclick="window.__eidetAiEnrichEdit(\'oneliner\')">Gen One-liner</button>';
+      html += '<button class="btn btn-ai" onclick="window.__eidetAiEnrichEdit(\'summary\')">Gen Summary</button>';
+      html += '<button class="btn btn-ai" onclick="window.__eidetAiEnrichEdit(\'foresight\')">Gen Foresight</button>';
+      html += '<button class="btn btn-ai" onclick="window.__eidetAiEnrichEdit(\'entities\')">Extract Entities</button>';
+      html += '</div>';
+    }
+    html += '<div id="editAiResult" style="display:none"></div>';
+    html += '</div>';
+
+    // Tags
+    html += '<div class="edit-form-group"><label>Tags (comma-separated)</label>';
+    html += '<input type="text" id="editTags" class="edit-input" value="' + escAttr((entry.tags || []).join(', ')) + '"></div>';
+
+    // Importance
+    html += '<div class="edit-form-group"><label>Importance</label>';
+    html += '<div class="edit-range-wrap">';
+    html += '<input type="range" id="editImportance" min="0" max="100" value="' + Math.round(entry.importance * 100) + '">';
+    html += '<span class="edit-range-val" id="editImpVal">' + Math.round(entry.importance * 100) + '%</span>';
+    html += '</div></div>';
+
+    // Confidence
+    html += '<div class="edit-form-group"><label>Confidence</label>';
+    html += '<div class="edit-range-wrap">';
+    html += '<input type="range" id="editConfidence" min="0" max="100" value="' + Math.round(entry.confidence * 100) + '">';
+    html += '<span class="edit-range-val" id="editConfVal">' + Math.round(entry.confidence * 100) + '%</span>';
+    html += '</div></div>';
+
+    // Actions
+    html += '<div class="edit-actions">';
+    html += '<button class="btn" onclick="window.__eidetCancelEdit()">Cancel</button>';
+    html += '<button class="btn btn-primary" onclick="window.__eidetSaveEdit()">Save Changes</button>';
+    html += '</div>';
+
+    html += '<div id="editResult" style="display:none" class="edit-result"></div>';
+
+    panel.innerHTML = html;
+
+    // Wire range value display
+    document.getElementById('editImportance').addEventListener('input', function () {
+      document.getElementById('editImpVal').textContent = this.value + '%';
+    });
+    document.getElementById('editConfidence').addEventListener('input', function () {
+      document.getElementById('editConfVal').textContent = this.value + '%';
+    });
+  }
+
   function metaItem(label, value) {
     return '<div class="detail-section"><label>' + label + '</label><div class="value">' + value + '</div></div>';
   }
+
+  // ─── Curation actions ────────────────────────────────────────────────
+
+  function setupCurationListeners() {
+    // Create memory dialog
+    document.getElementById('createMemoryBtn').addEventListener('click', function () {
+      document.getElementById('createMemoryDialog').style.display = '';
+      document.getElementById('createMemoryResult').textContent = '';
+    });
+    document.getElementById('cancelCreateMemory').addEventListener('click', function () {
+      document.getElementById('createMemoryDialog').style.display = 'none';
+    });
+    document.getElementById('confirmCreateMemory').addEventListener('click', createMemory);
+    document.getElementById('newMemoryImportance').addEventListener('input', function () {
+      document.getElementById('newMemoryImpLabel').textContent = this.value + '%';
+    });
+    // Close dialog on overlay click
+    document.getElementById('createMemoryDialog').addEventListener('click', function (e) {
+      if (e.target === this) this.style.display = 'none';
+    });
+  }
+
+  async function createMemory() {
+    var result = document.getElementById('createMemoryResult');
+    var content = document.getElementById('newMemoryContent').value.trim();
+    if (content.length < 20) {
+      result.className = 'form-result error';
+      result.textContent = 'Content must be at least 20 characters.';
+      return;
+    }
+    var tagsStr = document.getElementById('newMemoryTags').value.trim();
+    var tags = tagsStr ? tagsStr.split(',').map(function (t) { return t.trim(); }).filter(Boolean) : [];
+    var importance = parseInt(document.getElementById('newMemoryImportance').value) / 100;
+    var type = document.getElementById('newMemoryType').value;
+
+    result.className = 'form-result';
+    result.textContent = 'Creating...';
+
+    try {
+      var res = await fetch(API + '/api/eidet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repo: repoPathMap[currentRepo] || currentRepo,
+          content: content,
+          type: type,
+          tags: tags.length > 0 ? tags : null,
+          importance: importance,
+          source: 'web-ui',
+        }),
+      });
+      var data = await res.json();
+      if (res.ok) {
+        result.className = 'form-result success';
+        result.textContent = 'Created: ' + data.id;
+        document.getElementById('newMemoryContent').value = '';
+        document.getElementById('newMemoryTags').value = '';
+        setTimeout(function () {
+          document.getElementById('createMemoryDialog').style.display = 'none';
+          loadBrowser();
+        }, 1000);
+      } else {
+        result.className = 'form-result error';
+        result.textContent = data.error || 'Failed to create memory';
+      }
+    } catch (e) {
+      result.className = 'form-result error';
+      result.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  // Global action handlers
+  window.__eidetEdit = function () {
+    if (currentDetailEntry) renderEditView(currentDetailEntry);
+  };
+
+  window.__eidetCancelEdit = function () {
+    if (currentDetailEntry) renderDetailView(currentDetailEntry);
+  };
+
+  window.__eidetSaveEdit = async function () {
+    if (!currentDetailEntry) return;
+    var resultEl = document.getElementById('editResult');
+    resultEl.style.display = '';
+    resultEl.className = 'edit-result';
+    resultEl.textContent = 'Saving...';
+
+    var newContent = document.getElementById('editContent').value.trim();
+    var newTags = document.getElementById('editTags').value.trim();
+    var tags = newTags ? newTags.split(',').map(function (t) { return t.trim(); }).filter(Boolean) : [];
+    var importance = parseInt(document.getElementById('editImportance').value) / 100;
+    var confidence = parseInt(document.getElementById('editConfidence').value) / 100;
+    var type = document.getElementById('editType').value;
+
+    var body = {};
+    if (newContent !== currentDetailEntry.content) body.content = newContent;
+    if (JSON.stringify(tags) !== JSON.stringify(currentDetailEntry.tags || [])) body.tags = tags;
+    if (Math.abs(importance - currentDetailEntry.importance) > 0.005) body.importance = importance;
+    if (Math.abs(confidence - currentDetailEntry.confidence) > 0.005) body.confidence = confidence;
+    if (type !== currentDetailEntry.type) body.type = type;
+
+    if (Object.keys(body).length === 0) {
+      resultEl.className = 'edit-result';
+      resultEl.textContent = 'No changes detected.';
+      return;
+    }
+
+    try {
+      var res = await fetch(API + '/api/eidet/' + encodeURIComponent(currentDetailEntry.id), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      var data = await res.json();
+      if (res.ok) {
+        resultEl.className = 'edit-result success';
+        resultEl.textContent = 'Saved successfully.';
+        // Refresh the detail view
+        setTimeout(function () {
+          showDetail(currentDetailEntry.id);
+          loadBrowser();
+        }, 500);
+      } else {
+        resultEl.className = 'edit-result error';
+        resultEl.textContent = data.error || 'Failed to save';
+      }
+    } catch (e) {
+      resultEl.className = 'edit-result error';
+      resultEl.textContent = 'Error: ' + e.message;
+    }
+  };
+
+  window.__eidetEcho = async function () {
+    if (!currentDetailEntry) return;
+    try {
+      await fetch(API + '/api/eidet/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memoryId: currentDetailEntry.id, wasUsed: true }),
+      });
+      showDetail(currentDetailEntry.id);
+    } catch (_) {}
+  };
+
+  window.__eidetFizzle = async function () {
+    if (!currentDetailEntry) return;
+    try {
+      await fetch(API + '/api/eidet/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memoryId: currentDetailEntry.id, wasUsed: false }),
+      });
+      showDetail(currentDetailEntry.id);
+    } catch (_) {}
+  };
+
+  window.__eidetForgetCurrent = async function () {
+    if (!currentDetailEntry) return;
+    if (!confirm('Forget this memory? This soft-deletes it with an audit trail.')) return;
+    try {
+      await fetch(API + '/api/eidet/' + encodeURIComponent(currentDetailEntry.id), { method: 'DELETE' });
+      currentDetailEntry = null;
+      document.getElementById('detailPanel').innerHTML = '<div class="detail-placeholder">Memory forgotten.</div>';
+      loadBrowser();
+    } catch (_) {}
+  };
+
+  window.__eidetRemoveLink = async function (targetRepoId, relation) {
+    if (!currentDetailEntry) return;
+    if (!confirm('Remove this link?')) return;
+    try {
+      await fetch(API + '/api/eidet/' + encodeURIComponent(currentDetailEntry.id) +
+        '/links?targetRepoId=' + encodeURIComponent(targetRepoId) +
+        '&relation=' + encodeURIComponent(relation), { method: 'DELETE' });
+      showDetail(currentDetailEntry.id);
+    } catch (_) {}
+  };
+
+  // ─── AI Enrichment ──────────────────────────────────────────────────
+
+  async function checkEnrichmentAvailable() {
+    try {
+      var data = await api('/api/status');
+      enrichmentAvailable = data.ollama && data.ollama.enabled && data.ollama.healthy;
+    } catch (_) {
+      enrichmentAvailable = false;
+    }
+  }
+
+  window.__eidetAiEnrich = async function (task) {
+    if (!currentDetailEntry) return;
+    var areaEl = document.getElementById('aiResultArea');
+    if (!areaEl) return;
+    areaEl.style.display = '';
+    areaEl.innerHTML = '<div class="ai-result" style="color:var(--text-muted)">Generating ' + escHtml(task) + '...</div>';
+
+    try {
+      var res = await fetch(API + '/api/eidet/enrich', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: currentDetailEntry.content, task: task }),
+      });
+      var data = await res.json();
+      if (res.ok && data.result) {
+        areaEl.innerHTML = '<div class="ai-result">' + escHtml(data.result) + '</div>' +
+          '<div class="ai-result-actions">' +
+          '<button class="btn btn-ai" onclick="window.__eidetApplyEnrichment(\'' + escAttr(task) + '\')">Apply to memory</button>' +
+          '</div>';
+      } else {
+        areaEl.innerHTML = '<div class="ai-result" style="color:var(--color-error)">' + escHtml(data.error || 'Failed') + '</div>';
+      }
+    } catch (e) {
+      areaEl.innerHTML = '<div class="ai-result" style="color:var(--color-error)">Error: ' + escHtml(e.message) + '</div>';
+    }
+  };
+
+  window.__eidetAiEnrichEdit = async function (task) {
+    var areaEl = document.getElementById('editAiResult');
+    if (!areaEl) return;
+    var content = document.getElementById('editContent').value.trim();
+    if (!content) return;
+    areaEl.style.display = '';
+    areaEl.innerHTML = '<div class="ai-result" style="color:var(--text-muted)">Generating ' + escHtml(task) + '...</div>';
+
+    try {
+      var res = await fetch(API + '/api/eidet/enrich', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: content, task: task }),
+      });
+      var data = await res.json();
+      if (res.ok && data.result) {
+        areaEl.innerHTML = '<div class="ai-result"><strong>' + escHtml(task) + ':</strong> ' + escHtml(data.result) + '</div>';
+      } else {
+        areaEl.innerHTML = '<div class="ai-result" style="color:var(--color-error)">' + escHtml(data.error || 'Failed') + '</div>';
+      }
+    } catch (e) {
+      areaEl.innerHTML = '<div class="ai-result" style="color:var(--color-error)">Error: ' + escHtml(e.message) + '</div>';
+    }
+  };
+
+  window.__eidetApplyEnrichment = async function (task) {
+    if (!currentDetailEntry) return;
+    var areaEl = document.getElementById('aiResultArea');
+    if (!areaEl) return;
+    var resultDiv = areaEl.querySelector('.ai-result');
+    if (!resultDiv) return;
+    var text = resultDiv.textContent;
+
+    // Map task to update field
+    var body = {};
+    if (task === 'oneliner') body.oneLiner = text;
+    else if (task === 'summary') body.summary = text;
+    else if (task === 'foresight') body.foresightHint = text;
+    else return;
+
+    try {
+      var res = await fetch(API + '/api/eidet/' + encodeURIComponent(currentDetailEntry.id), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        areaEl.innerHTML = '<div class="ai-result" style="color:var(--color-success)">Applied successfully.</div>';
+        setTimeout(function () { showDetail(currentDetailEntry.id); }, 500);
+      } else {
+        var data = await res.json();
+        areaEl.innerHTML = '<div class="ai-result" style="color:var(--color-error)">' + escHtml(data.error || 'Failed to apply') + '</div>';
+      }
+    } catch (e) {
+      areaEl.innerHTML = '<div class="ai-result" style="color:var(--color-error)">Error: ' + escHtml(e.message) + '</div>';
+    }
+  };
 
   // ─── Graph ───────────────────────────────────────────────────────
 
@@ -1249,6 +1666,7 @@
     }
 
     loadScheduledTasks();
+    loadRepoLinks();
   }
 
   async function loadScheduledTasks() {
@@ -1295,6 +1713,97 @@
       el.innerHTML = '<div class="empty-state">Could not load scheduled tasks</div>';
     }
   }
+
+  async function loadRepoLinks() {
+    var listEl = document.getElementById('repoLinksList');
+    var selectEl = document.getElementById('linkTargetRepo');
+    if (!listEl || !selectEl) return;
+
+    // Populate target repo dropdown (exclude current repo)
+    selectEl.innerHTML = '';
+    try {
+      var data = await api('/api/eidet/repos');
+      data.repos.forEach(function (r) {
+        if (r.repoId !== currentRepo) {
+          var opt = document.createElement('option');
+          opt.value = r.repoId;
+          opt.textContent = formatRepoDisplay(r.originalPath || r.repoId);
+          opt.title = r.originalPath || r.repoId;
+          selectEl.appendChild(opt);
+        }
+      });
+    } catch (_) {}
+
+    // Load existing links
+    if (!currentRepo) { listEl.innerHTML = ''; return; }
+    try {
+      var linksData = await api('/api/eidet/links?repo=' + encRepo());
+      if (!linksData.links || linksData.links.length === 0) {
+        listEl.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">No repo links yet.</div>';
+        return;
+      }
+      var html = '';
+      linksData.links.forEach(function (l) {
+        var tags = l.tags || [];
+        var relation = tags.find(function (t) { return t !== 'cross-repo-link'; }) || 'related';
+        var target = (l.content || '').replace('Cross-repo link: ' + relation + ' -> ', '');
+        html += '<div class="link-item">';
+        html += '<span class="link-relation">' + escHtml(relation) + '</span>';
+        html += '<span class="link-target">' + escHtml(target) + '</span>';
+        html += '<span class="link-remove" title="Forget this link" onclick="window.__eidetForgetLink(\'' + escAttr(l.id) + '\')">&times;</span>';
+        html += '</div>';
+      });
+      listEl.innerHTML = html;
+    } catch (_) {
+      listEl.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">Could not load links.</div>';
+    }
+  }
+
+  async function createRepoLink() {
+    var resultEl = document.getElementById('repoLinkResult');
+    var targetRepo = document.getElementById('linkTargetRepo').value;
+    var relation = document.getElementById('linkRelation').value;
+    if (!targetRepo || !currentRepo) {
+      resultEl.className = 'form-result error';
+      resultEl.textContent = 'Select a target repository.';
+      return;
+    }
+
+    resultEl.className = 'form-result';
+    resultEl.textContent = 'Creating link...';
+
+    try {
+      var res = await fetch(API + '/api/eidet/links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repo: repoPathMap[currentRepo] || currentRepo,
+          targetRepo: repoPathMap[targetRepo] || targetRepo,
+          relation: relation,
+        }),
+      });
+      var data = await res.json();
+      if (res.ok) {
+        resultEl.className = 'form-result success';
+        resultEl.textContent = 'Link created: ' + relation + ' -> ' + targetRepo;
+        loadRepoLinks();
+      } else {
+        resultEl.className = 'form-result error';
+        resultEl.textContent = data.error || 'Failed to create link';
+      }
+    } catch (e) {
+      resultEl.className = 'form-result error';
+      resultEl.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  window.__eidetForgetLink = async function (linkId) {
+    if (!confirm('Remove this repo link?')) return;
+    try {
+      await fetch(API + '/api/eidet/' + encodeURIComponent(linkId), { method: 'DELETE' });
+      loadRepoLinks();
+    } catch (_) {}
+  };
 
   function formatRelativeTime(isoDate) {
     if (!isoDate) return '--';

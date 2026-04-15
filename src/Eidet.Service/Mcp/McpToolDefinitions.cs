@@ -135,6 +135,19 @@ public static class McpToolDefinitions
                 Prop("path", "string", "Path to the .eidet pack file."),
             ], ["path"]),
         },
+        new()
+        {
+            Name = "eidet_edit",
+            Description = "Edit an existing memory. Can update content (creates new version), tags, importance, confidence, or type. Use for curating and correcting memories.",
+            InputSchema = Schema([
+                Prop("id", "string", "Memory ID to edit."),
+                PropOptional("content", "string", "New content (creates versioned update if changed)."),
+                PropOptional("tags", "array", "New tags (replaces existing).", items: "string"),
+                PropOptional("importance", "number", "New importance score 0.0-1.0."),
+                PropOptional("confidence", "number", "New confidence score 0.0-1.0."),
+                PropOptional("type", "string", "New type: observation, insight, procedure, heuristic."),
+            ], ["id"]),
+        },
     ];
 
     private static JsonObject Schema((string name, JsonObject prop)[] properties, string[] required)

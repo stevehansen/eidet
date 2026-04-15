@@ -79,6 +79,7 @@
           </select>
           <button id="searchBtn" class="btn btn-primary">Search</button>
           <button id="browseBtn" class="btn">Browse All</button>
+          <button id="createMemoryBtn" class="btn btn-create">+ New Memory</button>
         </div>
         <div class="browser-layout">
           <div class="memory-list" id="browserResults"></div>
@@ -87,6 +88,41 @@
           </div>
         </div>
         <div class="pagination" id="browserPagination"></div>
+        <!-- Create Memory Dialog -->
+        <div id="createMemoryDialog" class="modal-overlay" style="display:none">
+          <div class="modal-card">
+            <h3>Create Memory</h3>
+            <div class="form-group">
+              <label>Type</label>
+              <select id="newMemoryType" class="filter-select form-control">
+                <option value="observation">Observation</option>
+                <option value="insight">Insight</option>
+                <option value="procedure">Procedure</option>
+                <option value="heuristic">Heuristic</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Content</label>
+              <textarea id="newMemoryContent" class="form-control form-textarea" rows="5" placeholder="Memory content (20+ characters)..."></textarea>
+            </div>
+            <div class="form-group">
+              <label>Tags (comma-separated)</label>
+              <input type="text" id="newMemoryTags" class="form-control" placeholder="tag1, tag2, ...">
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="flex:1">
+                <label>Importance</label>
+                <input type="range" id="newMemoryImportance" min="0" max="100" value="50" class="form-range">
+                <span id="newMemoryImpLabel">50%</span>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button class="btn" id="cancelCreateMemory">Cancel</button>
+              <button class="btn btn-primary" id="confirmCreateMemory">Create</button>
+            </div>
+            <div id="createMemoryResult" class="form-result"></div>
+          </div>
+        </div>
       </section>
 
       <!-- Graph -->
@@ -160,6 +196,35 @@
       <!-- Settings -->
       <section id="page-settings" class="page">
         <h2>Settings</h2>
+        <div class="card">
+          <h3>Repo Links</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+            Link repositories together (e.g., "project X uses library Y"). These links enable cross-repo recall.
+          </p>
+          <div id="repoLinksList" class="link-list" style="margin-bottom:12px"></div>
+          <div class="repo-link-form">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+              <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
+                <label>Target Repository</label>
+                <select id="linkTargetRepo" class="filter-select form-control"></select>
+              </div>
+              <div class="form-group" style="min-width:140px;margin-bottom:0">
+                <label>Relationship</label>
+                <select id="linkRelation" class="filter-select form-control">
+                  <option value="depends-on">depends-on</option>
+                  <option value="uses-library">uses-library</option>
+                  <option value="supports">supports</option>
+                  <option value="related">related</option>
+                  <option value="conflicts">conflicts</option>
+                  <option value="forked-from">forked-from</option>
+                  <option value="refines">refines</option>
+                </select>
+              </div>
+              <button class="btn btn-primary" id="btnCreateRepoLink" style="margin-bottom:0">Link</button>
+            </div>
+          </div>
+          <div id="repoLinkResult" class="form-result" style="margin-top:8px"></div>
+        </div>
         <div class="card">
           <h3>Scheduled Tasks</h3>
           <div id="scheduledTasksList" class="scheduled-tasks"></div>
