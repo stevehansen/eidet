@@ -5,6 +5,7 @@ using Raven.Client.Documents.Indexes.Vector;
 using Raven.Client.Documents.Operations;
 using Raven.Client.Documents.Operations.ConnectionStrings;
 using Raven.Client.Documents.Operations.AI;
+using Raven.Client.Documents.Operations.Refresh;
 using Raven.Client.Exceptions;
 using Raven.Client.Exceptions.Database;
 using Raven.Client.ServerWide;
@@ -39,6 +40,24 @@ public static class DatabaseProvisioner
     public static void DeployIndexes(IDocumentStore store)
     {
         IndexCreation.CreateIndexes(typeof(Memories_Search).Assembly, store);
+    }
+
+    /// <summary>
+    /// Enables the RavenDB Refresh feature on the database. Required for
+    /// persisted scheduled tasks that use @refresh metadata to trigger at a future time.
+    /// Idempotent — safe to call on every startup.
+    /// </summary>
+    public static void EnsureRefreshEnabled(IDocumentStore store)
+    {
+        try
+        {
+            store.Maintenance.Send(new ConfigureRefreshOperation(
+                new RefreshConfiguration { Disabled = false }));
+        }
+        catch
+        {
+            // May fail on older RavenDB versions — scheduler will still work via polling fallback
+        }
     }
 
     public static string? EnsureEmbeddingsConfigured(IDocumentStore store)

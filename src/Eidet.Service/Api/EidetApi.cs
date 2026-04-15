@@ -35,6 +35,7 @@ public class EidetApiServer
     private readonly EidetConfig? _config;
     private readonly AuthConfig _auth;
     private readonly UsageTracker? _usage;
+    private readonly ScheduledTaskService? _scheduledTasks;
     private readonly HttpListener _listener;
     private readonly string _baseUrl;
     private readonly DateTime _startedAt = DateTime.UtcNow;
@@ -43,7 +44,7 @@ public class EidetApiServer
         MaintenanceService maintenance, ExportService export, string bindAddress, int port,
         LayerService? layers = null, McpServer? mcpServer = null, AuthConfig? auth = null,
         QualityService? quality = null, IEnrichmentService? enrichment = null, EidetConfig? config = null,
-        UsageTracker? usage = null)
+        UsageTracker? usage = null, ScheduledTaskService? scheduledTasks = null)
     {
         _svc = svc;
         _intake = intake;
@@ -57,6 +58,7 @@ public class EidetApiServer
         _config = config;
         _auth = auth ?? new AuthConfig();
         _usage = usage;
+        _scheduledTasks = scheduledTasks;
         _baseUrl = $"http://{bindAddress}:{port}/";
         _listener = new HttpListener();
         _listener.Prefixes.Add(_baseUrl);
@@ -209,6 +211,9 @@ public class EidetApiServer
 
             else if (method == "GET" && path == "/api/eidet/usage/hourly")
                 await HandleUsageHourly(ctx, ct);
+
+            else if (method == "GET" && path == "/api/eidet/scheduled-tasks")
+                await HandleScheduledTasks(ctx, ct);
 
             else if (method == "GET" && path == "/api/eidet/repos")
                 await HandleGetRepos(ctx, ct);
@@ -686,6 +691,18 @@ public class EidetApiServer
         await WriteJson(ctx, report);
     }
 
+    private async Task HandleScheduledTasks(HttpListenerContext ctx, CancellationToken ct)
+    {
+        if (_scheduledTasks is null)
+        {
+            await WriteJson(ctx, new { error = "Scheduler not available" }, 503);
+            return;
+        }
+
+        var tasks = await _scheduledTasks.GetTasksAsync(ct);
+        await WriteJson(ctx, new { tasks });
+    }
+
     private async Task HandleContextPreview(HttpListenerContext ctx, CancellationToken ct)
     {
         var repo = ctx.Request.QueryString["repo"];
@@ -827,8 +844,27 @@ public class EidetApiServer
         var ext = Path.GetExtension(filePath);
         ctx.Response.ContentType = MimeTypes.GetValueOrDefault(ext, "application/octet-stream");
         ctx.Response.StatusCode = 200;
-        ctx.Response.ContentLength64 = stream.Length;
-        await stream.CopyToAsync(ctx.Response.OutputStream);
+
+        // For index.html: replace __VERSION__ placeholder for cache busting
+        if (filePath == "index.html")
+        {
+            using var reader = new StreamReader(stream);
+            var html = await reader.ReadToEndAsync();
+            html = html.Replace("__VERSION__", Eidet.Core.EidetVersion.Current);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(html);
+            ctx.Response.ContentLength64 = bytes.Length;
+            await ctx.Response.OutputStream.WriteAsync(bytes);
+        }
+        else
+        {
+            // Static assets: cache for 1 year (cache busted by ?v=version in index.html)
+            if (ext is ".css" or ".js" or ".png" or ".svg")
+                ctx.Response.Headers.Add("Cache-Control", "public, max-age=31536000, immutable");
+
+            ctx.Response.ContentLength64 = stream.Length;
+            await stream.CopyToAsync(ctx.Response.OutputStream);
+        }
+
         ctx.Response.Close();
     }
 

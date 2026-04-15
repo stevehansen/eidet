@@ -38,8 +38,8 @@ public sealed class EidetWindowsService : BackgroundService
                 return;
             }
 
-            _host.StartScheduler();
-            _logger.LogInformation("Scheduler active (maintenance every {M}h, consolidation every {C}h)",
+            await _host.StartSchedulerAsync(stoppingToken);
+            _logger.LogInformation("Scheduler active (persisted — maintenance every {M}h, consolidation every {C}h)",
                 _host.MaintenanceIntervalHours, _host.ConsolidationIntervalHours);
 
             if (_host.OllamaEnabled)

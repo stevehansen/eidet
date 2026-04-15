@@ -129,8 +129,8 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         AnsiConsole.MarkupLine($"  Health:  http://{host.BindAddress}:{host.Port}/api/health");
         AnsiConsole.WriteLine();
 
-        host.StartScheduler();
-        AnsiConsole.MarkupLine($"  Scheduler: [green]Active[/] (maintenance every {host.MaintenanceIntervalHours}h, consolidation every {host.ConsolidationIntervalHours}h)");
+        await host.StartSchedulerAsync(cancellation);
+        AnsiConsole.MarkupLine($"  Scheduler: [green]Active[/] (persisted — maintenance every {host.MaintenanceIntervalHours}h, consolidation every {host.ConsolidationIntervalHours}h)");
 
         if (host.OllamaEnabled)
         {

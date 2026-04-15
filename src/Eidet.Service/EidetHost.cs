@@ -1,9 +1,9 @@
 using Eidet.Core.Configuration;
+using Eidet.Core.Domain;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Api;
 using Eidet.Service.Mcp;
-using Eidet.Service.Scheduler;
 using Raven.Client.Documents;
 
 namespace Eidet.Service;
@@ -16,7 +16,7 @@ public sealed class EidetHost : IDisposable
     private readonly IDocumentStore _store;
     private readonly IEidetStore _eidetStore;
     private readonly IEnrichmentService _enrichment;
-    private readonly MaintenanceScheduler _scheduler;
+    private readonly ScheduledTaskService _scheduler;
     private readonly EnrichmentWorker _enrichmentWorker;
     private readonly EidetApiServer _apiServer;
     private HealthMonitor? _healthMonitor;
@@ -36,7 +36,7 @@ public sealed class EidetHost : IDisposable
     public int HookCount { get; }
 
     private EidetHost(IDocumentStore store, IEidetStore eidetStore, IEnrichmentService enrichment,
-        MaintenanceScheduler scheduler, EnrichmentWorker enrichmentWorker,
+        ScheduledTaskService scheduler, EnrichmentWorker enrichmentWorker,
         EidetApiServer apiServer, EidetConfig config,
         string bind, int port)
     {
@@ -74,6 +74,7 @@ public sealed class EidetHost : IDisposable
 
         // Always deploy indexes on startup — idempotent, updates changed definitions
         DatabaseProvisioner.DeployIndexes(store);
+        DatabaseProvisioner.EnsureRefreshEnabled(store);
 
         var eidetStore = new RavenEidetStore(store);
 
@@ -96,10 +97,9 @@ public sealed class EidetHost : IDisposable
         var usageTracker = new UsageTracker(store);
         var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
             Directory.GetCurrentDirectory(), autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker);
+        var scheduler = new ScheduledTaskService(store, eidetStore, memorySvc, maintenanceSvc, consolidationSvc, config.Maintenance);
         var apiServer = new EidetApiServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
-            actualBind, actualPort, layerSvc, mcpServer, config.Auth, qualitySvc, enrichment, config, usageTracker);
-
-        var scheduler = new MaintenanceScheduler(eidetStore, memorySvc, maintenanceSvc, consolidationSvc, config.Maintenance);
+            actualBind, actualPort, layerSvc, mcpServer, config.Auth, qualitySvc, enrichment, config, usageTracker, scheduler);
         var enrichmentWorker = new EnrichmentWorker(store, enrichment);
 
         return new EidetHost(store, eidetStore, enrichment, scheduler, enrichmentWorker, apiServer, config, actualBind, actualPort);
@@ -120,7 +120,9 @@ public sealed class EidetHost : IDisposable
         return false;
     }
 
-    public void StartScheduler() => _scheduler.Start();
+    public Task StartSchedulerAsync(CancellationToken ct = default) => _scheduler.StartAsync(ct);
+
+    public Task<List<ScheduledTask>> GetScheduledTasksAsync(CancellationToken ct = default) => _scheduler.GetTasksAsync(ct);
 
     public Task StartEnrichmentWorkerAsync(CancellationToken ct) => _enrichmentWorker.StartAsync(ct);
 
