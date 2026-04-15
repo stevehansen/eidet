@@ -117,17 +117,20 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             AnsiConsole.MarkupLine("[bold]Updating...[/]");
 
         // Step 1: Stop the service
-        var serviceWasRunning = await StopServiceAsync(settings, cancellation);
+        await StopServiceAsync(settings, cancellation);
 
         // Step 2: Kill other eidet processes (mcp, etc.) that may hold file locks
-        var killed = KillOtherEidetProcesses(settings);
+        KillOtherEidetProcesses(settings);
+
+        // Always restart after update if a service is registered
+        var restartService = await IsServiceRegisteredAsync(cancellation);
 
         // Step 3: Run dotnet tool update
         var updateResult = await RunDotnetToolUpdateAsync(settings, cancellation);
 
         if (!updateResult.Success)
         {
-            if (serviceWasRunning)
+            if (restartService)
                 await StartServiceAsync(settings, cancellation);
 
             if (settings.Json)
@@ -151,7 +154,7 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         VersionHistory.Record(latestVersion, currentVersion, "dotnet-tool-update");
 
         // Step 5: Restart service
-        if (serviceWasRunning)
+        if (restartService)
             await StartServiceAsync(settings, cancellation);
 
         if (settings.Json)
@@ -162,13 +165,13 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
                 latest = latestVersion,
                 updated = true,
                 upToDate = true,
-                serviceRestarted = serviceWasRunning,
+                serviceRestarted = restartService,
             }, new JsonSerializerOptions { WriteIndented = true }));
         }
         else
         {
             AnsiConsole.MarkupLine($"[green]Updated to v{latestVersion}[/]");
-            if (serviceWasRunning)
+            if (restartService)
                 AnsiConsole.MarkupLine("  Service restarted.");
         }
 
@@ -186,17 +189,20 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             AnsiConsole.MarkupLine("[bold]Updating...[/]");
 
         // Step 1: Stop the scheduled task / service
-        var serviceWasRunning = await StopServiceAsync(settings, cancellation);
+        await StopServiceAsync(settings, cancellation);
 
         // Step 2: Kill all OTHER eidet processes (mcp, serve) — not ourselves
-        var killed = KillOtherEidetProcesses(settings);
+        KillOtherEidetProcesses(settings);
+
+        // Always restart after update — the service should be running
+        var restartService = await IsServiceRegisteredAsync(cancellation);
 
         // Step 3: Record version history now (before we exit — the new binary may have
         // a different version constant, but the history file is just JSON on disk)
         VersionHistory.Record(latestVersion, currentVersion, "dotnet-tool-update");
 
         // Step 4: Generate and launch the trampoline script
-        var scriptPath = GenerateWindowsTrampolineScript(currentVersion, latestVersion, serviceWasRunning);
+        var scriptPath = GenerateWindowsTrampolineScript(currentVersion, latestVersion, restartService);
 
         if (!settings.Json)
         {
@@ -213,7 +219,7 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
                 current = currentVersion,
                 latest = latestVersion,
                 trampolineScript = scriptPath,
-                serviceWillRestart = serviceWasRunning,
+                serviceWillRestart = restartService,
             }, new JsonSerializerOptions { WriteIndented = true }));
         }
         else
@@ -316,6 +322,28 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Check whether any service manager (scheduled task / launchd / systemd) is configured.
+    /// </summary>
+    private static async Task<bool> IsServiceRegisteredAsync(CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows())
+            return await IsScheduledTaskRegisteredAsync(ct);
+
+        if (OperatingSystem.IsMacOS())
+        {
+            var plistPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Library", "LaunchAgents", "dev.eidet.service.plist");
+            return File.Exists(plistPath);
+        }
+
+        var unitPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".config", "systemd", "user", "eidet.service");
+        return File.Exists(unitPath);
     }
 
     private static async Task<bool> StopServiceAsync(Settings settings, CancellationToken ct)
