@@ -465,7 +465,13 @@ public class MemoryService
             Type = e.Type,
             Label = e.OneLiner ?? e.Summary ?? StringUtils.Truncate(e.Content, 60),
             Importance = e.Importance,
+            Confidence = e.Confidence,
+            CreatedAt = e.CreatedAt,
+            AccessCount = e.AccessCount,
+            EchoCount = e.EchoCount,
+            FizzleCount = e.FizzleCount,
             Tags = e.Tags,
+            Entities = e.Entities,
         }).ToList();
 
         var idSet = new HashSet<string>(entries.Select(e => e.Id), StringComparer.OrdinalIgnoreCase);

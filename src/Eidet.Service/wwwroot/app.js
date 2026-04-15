@@ -67,6 +67,7 @@
     document.getElementById('graphLimit').addEventListener('input', function () {
       document.getElementById('graphLimitLabel').textContent = this.value;
     });
+    setupGraphEventListeners();
 
     document.getElementById('btnIntake').addEventListener('click', function () { runAction('intake'); });
     document.getElementById('btnConsolidate').addEventListener('click', function () { runAction('consolidate'); });
@@ -378,32 +379,21 @@
   // ─── Graph ───────────────────────────────────────────────────────
 
   var graphSim = null;
-
-  async function loadGraph() {
-    if (!currentRepo) return;
-    var canvas = document.getElementById('graphCanvas');
-    var ctx = canvas.getContext('2d');
-    var container = canvas.parentElement;
-    canvas.width = container.clientWidth;
-    canvas.height = 500;
-
-    ctx.fillStyle = '#22263a';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#5a5e72';
-    ctx.textAlign = 'center';
-    ctx.fillText('Loading graph...', canvas.width / 2, canvas.height / 2);
-
-    try {
-      var limit = parseInt(document.getElementById('graphLimit').value) || 100;
-      var data = await api('/api/eidet/graph?repo=' + encRepo() + '&limit=' + limit);
-      runForceGraph(canvas, data);
-    } catch (_) {
-      ctx.fillStyle = '#22263a';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#5a5e72';
-      ctx.fillText('Could not load graph data', canvas.width / 2, canvas.height / 2);
-    }
-  }
+  var graphState = {
+    nodes: [], edges: [], allNodes: [], allEdges: [],
+    nodeMap: {},
+    selectedNode: null, hoveredNode: null, dragging: null,
+    // Camera (pan + zoom)
+    camX: 0, camY: 0, zoom: 1,
+    isPanning: false, panStartX: 0, panStartY: 0, camStartX: 0, camStartY: 0,
+    mouseX: 0, mouseY: 0,
+    alpha: 1,
+    // Adjacency for highlighting
+    adjacency: {},    // nodeId -> Set<nodeId>
+    edgeByPair: {},   // "from|to" -> edge
+    // Type filters
+    typeFilters: { observation: true, insight: true, procedure: true, heuristic: true }
+  };
 
   var typeColors = {
     observation: '#5b9cf6',
@@ -412,73 +402,291 @@
     heuristic: '#f0a54a'
   };
 
-  function runForceGraph(canvas, data) {
+  var typeColorsDim = {
+    observation: 'rgba(91,156,246,0.2)',
+    insight: 'rgba(168,124,255,0.2)',
+    procedure: 'rgba(78,203,141,0.2)',
+    heuristic: 'rgba(240,165,74,0.2)'
+  };
+
+  async function loadGraph() {
+    if (!currentRepo) return;
+    var canvas = document.getElementById('graphCanvas');
     var ctx = canvas.getContext('2d');
+    var wrap = canvas.parentElement;
+    canvas.width = wrap.clientWidth;
+    canvas.height = wrap.clientHeight || 600;
+
+    ctx.fillStyle = '#0f1117';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#5a5e72';
+    ctx.font = '14px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Loading graph...', canvas.width / 2, canvas.height / 2);
+
+    try {
+      var limit = parseInt(document.getElementById('graphLimit').value) || 100;
+      var data = await api('/api/eidet/graph?repo=' + encRepo() + '&limit=' + limit);
+      setupGraph(canvas, data);
+    } catch (_) {
+      ctx.fillStyle = '#0f1117';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#5a5e72';
+      ctx.fillText('Could not load graph data', canvas.width / 2, canvas.height / 2);
+    }
+  }
+
+  function setupGraphEventListeners() {
+    // Type filter checkboxes
+    document.querySelectorAll('[data-graph-type]').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        graphState.typeFilters[this.dataset.graphType] = this.checked;
+        applyGraphFilters();
+      });
+    });
+    document.getElementById('graphZoomIn').addEventListener('click', function () {
+      graphState.zoom = Math.min(5, graphState.zoom * 1.3);
+      graphState.alpha = Math.max(graphState.alpha, 0.02);
+      requestAnimationFrame(graphTick);
+    });
+    document.getElementById('graphZoomOut').addEventListener('click', function () {
+      graphState.zoom = Math.max(0.1, graphState.zoom / 1.3);
+      graphState.alpha = Math.max(graphState.alpha, 0.02);
+      requestAnimationFrame(graphTick);
+    });
+    document.getElementById('graphZoomReset').addEventListener('click', function () {
+      graphState.zoom = 1;
+      graphState.camX = 0;
+      graphState.camY = 0;
+      graphState.alpha = Math.max(graphState.alpha, 0.02);
+      requestAnimationFrame(graphTick);
+    });
+  }
+
+  function applyGraphFilters() {
+    var g = graphState;
+    g.nodes = g.allNodes.filter(function (n) { return g.typeFilters[n.type]; });
+    var visibleIds = {};
+    g.nodes.forEach(function (n) { visibleIds[n.id] = true; });
+    g.edges = g.allEdges.filter(function (e) { return visibleIds[e.from] && visibleIds[e.to]; });
+    g.nodeMap = {};
+    g.nodes.forEach(function (n) { g.nodeMap[n.id] = n; });
+    buildAdjacency();
+    // If selected node was filtered out, deselect
+    if (g.selectedNode && !visibleIds[g.selectedNode.id]) {
+      g.selectedNode = null;
+      showGraphDetail(null);
+    }
+    g.alpha = Math.max(g.alpha, 0.5);
+    requestAnimationFrame(graphTick);
+  }
+
+  function buildAdjacency() {
+    var g = graphState;
+    g.adjacency = {};
+    g.edgeByPair = {};
+    g.nodes.forEach(function (n) { g.adjacency[n.id] = new Set(); });
+    g.edges.forEach(function (e) {
+      if (g.adjacency[e.from]) g.adjacency[e.from].add(e.to);
+      if (g.adjacency[e.to]) g.adjacency[e.to].add(e.from);
+      g.edgeByPair[e.from + '|' + e.to] = e;
+      g.edgeByPair[e.to + '|' + e.from] = e;
+    });
+  }
+
+  function nodeRadius(n) { return 6 + n.importance * 14; }
+
+  function screenToWorld(sx, sy, canvas) {
+    var g = graphState;
+    var cx = canvas.width / 2;
+    var cy = canvas.height / 2;
+    return {
+      x: (sx - cx) / g.zoom + cx - g.camX,
+      y: (sy - cy) / g.zoom + cy - g.camY
+    };
+  }
+
+  function worldToScreen(wx, wy, canvas) {
+    var g = graphState;
+    var cx = canvas.width / 2;
+    var cy = canvas.height / 2;
+    return {
+      x: (wx - cx + g.camX) * g.zoom + cx,
+      y: (wy - cy + g.camY) * g.zoom + cy
+    };
+  }
+
+  function hitTestNode(worldX, worldY) {
+    var g = graphState;
+    for (var i = g.nodes.length - 1; i >= 0; i--) {
+      var n = g.nodes[i];
+      var dx = n.x - worldX, dy = n.y - worldY;
+      var r = nodeRadius(n) + 4; // small click padding
+      if (dx * dx + dy * dy < r * r) return n;
+    }
+    return null;
+  }
+
+  function setupGraph(canvas, data) {
+    var ctx = canvas.getContext('2d');
+    var g = graphState;
     var W = canvas.width;
     var H = canvas.height;
-    var nodes = data.nodes.map(function (n, i) {
+
+    // Build node data with physics
+    g.allNodes = data.nodes.map(function (n) {
       return {
-        id: n.id, type: n.type, label: n.label, importance: n.importance,
-        x: W / 2 + (Math.random() - 0.5) * W * 0.6,
-        y: H / 2 + (Math.random() - 0.5) * H * 0.6,
+        id: n.id, type: n.type, label: n.label,
+        importance: n.importance, confidence: n.confidence,
+        createdAt: n.createdAt, accessCount: n.accessCount,
+        echoCount: n.echoCount, fizzleCount: n.fizzleCount,
+        tags: n.tags || [], entities: n.entities || [],
+        x: W / 2 + (Math.random() - 0.5) * W * 0.5,
+        y: H / 2 + (Math.random() - 0.5) * H * 0.5,
         vx: 0, vy: 0
       };
     });
-    var nodeMap = {};
-    nodes.forEach(function (n) { nodeMap[n.id] = n; });
-    var edges = data.edges.filter(function (e) { return nodeMap[e.from] && nodeMap[e.to]; });
+    g.allEdges = data.edges.slice();
+    g.selectedNode = null;
+    g.hoveredNode = null;
+    g.dragging = null;
+    g.alpha = 1;
+    g.camX = 0; g.camY = 0; g.zoom = 1;
+
+    applyGraphFilters();
 
     if (graphSim) cancelAnimationFrame(graphSim);
 
-    var dragging = null;
-    var mouseX = 0, mouseY = 0;
-    var hoveredNode = null;
-
+    // ─── Mouse events ─────────────────────────────────────────
     canvas.onmousedown = function (e) {
       var rect = canvas.getBoundingClientRect();
-      var x = e.clientX - rect.left;
-      var y = e.clientY - rect.top;
-      for (var i = 0; i < nodes.length; i++) {
-        var n = nodes[i];
-        var dx = n.x - x, dy = n.y - y;
-        if (dx * dx + dy * dy < 200) { dragging = n; break; }
+      var sx = e.clientX - rect.left;
+      var sy = e.clientY - rect.top;
+      var world = screenToWorld(sx, sy, canvas);
+      var hit = hitTestNode(world.x, world.y);
+      if (hit) {
+        g.dragging = hit;
+      } else {
+        // Start panning
+        g.isPanning = true;
+        g.panStartX = sx;
+        g.panStartY = sy;
+        g.camStartX = g.camX;
+        g.camStartY = g.camY;
       }
     };
+
     canvas.onmousemove = function (e) {
       var rect = canvas.getBoundingClientRect();
-      mouseX = e.clientX - rect.left;
-      mouseY = e.clientY - rect.top;
-      if (dragging) { dragging.x = mouseX; dragging.y = mouseY; dragging.vx = 0; dragging.vy = 0; }
-      hoveredNode = null;
-      for (var i = 0; i < nodes.length; i++) {
-        var n = nodes[i];
-        var dx = n.x - mouseX, dy = n.y - mouseY;
-        if (dx * dx + dy * dy < 200) { hoveredNode = n; break; }
-      }
-      canvas.style.cursor = hoveredNode ? 'pointer' : 'default';
-    };
-    canvas.onmouseup = function () { dragging = null; };
+      var sx = e.clientX - rect.left;
+      var sy = e.clientY - rect.top;
+      g.mouseX = sx;
+      g.mouseY = sy;
 
-    var alpha = 1;
-    function tick() {
-      alpha *= 0.995;
+      if (g.isPanning) {
+        g.camX = g.camStartX + (sx - g.panStartX) / g.zoom;
+        g.camY = g.camStartY + (sy - g.panStartY) / g.zoom;
+        g.alpha = Math.max(g.alpha, 0.02);
+        requestAnimationFrame(graphTick);
+        return;
+      }
+
+      if (g.dragging) {
+        var world = screenToWorld(sx, sy, canvas);
+        g.dragging.x = world.x;
+        g.dragging.y = world.y;
+        g.dragging.vx = 0;
+        g.dragging.vy = 0;
+        g.alpha = Math.max(g.alpha, 0.1);
+        requestAnimationFrame(graphTick);
+        return;
+      }
+
+      var world = screenToWorld(sx, sy, canvas);
+      var prev = g.hoveredNode;
+      g.hoveredNode = hitTestNode(world.x, world.y);
+      canvas.style.cursor = g.hoveredNode ? 'pointer' : (g.isPanning ? 'grabbing' : 'grab');
+      if (g.hoveredNode !== prev) {
+        g.alpha = Math.max(g.alpha, 0.02);
+        requestAnimationFrame(graphTick);
+      }
+    };
+
+    canvas.onmouseup = function (e) {
+      if (g.isPanning) {
+        g.isPanning = false;
+        canvas.style.cursor = 'grab';
+      }
+      if (g.dragging) {
+        // If barely moved, treat as click
+        var rect = canvas.getBoundingClientRect();
+        var sx = e.clientX - rect.left;
+        var sy = e.clientY - rect.top;
+        var world = screenToWorld(sx, sy, canvas);
+        var hit = hitTestNode(world.x, world.y);
+        if (hit && hit === g.dragging) {
+          g.selectedNode = (g.selectedNode === hit) ? null : hit;
+          showGraphDetail(g.selectedNode);
+          g.alpha = Math.max(g.alpha, 0.02);
+          requestAnimationFrame(graphTick);
+        }
+        g.dragging = null;
+      }
+    };
+
+    canvas.onmouseleave = function () {
+      g.dragging = null;
+      g.isPanning = false;
+      if (g.hoveredNode) {
+        g.hoveredNode = null;
+        g.alpha = Math.max(g.alpha, 0.02);
+        requestAnimationFrame(graphTick);
+      }
+    };
+
+    canvas.onwheel = function (e) {
+      e.preventDefault();
+      var factor = e.deltaY < 0 ? 1.1 : 0.9;
+      g.zoom = Math.max(0.1, Math.min(5, g.zoom * factor));
+      g.alpha = Math.max(g.alpha, 0.02);
+      requestAnimationFrame(graphTick);
+    };
+
+    showGraphDetail(null);
+    graphTick();
+  }
+
+  function graphTick() {
+    var g = graphState;
+    var canvas = document.getElementById('graphCanvas');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var W = canvas.width;
+    var H = canvas.height;
+    var nodes = g.nodes;
+    var edges = g.edges;
+
+    if (g.alpha > 0.01) {
+      g.alpha *= 0.995;
 
       // Center gravity
+      var cx = W / 2, cy = H / 2;
       nodes.forEach(function (n) {
-        n.vx += (W / 2 - n.x) * 0.0005;
-        n.vy += (H / 2 - n.y) * 0.0005;
+        n.vx += (cx - n.x) * 0.0003;
+        n.vy += (cy - n.y) * 0.0003;
       });
 
-      // Node repulsion
+      // Node repulsion (Barnes-Hut approximation for large graphs: skip distant pairs)
       for (var i = 0; i < nodes.length; i++) {
         for (var j = i + 1; j < nodes.length; j++) {
           var a = nodes[i], b = nodes[j];
           var dx = b.x - a.x;
           var dy = b.y - a.y;
           var dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          var force = -300 / (dist * dist);
-          var fx = dx / dist * force * alpha;
-          var fy = dy / dist * force * alpha;
+          if (dist > 600) continue; // skip very distant nodes
+          var repulsion = -400 / (dist * dist);
+          var fx = dx / dist * repulsion * g.alpha;
+          var fy = dy / dist * repulsion * g.alpha;
           a.vx -= fx; a.vy -= fy;
           b.vx += fx; b.vy += fy;
         }
@@ -486,11 +694,13 @@
 
       // Edge attraction
       edges.forEach(function (e) {
-        var a = nodeMap[e.from], b = nodeMap[e.to];
+        var a = g.nodeMap[e.from], b = g.nodeMap[e.to];
+        if (!a || !b) return;
         var dx = b.x - a.x;
         var dy = b.y - a.y;
         var dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        var force = (dist - 80) * 0.01 * alpha;
+        var targetLen = 100 + (nodeRadius(a) + nodeRadius(b));
+        var force = (dist - targetLen) * 0.008 * g.alpha;
         var fx = dx / dist * force;
         var fy = dy / dist * force;
         a.vx += fx; a.vy += fy;
@@ -499,66 +709,317 @@
 
       // Apply velocity
       nodes.forEach(function (n) {
-        if (n === dragging) return;
-        n.vx *= 0.85; n.vy *= 0.85;
+        if (n === g.dragging) return;
+        n.vx *= 0.82;
+        n.vy *= 0.82;
         n.x += n.vx;
         n.y += n.vy;
-        n.x = Math.max(20, Math.min(W - 20, n.x));
-        n.y = Math.max(20, Math.min(H - 20, n.y));
       });
-
-      // Draw
-      ctx.fillStyle = '#22263a';
-      ctx.fillRect(0, 0, W, H);
-
-      // Edges
-      ctx.strokeStyle = 'rgba(108,140,255,0.15)';
-      ctx.lineWidth = 1;
-      edges.forEach(function (e) {
-        var a = nodeMap[e.from], b = nodeMap[e.to];
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-      });
-
-      // Nodes
-      nodes.forEach(function (n) {
-        var r = 4 + n.importance * 8;
-        var color = typeColors[n.type] || '#5a5e72';
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.fill();
-
-        if (n === hoveredNode) {
-          ctx.strokeStyle = '#fff';
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-      });
-
-      // Tooltip for hovered node
-      if (hoveredNode) {
-        var text = hoveredNode.label;
-        ctx.font = '12px -apple-system, system-ui, sans-serif';
-        var tw = ctx.measureText(text).width;
-        var tx = hoveredNode.x - tw / 2;
-        var ty = hoveredNode.y - 20;
-        ctx.fillStyle = 'rgba(15,17,23,0.9)';
-        ctx.fillRect(tx - 6, ty - 14, tw + 12, 20);
-        ctx.fillStyle = '#e4e6ed';
-        ctx.textAlign = 'left';
-        ctx.fillText(text, tx, ty);
-        ctx.textAlign = 'center';
-      }
-
-      if (alpha > 0.01) {
-        graphSim = requestAnimationFrame(tick);
-      }
     }
 
-    tick();
+    // ─── Render ────────────────────────────────────────────────
+
+    ctx.save();
+    ctx.fillStyle = '#0f1117';
+    ctx.fillRect(0, 0, W, H);
+
+    // Apply camera transform
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(g.zoom, g.zoom);
+    ctx.translate(-W / 2 + g.camX, -H / 2 + g.camY);
+
+    var focusNode = g.selectedNode || g.hoveredNode;
+    var neighborIds = null;
+    if (focusNode && g.adjacency[focusNode.id]) {
+      neighborIds = g.adjacency[focusNode.id];
+    }
+
+    // ─── Edges ─────────────────────────────────────────────
+    edges.forEach(function (e) {
+      var a = g.nodeMap[e.from], b = g.nodeMap[e.to];
+      if (!a || !b) return;
+
+      var isHighlighted = focusNode && (
+        e.from === focusNode.id || e.to === focusNode.id
+      );
+      var isDimmed = focusNode && !isHighlighted;
+
+      if (isDimmed) {
+        ctx.strokeStyle = 'rgba(108,140,255,0.04)';
+        ctx.lineWidth = 0.5;
+      } else if (isHighlighted) {
+        ctx.strokeStyle = 'rgba(108,140,255,0.7)';
+        ctx.lineWidth = 2;
+      } else {
+        ctx.strokeStyle = 'rgba(108,140,255,0.2)';
+        ctx.lineWidth = 1;
+      }
+
+      // Draw edge line
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+
+      // Draw arrow at 70% along edge (towards 'to' node)
+      if (isHighlighted || !focusNode) {
+        var mx = a.x + (b.x - a.x) * 0.7;
+        var my = a.y + (b.y - a.y) * 0.7;
+        var angle = Math.atan2(b.y - a.y, b.x - a.x);
+        var arrowLen = isHighlighted ? 8 : 5;
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.beginPath();
+        ctx.moveTo(mx + Math.cos(angle) * arrowLen, my + Math.sin(angle) * arrowLen);
+        ctx.lineTo(mx + Math.cos(angle + 2.5) * arrowLen, my + Math.sin(angle + 2.5) * arrowLen);
+        ctx.lineTo(mx + Math.cos(angle - 2.5) * arrowLen, my + Math.sin(angle - 2.5) * arrowLen);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // Edge label (relation) for highlighted edges
+      if (isHighlighted && e.relation && g.zoom > 0.5) {
+        var lx = (a.x + b.x) / 2;
+        var ly = (a.y + b.y) / 2;
+        ctx.font = (10 / Math.max(g.zoom, 0.5)) + 'px -apple-system, system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(108,140,255,0.8)';
+        ctx.textAlign = 'center';
+        ctx.fillText(e.relation, lx, ly - 6);
+      }
+    });
+
+    // ─── Nodes ─────────────────────────────────────────────
+    nodes.forEach(function (n) {
+      var r = nodeRadius(n);
+      var baseColor = typeColors[n.type] || '#5a5e72';
+      var dimColor = typeColorsDim[n.type] || 'rgba(90,94,114,0.2)';
+
+      var isSelected = n === g.selectedNode;
+      var isHovered = n === g.hoveredNode;
+      var isNeighbor = focusNode && neighborIds && neighborIds.has(n.id);
+      var isFocus = n === focusNode;
+      var isDimmed = focusNode && !isFocus && !isNeighbor;
+
+      // Confidence affects opacity
+      var baseAlpha = 0.4 + n.confidence * 0.6;
+      var alpha = isDimmed ? 0.12 : baseAlpha;
+
+      // Draw glow for selected/hovered
+      if (isSelected || isHovered) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 8, 0, Math.PI * 2);
+        var grad = ctx.createRadialGradient(n.x, n.y, r, n.x, n.y, r + 8);
+        grad.addColorStop(0, baseColor.replace(')', ',0.3)').replace('rgb', 'rgba'));
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grad;
+        ctx.fill();
+      }
+
+      // Main node circle
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = isDimmed ? dimColor : colorWithAlpha(baseColor, alpha);
+      ctx.fill();
+
+      // Echo ring — golden ring for high echo count
+      if (n.echoCount >= 3 && !isDimmed) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 2, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(240,165,74,' + Math.min(1, 0.3 + n.echoCount * 0.1) + ')';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      // Selection/hover ring
+      if (isSelected) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 4, 0, Math.PI * 2);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+      } else if (isHovered) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 3, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
+      // Node label — show for important or zoomed-in nodes
+      var showLabel = (!isDimmed) && (
+        isFocus || isNeighbor || isSelected || isHovered ||
+        n.importance >= 0.7 ||
+        g.zoom >= 1.5 ||
+        (g.zoom >= 0.8 && nodes.length < 40)
+      );
+      if (showLabel) {
+        var labelText = truncate(n.label, 40);
+        var fontSize = Math.max(9, Math.min(13, 11 / Math.max(g.zoom, 0.5)));
+        ctx.font = fontSize + 'px -apple-system, system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = isDimmed ? 'rgba(228,230,237,0.15)' : 'rgba(228,230,237,0.9)';
+        ctx.fillText(labelText, n.x, n.y + r + fontSize + 2);
+      }
+    });
+
+    ctx.restore(); // undo camera transform
+
+    // ─── Tooltip (screen-space) for hovered node ─────────
+    if (g.hoveredNode && !g.dragging) {
+      var hn = g.hoveredNode;
+      var sp = worldToScreen(hn.x, hn.y, canvas);
+      var tooltipLines = [hn.label];
+      tooltipLines.push(hn.type + ' | imp: ' + (hn.importance * 100).toFixed(0) + '% | conf: ' + (hn.confidence * 100).toFixed(0) + '%');
+      if (hn.tags.length > 0) tooltipLines.push(hn.tags.slice(0, 5).join(', '));
+      if (hn.echoCount > 0 || hn.fizzleCount > 0) tooltipLines.push('echo: ' + hn.echoCount + ' | fizzle: ' + hn.fizzleCount);
+
+      ctx.font = '12px -apple-system, system-ui, sans-serif';
+      var maxW = 0;
+      tooltipLines.forEach(function (l) { maxW = Math.max(maxW, ctx.measureText(l).width); });
+      var ttW = maxW + 16;
+      var ttH = tooltipLines.length * 18 + 12;
+      var ttX = Math.min(sp.x - ttW / 2, W - ttW - 8);
+      ttX = Math.max(8, ttX);
+      var ttY = sp.y - nodeRadius(hn) * g.zoom - ttH - 8;
+      if (ttY < 8) ttY = sp.y + nodeRadius(hn) * g.zoom + 8;
+
+      // Background
+      ctx.fillStyle = 'rgba(15,17,23,0.95)';
+      ctx.strokeStyle = 'rgba(108,140,255,0.3)';
+      ctx.lineWidth = 1;
+      roundRect(ctx, ttX, ttY, ttW, ttH, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      // Text
+      ctx.textAlign = 'left';
+      tooltipLines.forEach(function (line, idx) {
+        ctx.fillStyle = idx === 0 ? '#e4e6ed' : '#8b8fa3';
+        ctx.font = idx === 0 ? 'bold 12px -apple-system, system-ui, sans-serif' : '11px -apple-system, system-ui, sans-serif';
+        ctx.fillText(line, ttX + 8, ttY + 16 + idx * 18);
+      });
+    }
+
+    // Schedule next frame if still simulating
+    if (g.alpha > 0.01) {
+      graphSim = requestAnimationFrame(graphTick);
+    }
+  }
+
+  function showGraphDetail(node) {
+    var panel = document.getElementById('graphDetailPanel');
+    if (!panel) return;
+    if (!node) {
+      panel.innerHTML = '<div class="graph-detail-placeholder">Click a node to view details</div>';
+      return;
+    }
+
+    var color = typeColors[node.type] || '#5a5e72';
+    var g = graphState;
+    var neighbors = g.adjacency[node.id] ? Array.from(g.adjacency[node.id]) : [];
+    var neighborNodes = neighbors.map(function (id) { return g.nodeMap[id]; }).filter(Boolean);
+    var dateStr = node.createdAt ? formatDate(node.createdAt) : '--';
+    var age = node.createdAt ? daysSince(node.createdAt) : '--';
+
+    var html = '';
+    html += '<div class="gd-type-badge" style="background:' + color + '20;color:' + color + '">' + node.type + '</div>';
+    html += '<div class="gd-label">' + escHtml(node.label) + '</div>';
+
+    // Metrics row
+    html += '<div class="gd-metrics">';
+    html += '<div class="gd-metric"><span class="gd-metric-val">' + (node.importance * 100).toFixed(0) + '%</span><span class="gd-metric-lbl">Importance</span></div>';
+    html += '<div class="gd-metric"><span class="gd-metric-val">' + (node.confidence * 100).toFixed(0) + '%</span><span class="gd-metric-lbl">Confidence</span></div>';
+    html += '<div class="gd-metric"><span class="gd-metric-val">' + node.accessCount + '</span><span class="gd-metric-lbl">Accessed</span></div>';
+    html += '</div>';
+
+    // Echo / Fizzle
+    html += '<div class="gd-metrics">';
+    html += '<div class="gd-metric"><span class="gd-metric-val" style="color:#4ecb8d">' + node.echoCount + '</span><span class="gd-metric-lbl">Echoes</span></div>';
+    html += '<div class="gd-metric"><span class="gd-metric-val" style="color:#f06b6b">' + node.fizzleCount + '</span><span class="gd-metric-lbl">Fizzles</span></div>';
+    html += '<div class="gd-metric"><span class="gd-metric-val">' + age + 'd</span><span class="gd-metric-lbl">Age</span></div>';
+    html += '</div>';
+
+    // Date
+    html += '<div class="gd-section"><span class="gd-section-lbl">Created</span><span>' + dateStr + '</span></div>';
+
+    // Tags
+    if (node.tags.length > 0) {
+      html += '<div class="gd-section"><span class="gd-section-lbl">Tags</span><div class="gd-tags">';
+      node.tags.forEach(function (t) { html += '<span class="tag">' + escHtml(t) + '</span>'; });
+      html += '</div></div>';
+    }
+
+    // Entities
+    if (node.entities.length > 0) {
+      html += '<div class="gd-section"><span class="gd-section-lbl">Entities</span><div class="gd-tags">';
+      node.entities.forEach(function (e) { html += '<span class="tag gd-entity-tag">' + escHtml(e) + '</span>'; });
+      html += '</div></div>';
+    }
+
+    // Connections
+    if (neighborNodes.length > 0) {
+      html += '<div class="gd-section"><span class="gd-section-lbl">Connections (' + neighborNodes.length + ')</span>';
+      html += '<div class="gd-connections">';
+      neighborNodes.forEach(function (nn) {
+        var nc = typeColors[nn.type] || '#5a5e72';
+        var edge = g.edgeByPair[node.id + '|' + nn.id] || g.edgeByPair[nn.id + '|' + node.id];
+        var rel = edge ? edge.relation : '';
+        html += '<div class="gd-conn-item" data-node-id="' + escAttr(nn.id) + '">';
+        html += '<span class="gd-conn-dot" style="background:' + nc + '"></span>';
+        html += '<span class="gd-conn-label">' + escHtml(truncate(nn.label, 35)) + '</span>';
+        if (rel) html += '<span class="gd-conn-rel">' + escHtml(rel) + '</span>';
+        html += '</div>';
+      });
+      html += '</div></div>';
+    }
+
+    // ID
+    html += '<div class="gd-section gd-id"><span class="gd-section-lbl">ID</span><span>' + escHtml(node.id) + '</span></div>';
+
+    panel.innerHTML = html;
+
+    // Click on connection item to select that node
+    panel.querySelectorAll('.gd-conn-item').forEach(function (item) {
+      item.addEventListener('click', function () {
+        var targetId = this.dataset.nodeId;
+        var targetNode = g.nodeMap[targetId];
+        if (targetNode) {
+          g.selectedNode = targetNode;
+          showGraphDetail(targetNode);
+          g.alpha = Math.max(g.alpha, 0.02);
+          requestAnimationFrame(graphTick);
+        }
+      });
+    });
+  }
+
+  function colorWithAlpha(hex, a) {
+    // Convert hex like #5b9cf6 to rgba
+    var r = parseInt(hex.slice(1, 3), 16);
+    var g = parseInt(hex.slice(3, 5), 16);
+    var b = parseInt(hex.slice(5, 7), 16);
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  function daysSince(isoDate) {
+    try {
+      var d = new Date(isoDate);
+      var now = new Date();
+      return Math.floor((now - d) / (1000 * 60 * 60 * 24));
+    } catch (_) { return 0; }
   }
 
   // ─── Timeline ────────────────────────────────────────────────────
@@ -785,6 +1246,78 @@
       list.innerHTML = rows;
     } catch (_) {
       list.innerHTML = '<div class="empty-state">Could not load settings</div>';
+    }
+
+    loadScheduledTasks();
+  }
+
+  async function loadScheduledTasks() {
+    var el = document.getElementById('scheduledTasksList');
+    if (!el) return;
+    el.innerHTML = '<div class="loading">Loading scheduled tasks...</div>';
+
+    try {
+      var data = await api('/api/eidet/scheduled-tasks');
+      if (!data.tasks || data.tasks.length === 0) {
+        el.innerHTML = '<div class="empty-state">No scheduled tasks</div>';
+        return;
+      }
+
+      var html = '';
+      data.tasks.forEach(function (t) {
+        var statusClass = 'st-' + (t.status || 'pending');
+        var statusLabel = t.status || 'pending';
+        var nextRun = t.nextRunAt ? formatRelativeTime(t.nextRunAt) : '--';
+        var lastRun = t.lastRunAt ? formatRelativeTime(t.lastRunAt) : 'never';
+        var lastDuration = t.lastDurationMs != null ? (t.lastDurationMs / 1000).toFixed(1) + 's' : '--';
+
+        html += '<div class="st-card">';
+        html += '<div class="st-header">';
+        html += '<span class="st-name">' + escHtml(t.taskType) + '</span>';
+        html += '<span class="st-status ' + statusClass + '">' + escHtml(statusLabel) + '</span>';
+        html += '</div>';
+        html += '<div class="st-details">';
+        html += '<div class="st-detail"><span class="st-label">Interval</span><span>' + t.intervalHours + 'h</span></div>';
+        html += '<div class="st-detail"><span class="st-label">Next run</span><span>' + escHtml(nextRun) + '</span></div>';
+        html += '<div class="st-detail"><span class="st-label">Last run</span><span>' + escHtml(lastRun) + '</span></div>';
+        html += '<div class="st-detail"><span class="st-label">Duration</span><span>' + escHtml(lastDuration) + '</span></div>';
+        html += '<div class="st-detail"><span class="st-label">Runs</span><span>' + t.runCount + '</span></div>';
+        html += '<div class="st-detail"><span class="st-label">Errors</span><span class="' + (t.errorCount > 0 ? 'st-error-count' : '') + '">' + t.errorCount + '</span></div>';
+        html += '</div>';
+        if (t.lastError) {
+          html += '<div class="st-error">' + escHtml(t.lastError) + '</div>';
+        }
+        html += '</div>';
+      });
+
+      el.innerHTML = html;
+    } catch (_) {
+      el.innerHTML = '<div class="empty-state">Could not load scheduled tasks</div>';
+    }
+  }
+
+  function formatRelativeTime(isoDate) {
+    if (!isoDate) return '--';
+    try {
+      var d = new Date(isoDate);
+      var now = new Date();
+      var diffMs = d - now;
+      var diffSec = Math.abs(diffMs) / 1000;
+      var past = diffMs < 0;
+
+      if (diffSec < 60) return past ? 'just now' : 'in <1m';
+      if (diffSec < 3600) {
+        var mins = Math.floor(diffSec / 60);
+        return past ? mins + 'm ago' : 'in ' + mins + 'm';
+      }
+      if (diffSec < 86400) {
+        var hrs = Math.floor(diffSec / 3600);
+        return past ? hrs + 'h ago' : 'in ' + hrs + 'h';
+      }
+      var days = Math.floor(diffSec / 86400);
+      return past ? days + 'd ago' : 'in ' + days + 'd';
+    } catch (_) {
+      return formatDate(isoDate);
     }
   }
 

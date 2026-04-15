@@ -12,7 +12,13 @@ public class GraphNode
     public MemoryType Type { get; set; }
     public string Label { get; set; } = "";
     public float Importance { get; set; }
+    public float Confidence { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public int AccessCount { get; set; }
+    public int EchoCount { get; set; }
+    public int FizzleCount { get; set; }
     public List<string> Tags { get; set; } = [];
+    public List<string> Entities { get; set; } = [];
 }
 
 public class GraphEdge

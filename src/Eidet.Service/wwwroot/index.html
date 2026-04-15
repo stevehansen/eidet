@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Eidet Memory Explorer</title>
   <link rel="icon" type="image/png" href="/ui/logo.png">
-  <link rel="stylesheet" href="/ui/app.css">
+  <link rel="stylesheet" href="/ui/app.css?v=__VERSION__">
 </head>
 <body>
   <div id="app">
@@ -95,15 +95,35 @@
         <div class="graph-toolbar">
           <button id="graphRefresh" class="btn">Refresh</button>
           <label><input type="range" id="graphLimit" min="20" max="500" value="100"> <span id="graphLimitLabel">100</span> nodes</label>
+          <div class="graph-type-filters">
+            <label class="graph-filter-check"><input type="checkbox" data-graph-type="observation" checked> <span class="dot dot-observation"></span> Observation</label>
+            <label class="graph-filter-check"><input type="checkbox" data-graph-type="insight" checked> <span class="dot dot-insight"></span> Insight</label>
+            <label class="graph-filter-check"><input type="checkbox" data-graph-type="procedure" checked> <span class="dot dot-procedure"></span> Procedure</label>
+            <label class="graph-filter-check"><input type="checkbox" data-graph-type="heuristic" checked> <span class="dot dot-heuristic"></span> Heuristic</label>
+          </div>
+          <div class="graph-toolbar-right">
+            <button id="graphZoomIn" class="btn btn-sm" title="Zoom in">+</button>
+            <button id="graphZoomOut" class="btn btn-sm" title="Zoom out">-</button>
+            <button id="graphZoomReset" class="btn btn-sm" title="Reset view">Fit</button>
+          </div>
         </div>
-        <div class="graph-container">
-          <canvas id="graphCanvas"></canvas>
+        <div class="graph-main">
+          <div class="graph-canvas-wrap">
+            <canvas id="graphCanvas"></canvas>
+          </div>
+          <div class="graph-detail-panel" id="graphDetailPanel">
+            <div class="graph-detail-placeholder">Click a node to view details</div>
+          </div>
         </div>
         <div class="graph-legend">
           <span class="legend-item"><span class="dot dot-observation"></span> Observation</span>
           <span class="legend-item"><span class="dot dot-insight"></span> Insight</span>
           <span class="legend-item"><span class="dot dot-procedure"></span> Procedure</span>
           <span class="legend-item"><span class="dot dot-heuristic"></span> Heuristic</span>
+          <span class="legend-sep">|</span>
+          <span class="legend-item">Size = importance</span>
+          <span class="legend-item">Opacity = confidence</span>
+          <span class="legend-item">Ring = high echo count</span>
         </div>
       </section>
 
@@ -141,6 +161,10 @@
       <section id="page-settings" class="page">
         <h2>Settings</h2>
         <div class="card">
+          <h3>Scheduled Tasks</h3>
+          <div id="scheduledTasksList" class="scheduled-tasks"></div>
+        </div>
+        <div class="card">
           <h3>Service Configuration</h3>
           <div id="configList" class="config-list"></div>
         </div>
@@ -157,6 +181,6 @@
       </section>
     </main>
   </div>
-  <script src="/ui/app.js"></script>
+  <script src="/ui/app.js?v=__VERSION__"></script>
 </body>
 </html>
