@@ -173,6 +173,15 @@ All design decisions are documented in `docs/specs/`:
 - **Service restart reliability**: Scheduled task `RestartOnFailure` count increased from 3 to 999. `ServeCommand` catches unexpected exceptions with non-zero exit code so Task Scheduler triggers restart. `OperationCanceledException` from Ctrl+C exits cleanly (code 0).
 - **Status log path**: `eidet status` now shows the log file path.
 
+### Phase 12 — Persisted Scheduler + Knowledge Graph + Deep Dive Docs (Done)
+- **Persisted scheduled tasks**: Replaced in-memory `MaintenanceScheduler` (System.Threading.Timer) with `ScheduledTaskService` backed by RavenDB documents. Natural keys: `scheduledtasks/maintenance`, `scheduledtasks/consolidation`. Uses RavenDB Refresh feature (`@refresh` metadata) as a persistent alarm clock — documents are modified at the scheduled time, surviving service restarts. Polling loop (1-min interval) detects due tasks and executes them. Tracks full run history: `LastRunAt`, `LastCompletedAt`, `LastDurationMs`, `RunCount`, `ErrorCount`, `Status`. On restart, overdue tasks run within 30 seconds. `DatabaseProvisioner.EnsureRefreshEnabled()` enables the Refresh feature on startup.
+- **Scheduled tasks API**: `GET /api/eidet/scheduled-tasks` returns current state of all scheduled tasks (type, interval, next/last run, duration, status, error info).
+- **Web UI scheduled tasks**: Settings page shows scheduled task cards with status badges, timing info, run counts, and error display.
+- **Knowledge Graph rewrite**: Complete rewrite of the graph page for Obsidian-like interactivity. Click-to-select with detail side panel (type, importance, confidence, echo/fizzle counts, age, tags, entities, connections). Node labels visible for important nodes and on zoom. Confidence as node opacity. Echo count as golden ring. Edge arrows with relationship labels. Type filter checkboxes. Zoom/pan via mouse wheel and buttons. Connected-node highlighting on select/hover (dims unrelated nodes). Click connections in detail panel to navigate. Responsive layout with mobile support.
+- **GraphNode enrichment**: Added `Confidence`, `CreatedAt`, `AccessCount`, `EchoCount`, `FizzleCount`, `Entities` fields to `GraphNode` domain type and `GetGraphDataAsync`.
+- **Deep dive documentation**: `docs/deep-dive.md` — comprehensive narrative guide covering architecture, memory lifecycle (creation through gates, retrieval with scoring, context loading, feedback, decay, consolidation), RavenDB storage model, write gates, Ollama enrichment, layers, MCP surface, hooks, Web UI, security, service operations, Docker, SDKs, quality/backup, configuration, and glossary.
+- **Test coverage**: 319 → 328 tests. Added ScheduledTask (9).
+
 ## Installation & Distribution
 
 Eidet is distributed as a **dotnet tool** (primary) and **standalone binaries** (Docker/non-.NET).
@@ -282,6 +291,7 @@ eidet/
 - **Enrichment CoT stripping**: `StripChainOfThought()` extracts actual answer from Ollama responses that contain `<channel|>` reasoning delimiters or `<think>` blocks. Applied both on new responses and as a maintenance cleanup stage for existing data.
 - **Repo path tracking via RepoUsage**: `OriginalPath` field on existing per-repo anchor documents maps normalized IDs back to filesystem paths. Populated by `UsageTracker.RecordAsync` when it sees a path-like repo ID. `TryInferPath()` backfills existing docs for the common `X--Name` → `X:\Name` pattern. Enables Web UI intake and other path-dependent operations.
 - **EidetLog file logger**: Lightweight static logger writing to `{configDir}/logs/eidet.log`. Thread-safe, never throws, 5MB rotation. Used by serve command (startup/shutdown/crash) and API server (unhandled request errors). Visible via `eidet status`.
+- **Persisted scheduler via RavenDB Refresh**: `ScheduledTaskService` replaces in-memory `MaintenanceScheduler`. Task documents (`scheduledtasks/maintenance`, `scheduledtasks/consolidation`) use `@refresh` metadata to schedule execution at a future time. RavenDB modifies the document when the refresh time arrives. A 1-minute polling loop detects due tasks. Survives restarts — overdue tasks execute within 30 seconds of startup. Full run history tracked (counts, durations, errors, status).
 
 ## API Quick Reference
 
@@ -322,6 +332,9 @@ curl "http://localhost:19380/api/eidet/usage?repo=P%3A%5CEidet&days=30"
 
 # Usage hourly breakdown
 curl "http://localhost:19380/api/eidet/usage/hourly?repo=P%3A%5CEidet&days=7"
+
+# Scheduled tasks status
+curl http://localhost:19380/api/eidet/scheduled-tasks
 
 # Web UI (browser auto-redirects from root /)
 # Open http://localhost:19380/ui in browser
