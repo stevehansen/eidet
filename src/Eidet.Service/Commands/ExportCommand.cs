@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Eidet.Core.Configuration;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
@@ -15,6 +16,34 @@ public sealed class ExportCommand : AsyncCommand<ExportCommand.Settings>
 
         [CommandOption("-o|--output <PATH>")]
         public string? Output { get; set; }
+
+        [CommandOption("-f|--format <FORMAT>")]
+        [Description("Export format: dump (memory dump) or pack (shareable pack)")]
+        public string? Format { get; set; }
+
+        [CommandOption("--bundle-id <ID>")]
+        [Description("Bundle ID for pack export")]
+        public string? BundleId { get; set; }
+
+        [CommandOption("--name <NAME>")]
+        [Description("Pack name for pack export")]
+        public string? Name { get; set; }
+
+        [CommandOption("--version <VERSION>")]
+        [Description("Pack version for pack export")]
+        public string? Version { get; set; }
+
+        [CommandOption("--author <AUTHOR>")]
+        [Description("Pack author for pack export")]
+        public string? Author { get; set; }
+
+        [CommandOption("--description <DESC>")]
+        [Description("Pack description for pack export")]
+        public string? PackDescription { get; set; }
+
+        [CommandOption("--packages <PACKAGES>")]
+        [Description("Comma-separated applicable packages for pack export")]
+        public string? Packages { get; set; }
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
@@ -28,6 +57,12 @@ public sealed class ExportCommand : AsyncCommand<ExportCommand.Settings>
 
         try
         {
+            if (string.Equals(settings.Format, "pack", StringComparison.OrdinalIgnoreCase))
+            {
+                return await ExportPack(exportSvc, repoId, settings, cancellation);
+            }
+
+            // Default: memory dump
             var markdown = await exportSvc.ExportMarkdownAsync(repoId, cancellation);
 
             if (!string.IsNullOrEmpty(settings.Output))
@@ -44,6 +79,35 @@ public sealed class ExportCommand : AsyncCommand<ExportCommand.Settings>
         {
             store.Dispose();
         }
+
+        return 0;
+    }
+
+    private static async Task<int> ExportPack(ExportService exportSvc, string repoId, Settings settings, CancellationToken ct)
+    {
+        var bundleId = settings.BundleId;
+        if (string.IsNullOrEmpty(bundleId))
+        {
+            AnsiConsole.MarkupLine("[red]--bundle-id is required for pack export[/]");
+            return 1;
+        }
+
+        var name = settings.Name ?? bundleId;
+        var version = settings.Version ?? "1.0.0";
+        var author = settings.Author ?? Environment.UserName;
+        var packages = string.IsNullOrEmpty(settings.Packages)
+            ? null
+            : settings.Packages.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+        var pack = await exportSvc.ExportPackAsync(repoId, bundleId, name, version, author,
+            applicablePackages: packages, ct: ct);
+        pack.Description = settings.PackDescription;
+
+        // Default output path based on extension
+        var output = settings.Output ?? $"{bundleId}.md";
+
+        await exportSvc.ExportPackToFileAsync(pack, output, ct);
+        AnsiConsole.MarkupLine($"[green]Exported[/] {pack.Entries.Count} memories to {Markup.Escape(output)}");
 
         return 0;
     }

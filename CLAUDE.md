@@ -43,7 +43,7 @@ All design decisions are documented in `docs/specs/`:
 - **SecretScanner**: Added Azure storage, GCP service account, Slack token patterns (10→13).
 
 ### Phase 4 — Done
-- **Full 13-tool MCP surface**: eidet_store, eidet_recall, eidet_context, eidet_forget, eidet_feedback, eidet_history, eidet_intake, eidet_link, eidet_consolidate, eidet_maintenance, eidet_export, eidet_pack_export, eidet_pack_import
+- **Full 15-tool MCP surface**: eidet_store, eidet_recall, eidet_context, eidet_forget, eidet_feedback, eidet_history, eidet_intake, eidet_link, eidet_consolidate, eidet_maintenance, eidet_export, eidet_pack_export, eidet_pack_import
 - **IntakeService**: Ingests CLAUDE.md, MEMORY.md, README.md, .editorconfig, NuGet/npm deps. Splits by headings, deduplicates by content hash, extracts entities and one-liners.
 - **ConsolidationService**: Groups observations by tag overlap (union-find), creates insights from groups of 3+ (or boosts existing insights if topic already covered via vector similarity > 0.85), FadeMem differential decay (per-type half-lives).
 - **MaintenanceService**: 8-stage pipeline — TTL expiry, observation retention, dedup sweep (Jaccard 0.85), importance decay, orphan cleanup, enrichment cleanup (CoT stripping), backfill enrichment (entities + one-liners), auto-consolidation.
@@ -61,7 +61,7 @@ All design decisions are documented in `docs/specs/`:
 ### Phase 5 — Done
 - **OllamaEnrichmentService**: IEnrichmentService interface with NullEnrichmentService (zero-overhead no-op) and OllamaEnrichmentService (/api/chat, think:false, 120s timeout, lazy health re-check). 6 enrichment tasks: one-liner, summary, foresight hint, entity extraction (LLM supplement), consolidation merge (>5 observations), conflict detection. Integrated into MaintenanceService (Stage 6b) and ConsolidationService (merge for large groups).
 - **LayerService**: Mount/unmount layers, scope resolution for layer-aware recall, auto-mount by package dependencies. IEidetStore layer CRUD (StoreMountedLayer, UnmountLayer, GetMountedLayers, GetLayer). Non-local de-boost 0.8×, layer-tagged search results. REST API: GET/POST/DELETE /api/eidet/layers.
-- **MCP streamable HTTP transport**: POST /mcp endpoint on EidetApiServer. Reuses McpServer.ProcessRequestAsync for JSON-RPC over HTTP. Supports all 13 tools. 204 No Content for notifications.
+- **MCP streamable HTTP transport**: POST /mcp endpoint on EidetApiServer. Reuses McpServer.ProcessRequestAsync for JSON-RPC over HTTP. Supports all 15 tools. 204 No Content for notifications.
 - **System service**: `eidet install` (Windows scheduled task, macOS launchd plist, Linux systemd user unit), `eidet uninstall` (with --purge). Uses dotnet tool shim path (`~/.dotnet/tools/eidet`). Auto-configures MCP for Claude Code (`~/.claude/settings.json`) and Claude Desktop.
 - **MaintenanceScheduler**: Background timer for periodic maintenance and consolidation at configured intervals (default 24h/6h). Runs inside `eidet serve`.
 - **Doctor Ollama check**: Verifies model availability (not just connectivity).
@@ -193,6 +193,15 @@ All design decisions are documented in `docs/specs/`:
 - **Enrichment availability detection**: Web UI checks `/api/status` for Ollama health on load. AI buttons only shown when enrichment service is available and healthy.
 - **Test coverage**: 328 → 342 tests. Added CurationApiTests (11): ExtractMemoryIdFromLinkPath (3), auth scope for PUT/POST/DELETE curation endpoints (4), request model validation (4). Updated McpToolDefinitionsTests: 14 tools, eidet_edit tool schema (2).
 
+### Phase 14 — Markdown Pack Format + ScribeGate Integration (Done)
+- **MarkdownPackFormat**: New `MarkdownPackFormat` static class in `Eidet.Core.Services` — serializes/deserializes `EidetPack` to/from human-readable markdown. Format: YAML frontmatter (pack metadata with `eidet:` namespace), H2 type groups (Observations, Insights, Procedures, Heuristics), H3 per memory (heading = one-liner), HTML comments for per-memory metadata (`<!-- eidet: importance=0.85 confidence=0.75 tags=react,hooks -->`), enrichment in separate comments (`<!-- eidet-entities: ... -->`, `<!-- eidet-summary: ... -->`, `<!-- eidet-foresight: ... -->`). Cross-platform `\n` line endings.
+- **Contextual heading detection**: Parser uses smart boundary detection — H2 is a type group only if it matches a known type plural, H3 is a memory boundary only if followed by `<!-- eidet:` comment within 4 lines. This allows memory content to contain markdown headings without breaking the parse.
+- **ExportService markdown integration**: `ExportPackToFileAsync` auto-detects format by `.md` extension. New `ExportPackToMarkdownAsync` and `ImportPackFromMarkdownAsync` explicit methods. `ImportPackFromFileAsync` auto-detects markdown vs JSON.
+- **CLI `--format pack` export**: `eidet export --format pack --bundle-id my-pack --name "My Pack" --version 1.0.0 --output my-pack.md`. Defaults to `.md` output (markdown format). All pack metadata via CLI flags (`--author`, `--description`, `--packages`).
+- **MCP `eidet_pack_export` / `eidet_pack_import` tools**: 15th and 16th MCP tools. Pack export writes markdown or JSON file (detected by extension), returns memory count. Pack import reads file, imports entries, auto-mounts as Base layer via `LayerService`. `ExportService` and `LayerService` wired into `McpServer` constructor.
+- **ScribeGate compatibility**: Markdown format designed for publishing on ScribeGate (scribegate.dev). YAML frontmatter matches ScribeGate's document format. Rendered markdown is human-readable in any viewer (GitHub, VS Code, ScribeGate). HTML comments are invisible when rendered but machine-parseable. ScribeGate's review/approval flows enable community curation of memory packs.
+- **Test coverage**: 342 → 407 tests. Added MarkdownPackFormatTests (48): serialize (12), deserialize (9), round-trip (3), content-with-markdown (6), internal helpers (10), boundary detection (3), frontmatter parsing (3), meta pairs (1), inline list (1). Updated McpToolDefinitionsTests: 13 tools, pack_export/pack_import schemas (2).
+
 ## Installation & Distribution
 
 Eidet is distributed as a **dotnet tool** (primary) and **standalone binaries** (Docker/non-.NET).
@@ -236,7 +245,7 @@ Local-only. No team/sync/remote yet.
 - REST API (for TerminalHost and other tools)
 - Rich TUI for setup, configuration, troubleshooting
 - Docker container integration guidance
-- Full 13-tool MCP surface
+- Full 15-tool MCP surface
 - System service (always running)
 
 ## Tech Stack
@@ -305,6 +314,7 @@ eidet/
 - **Persisted scheduler via RavenDB Refresh**: `ScheduledTaskService` replaces in-memory `MaintenanceScheduler`. Task documents (`scheduledtasks/maintenance`, `scheduledtasks/consolidation`) use `@refresh` metadata to schedule execution at a future time. RavenDB modifies the document when the refresh time arrives. A 1-minute polling loop detects due tasks. Survives restarts — overdue tasks execute within 30 seconds of startup. Full run history tracked (counts, durations, errors, status).
 - **Memory curation via versioned updates**: Content changes create new versions (supersession chain) preserving full history. Metadata-only changes (tags, importance, confidence, enrichment fields) update in place. Write gates still enforced on content changes. Web UI provides inline editing with AI-assisted enrichment regeneration.
 - **On-demand AI enrichment**: `/api/eidet/enrich` endpoint exposes Ollama enrichment for interactive use. Users can preview generated one-liners, summaries, foresight hints before applying them. Decouples enrichment from the background pipeline, enabling manual curation workflows.
+- **Markdown pack format**: `MarkdownPackFormat` serializes/deserializes `EidetPack` as human-readable markdown. YAML frontmatter for pack metadata, H2 type groups, H3 per memory with HTML comment metadata. Contextual heading detection (H2 = type boundary only if known type, H3 = memory boundary only if followed by eidet comment). Enables publishing to ScribeGate for community curation, review, and approval of memory packs. Library authors publish markdown packs to `scribegate.dev/eidet-packs/{slug}`, consumers import directly. Markdown renders beautifully in any viewer while being fully machine-parseable.
 
 ## API Quick Reference
 

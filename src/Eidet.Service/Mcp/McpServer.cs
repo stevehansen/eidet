@@ -19,13 +19,15 @@ public class McpServer
     private readonly ConsolidationService _consolidation;
     private readonly MaintenanceService _maintenance;
     private readonly UsageTracker? _usage;
+    private readonly ExportService? _export;
+    private readonly LayerService? _layers;
     private readonly string _repoId;
     private readonly bool _autoIntake;
     private bool _autoIntakeDone;
 
     public McpServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
         MaintenanceService maintenance, string repoId, bool autoIntake = true,
-        UsageTracker? usage = null)
+        UsageTracker? usage = null, ExportService? export = null, LayerService? layers = null)
     {
         _svc = svc;
         _intake = intake;
@@ -34,6 +36,8 @@ public class McpServer
         _repoId = repoId;
         _autoIntake = autoIntake;
         _usage = usage;
+        _export = export;
+        _layers = layers;
     }
 
     public async Task RunStdioAsync(CancellationToken ct)
@@ -144,6 +148,8 @@ public class McpServer
         ["eidet_consolidate"] = "Consolidate",
         ["eidet_maintenance"] = "Maintenance",
         ["eidet_edit"] = "Store",
+        ["eidet_pack_export"] = "PackExport",
+        ["eidet_pack_import"] = "PackImport",
     };
 
     private async Task<McpCallToolResult> ExecuteToolAsync(string name, JsonElement args, CancellationToken ct)
@@ -165,6 +171,8 @@ public class McpServer
                 "eidet_consolidate" => await ExecuteConsolidate(args, ct),
                 "eidet_maintenance" => await ExecuteMaintenance(args, ct),
                 "eidet_edit" => await ExecuteEdit(args, ct),
+                "eidet_pack_export" => await ExecutePackExport(args, ct),
+                "eidet_pack_import" => await ExecutePackImport(args, ct),
                 _ => McpCallToolResult.Error($"Unknown tool: {name}"),
             };
             return result;
@@ -427,6 +435,65 @@ public class McpServer
         return ok
             ? McpCallToolResult.Text($"Memory {id} updated successfully.")
             : McpCallToolResult.Error($"Memory not found or update rejected: {id}");
+    }
+
+    private async Task<McpCallToolResult> ExecutePackExport(JsonElement args, CancellationToken ct)
+    {
+        if (_export == null)
+            return McpCallToolResult.Error("Pack export not available in this context.");
+
+        var bundleId = args.GetProperty("bundle_id").GetString()!;
+        var name = GetString(args, "name") ?? bundleId;
+        var version = GetString(args, "version") ?? "1.0.0";
+        var author = GetString(args, "author") ?? "";
+        var description = GetString(args, "description");
+        var output = GetString(args, "output") ?? $"{bundleId}.md";
+        var packages = GetStringArray(args, "packages");
+        var tags = GetStringArray(args, "tags");
+
+        var typeStrs = GetStringArray(args, "types");
+        List<MemoryType>? types = typeStrs.Count > 0
+            ? typeStrs.Where(t => Enum.TryParse<MemoryType>(t, true, out _))
+                .Select(t => Enum.Parse<MemoryType>(t, true)).ToList()
+            : null;
+
+        var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
+        var pack = await _export.ExportPackAsync(normalizedRepoId, bundleId, name, version, author,
+            types: types, tags: tags.Count > 0 ? tags : null,
+            applicablePackages: packages.Count > 0 ? packages : null, ct: ct);
+        pack.Description = description;
+
+        // Resolve output path relative to repo dir
+        var outputPath = Path.IsPathRooted(output) ? output : Path.Combine(_repoId, output);
+        await _export.ExportPackToFileAsync(pack, outputPath, ct);
+
+        var format = outputPath.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ? "markdown" : "JSON";
+        return McpCallToolResult.Text($"Exported {pack.Entries.Count} memories as {format} pack to {outputPath}");
+    }
+
+    private async Task<McpCallToolResult> ExecutePackImport(JsonElement args, CancellationToken ct)
+    {
+        if (_export == null)
+            return McpCallToolResult.Error("Pack import not available in this context.");
+
+        var path = args.GetProperty("path").GetString()!;
+        var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(_repoId, path);
+
+        if (!File.Exists(resolvedPath))
+            return McpCallToolResult.Error($"File not found: {resolvedPath}");
+
+        var pack = await _export.ImportPackFromFileAsync(resolvedPath, ct);
+
+        if (_layers != null)
+        {
+            var (imported, layer) = await _export.ImportPackWithLayerAsync(pack, _layers, ct);
+            return McpCallToolResult.Text($"Imported {imported} memories from \"{pack.Name}\" v{pack.Version}. Mounted as layer: {layer.Name}");
+        }
+        else
+        {
+            var imported = await _export.ImportPackAsync(pack, ct);
+            return McpCallToolResult.Text($"Imported {imported} memories from \"{pack.Name}\" v{pack.Version}.");
+        }
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────

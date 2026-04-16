@@ -94,17 +94,41 @@ public class ExportService
 
     public async Task ExportPackToFileAsync(EidetPack pack, string path, CancellationToken ct = default)
     {
-        var json = JsonSerializer.Serialize(pack, JsonOptions);
-        await File.WriteAllTextAsync(path, json, ct);
+        if (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            var markdown = MarkdownPackFormat.Serialize(pack);
+            await File.WriteAllTextAsync(path, markdown, ct);
+        }
+        else
+        {
+            var json = JsonSerializer.Serialize(pack, JsonOptions);
+            await File.WriteAllTextAsync(path, json, ct);
+        }
+    }
+
+    public async Task ExportPackToMarkdownAsync(EidetPack pack, string path, CancellationToken ct = default)
+    {
+        var markdown = MarkdownPackFormat.Serialize(pack);
+        await File.WriteAllTextAsync(path, markdown, ct);
     }
 
     // ─── Bundle Import ───────────────────────────────────────────────────
 
     public async Task<EidetPack> ImportPackFromFileAsync(string path, CancellationToken ct = default)
     {
-        var json = await File.ReadAllTextAsync(path, ct);
-        return JsonSerializer.Deserialize<EidetPack>(json, JsonOptions)
+        var content = await File.ReadAllTextAsync(path, ct);
+
+        if (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            return MarkdownPackFormat.Deserialize(content);
+
+        return JsonSerializer.Deserialize<EidetPack>(content, JsonOptions)
             ?? throw new InvalidOperationException($"Failed to parse pack file: {path}");
+    }
+
+    public async Task<EidetPack> ImportPackFromMarkdownAsync(string path, CancellationToken ct = default)
+    {
+        var markdown = await File.ReadAllTextAsync(path, ct);
+        return MarkdownPackFormat.Deserialize(markdown);
     }
 
     public async Task<int> ImportPackAsync(EidetPack pack, CancellationToken ct = default)

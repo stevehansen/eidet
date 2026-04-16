@@ -5,10 +5,10 @@ namespace Eidet.Service.Tests.Mcp;
 public class McpToolDefinitionsTests
 {
     [Fact]
-    public void GetAll_Returns11Tools()
+    public void GetAll_Returns13Tools()
     {
         var tools = McpToolDefinitions.GetAll();
-        Assert.Equal(11, tools.Count);
+        Assert.Equal(13, tools.Count);
     }
 
     [Fact]
@@ -56,6 +56,8 @@ public class McpToolDefinitionsTests
     [InlineData("eidet_consolidate")]
     [InlineData("eidet_maintenance")]
     [InlineData("eidet_edit")]
+    [InlineData("eidet_pack_export")]
+    [InlineData("eidet_pack_import")]
     public void GetAll_ContainsTool(string toolName)
     {
         var tools = McpToolDefinitions.GetAll();
@@ -110,5 +112,23 @@ public class McpToolDefinitionsTests
         Assert.True(props.ContainsKey("importance"));
         Assert.True(props.ContainsKey("confidence"));
         Assert.True(props.ContainsKey("type"));
+    }
+
+    [Fact]
+    public void PackExport_RequiresBundleId()
+    {
+        var tools = McpToolDefinitions.GetAll();
+        var tool = tools.First(t => t.Name == "eidet_pack_export");
+        var required = tool.InputSchema["required"]!.AsArray();
+        Assert.Contains(required, r => r!.ToString() == "bundle_id");
+    }
+
+    [Fact]
+    public void PackImport_RequiresPath()
+    {
+        var tools = McpToolDefinitions.GetAll();
+        var tool = tools.First(t => t.Name == "eidet_pack_import");
+        var required = tool.InputSchema["required"]!.AsArray();
+        Assert.Contains(required, r => r!.ToString() == "path");
     }
 }

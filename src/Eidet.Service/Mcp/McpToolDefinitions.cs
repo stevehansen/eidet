@@ -118,6 +118,30 @@ public static class McpToolDefinitions
                 PropOptional("type", "string", "New type: observation, insight, procedure, heuristic."),
             ], ["id"]),
         },
+        new()
+        {
+            Name = "eidet_pack_export",
+            Description = "Export memories as a shareable markdown pack. Creates a human-readable file with YAML frontmatter, type-grouped sections, and HTML comment metadata. Compatible with ScribeGate for publishing.",
+            InputSchema = Schema([
+                Prop("bundle_id", "string", "Unique bundle identifier (e.g., 'react-best-practices')."),
+                PropOptional("name", "string", "Display name for the pack (defaults to bundle_id)."),
+                PropOptional("version", "string", "Pack version (default '1.0.0')."),
+                PropOptional("author", "string", "Author name."),
+                PropOptional("description", "string", "Pack description."),
+                PropOptional("output", "string", "File path to write (.md for markdown, .eidet/.json for JSON). Defaults to {bundle_id}.md."),
+                PropOptional("types", "array", "Memory types to include (default: insight, procedure, heuristic).", items: "string"),
+                PropOptional("tags", "array", "Filter by tags.", items: "string"),
+                PropOptional("packages", "array", "Applicable packages (NuGet/npm) this pack covers.", items: "string"),
+            ], ["bundle_id"]),
+        },
+        new()
+        {
+            Name = "eidet_pack_import",
+            Description = "Import a memory pack from a markdown (.md) or JSON (.eidet) file. Auto-mounts as a Base layer for cross-project recall.",
+            InputSchema = Schema([
+                Prop("path", "string", "File path to the pack (.md or .eidet/.json)."),
+            ], ["path"]),
+        },
     ];
 
     private static JsonObject Schema((string name, JsonObject prop)[] properties, string[] required)
