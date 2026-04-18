@@ -178,6 +178,10 @@ public class McpServer
             };
             return result;
         }
+        catch (MissingMcpArgumentException ex)
+        {
+            return McpCallToolResult.Error($"Tool '{name}': {ex.Message}");
+        }
         catch (Exception ex)
         {
             EidetLog.Error($"MCP tool '{name}' failed for repo '{_repoId}'", ex);
@@ -187,8 +191,8 @@ public class McpServer
 
     private async Task<McpCallToolResult> ExecuteStore(JsonElement args, CancellationToken ct)
     {
-        var content = args.GetProperty("content").GetString()!;
-        var typeStr = args.GetProperty("type").GetString()!;
+        var content = RequireString(args, "content");
+        var typeStr = RequireString(args, "type");
         if (!Enum.TryParse<MemoryType>(typeStr, true, out var type))
             return McpCallToolResult.Error($"Invalid type: {typeStr}. Use: observation, insight, procedure, heuristic.");
 
@@ -212,7 +216,7 @@ public class McpServer
     {
         var query = new MemoryQuery
         {
-            Text = args.GetProperty("query").GetString()!,
+            Text = RequireString(args, "query"),
             Type = GetEnum<MemoryType>(args, "type"),
             Tags = GetStringArray(args, "tags"),
             Limit = GetInt(args, "limit", 10),
@@ -271,7 +275,7 @@ public class McpServer
 
     private async Task<McpCallToolResult> ExecuteForget(JsonElement args, CancellationToken ct)
     {
-        var id = args.GetProperty("id").GetString()!;
+        var id = RequireString(args, "id");
         var reason = GetString(args, "reason");
         var ok = await _svc.ForgetAsync(id, reason, ct: ct);
         return ok ? McpCallToolResult.Text($"Memory {id} has been invalidated.") : McpCallToolResult.Error($"Memory not found: {id}");
@@ -279,8 +283,8 @@ public class McpServer
 
     private async Task<McpCallToolResult> ExecuteFeedback(JsonElement args, CancellationToken ct)
     {
-        var id = args.GetProperty("id").GetString()!;
-        var used = args.GetProperty("used").GetBoolean();
+        var id = RequireString(args, "id");
+        var used = RequireBool(args, "used");
         var ok = await _svc.ApplyFeedbackAsync(id, used, ct);
         var label = used ? "Echo" : "Fizzle";
         return ok ? McpCallToolResult.Text($"{label} feedback applied to {id}.") : McpCallToolResult.Error($"Memory not found: {id}");
@@ -288,7 +292,7 @@ public class McpServer
 
     private async Task<McpCallToolResult> ExecuteHistory(JsonElement args, CancellationToken ct)
     {
-        var id = args.GetProperty("id").GetString()!;
+        var id = RequireString(args, "id");
         var chain = await _svc.GetVersionChainAsync(id, ct);
 
         if (chain.Count == 0)
@@ -418,7 +422,7 @@ public class McpServer
 
     private async Task<McpCallToolResult> ExecuteEdit(JsonElement args, CancellationToken ct)
     {
-        var id = args.GetProperty("id").GetString()!;
+        var id = RequireString(args, "id");
         var content = GetString(args, "content");
         var tags = GetStringArray(args, "tags");
         var importance = args.TryGetProperty("importance", out var imp) && imp.ValueKind == JsonValueKind.Number ? (float?)imp.GetSingle() : null;
@@ -444,7 +448,7 @@ public class McpServer
         if (_export == null)
             return McpCallToolResult.Error("Pack export not available in this context.");
 
-        var bundleId = args.GetProperty("bundle_id").GetString()!;
+        var bundleId = RequireString(args, "bundle_id");
         var name = GetString(args, "name") ?? bundleId;
         var version = GetString(args, "version") ?? "1.0.0";
         var author = GetString(args, "author") ?? "";
@@ -478,7 +482,7 @@ public class McpServer
         if (_export == null)
             return McpCallToolResult.Error("Pack import not available in this context.");
 
-        var path = args.GetProperty("path").GetString()!;
+        var path = RequireString(args, "path");
         var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(_repoId, path);
 
         if (!File.Exists(resolvedPath))
@@ -511,6 +515,29 @@ public class McpServer
 
     private static bool GetBool(JsonElement args, string name, bool defaultValue = false) =>
         args.TryGetProperty(name, out var v) && (v.ValueKind == JsonValueKind.True || v.ValueKind == JsonValueKind.False) ? v.GetBoolean() : defaultValue;
+
+    private static string RequireString(JsonElement args, string name)
+    {
+        if (!args.TryGetProperty(name, out var v) || v.ValueKind != JsonValueKind.String)
+            throw new MissingMcpArgumentException(name);
+        var s = v.GetString();
+        if (string.IsNullOrEmpty(s))
+            throw new MissingMcpArgumentException(name);
+        return s;
+    }
+
+    private static bool RequireBool(JsonElement args, string name)
+    {
+        if (!args.TryGetProperty(name, out var v) || (v.ValueKind != JsonValueKind.True && v.ValueKind != JsonValueKind.False))
+            throw new MissingMcpArgumentException(name);
+        return v.GetBoolean();
+    }
+
+    private sealed class MissingMcpArgumentException(string field)
+        : Exception($"missing required argument '{field}'")
+    {
+        public string Field { get; } = field;
+    }
 
     private static List<string> GetStringArray(JsonElement args, string name)
     {
