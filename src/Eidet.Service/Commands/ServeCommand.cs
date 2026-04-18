@@ -26,10 +26,41 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
+        InstallCrashHandlers();
+
         if (settings.RunAsService)
             return await RunAsWindowsServiceAsync(cancellation);
 
         return await RunAsConsoleAsync(settings, cancellation);
+    }
+
+    private static int _crashHandlersInstalled;
+
+    private static void InstallCrashHandlers()
+    {
+        if (Interlocked.Exchange(ref _crashHandlersInstalled, 1) == 1)
+            return;
+
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            var ex = e.ExceptionObject as Exception;
+            var prefix = e.IsTerminating ? "Unhandled exception (terminating)" : "Unhandled exception";
+            if (ex != null)
+                EidetLog.Error(prefix, ex);
+            else
+                EidetLog.Error($"{prefix}: {e.ExceptionObject}");
+        };
+
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            EidetLog.Error("Unobserved task exception", e.Exception);
+            e.SetObserved();
+        };
+
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            EidetLog.Info($"Process exiting (PID {Environment.ProcessId})");
+        };
     }
 
     private static async Task<int> RunAsWindowsServiceAsync(CancellationToken cancellation)
@@ -65,6 +96,7 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
 
         // Acquire service lock — prevents double-serve
         var serviceLock = new ServiceLock();
+        var priorLock = ServiceLock.Read();
         if (!serviceLock.TryAcquire(actualPort, actualBind, out var existing))
         {
             if (existing != null)
@@ -94,7 +126,10 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
             return 1;
         }
 
-        EidetLog.Info($"Eidet v{Eidet.Core.EidetVersion.Current} starting on {host.BindAddress}:{host.Port}");
+        if (priorLock != null && priorLock.Pid != Environment.ProcessId)
+            EidetLog.Warn($"Stale lock recovered — prior PID {priorLock.Pid} started {priorLock.StartedAt:O} exited without cleanup");
+
+        EidetLog.Info($"Eidet v{Eidet.Core.EidetVersion.Current} starting on {host.BindAddress}:{host.Port} (PID {Environment.ProcessId})");
         AnsiConsole.MarkupLine($"[bold]Eidet[/] v{Eidet.Core.EidetVersion.Current}");
 
         if (host.StorageMode == StorageMode.Embedded)
