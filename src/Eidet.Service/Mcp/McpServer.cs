@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Eidet.Core;
 using Eidet.Core.Domain;
 using Eidet.Core.Services;
 
@@ -179,7 +180,8 @@ public class McpServer
         }
         catch (Exception ex)
         {
-            return McpCallToolResult.Error($"Internal error: {ex.Message}");
+            EidetLog.Error($"MCP tool '{name}' failed for repo '{_repoId}'", ex);
+            return McpCallToolResult.Error($"Internal error ({ex.GetType().Name}): {ex.Message}");
         }
     }
 
