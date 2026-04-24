@@ -200,7 +200,13 @@ public class McpServer
         var importance = GetFloat(args, "importance", 0.5f);
         var supersedes = GetString(args, "supersedes");
         var provenanceStr = GetString(args, "provenance");
-        MemoryProvenance? provenance = provenanceStr != null && Enum.TryParse<MemoryProvenance>(provenanceStr, true, out var p) ? p : null;
+        MemoryProvenance? provenance = provenanceStr switch
+        {
+            null => null,
+            var s when s.Equals("Bundle", StringComparison.OrdinalIgnoreCase) => MemoryProvenance.Pack,
+            var s when Enum.TryParse<MemoryProvenance>(s, true, out var p) => p,
+            _ => null,
+        };
 
         var result = await _svc.StoreAsync(_repoId, content, type, tags, importance,
             source: "claude-session", supersedes: supersedes, provenance: provenance, ct: ct);
@@ -448,12 +454,13 @@ public class McpServer
         if (_export == null)
             return McpCallToolResult.Error("Pack export not available in this context.");
 
-        var bundleId = RequireString(args, "bundle_id");
-        var name = GetString(args, "name") ?? bundleId;
+        var packId = GetString(args, "pack_id") ?? GetString(args, "bundle_id")
+            ?? throw new MissingMcpArgumentException("pack_id");
+        var name = GetString(args, "name") ?? packId;
         var version = GetString(args, "version") ?? "1.0.0";
         var author = GetString(args, "author") ?? "";
         var description = GetString(args, "description");
-        var output = GetString(args, "output") ?? $"{bundleId}.md";
+        var output = GetString(args, "output") ?? $"{packId}.md";
         var packages = GetStringArray(args, "packages");
         var tags = GetStringArray(args, "tags");
 
@@ -464,7 +471,7 @@ public class McpServer
             : null;
 
         var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
-        var pack = await _export.ExportPackAsync(normalizedRepoId, bundleId, name, version, author,
+        var pack = await _export.ExportPackAsync(normalizedRepoId, packId, name, version, author,
             types: types, tags: tags.Count > 0 ? tags : null,
             applicablePackages: packages.Count > 0 ? packages : null, ct: ct);
         pack.Description = description;

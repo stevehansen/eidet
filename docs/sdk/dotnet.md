@@ -65,7 +65,7 @@ new EidetClient(string url = "http://localhost:19380", string? apiKey = null)
 // Store a memory
 Task<StoreResult> StoreAsync(StoreRequest request, CancellationToken ct = default)
 
-// Search memories
+// Recall memories
 Task<List<SearchResult>> RecallAsync(string repo, string query,
     int limit = 10, MemoryType? type = null, CancellationToken ct = default)
 

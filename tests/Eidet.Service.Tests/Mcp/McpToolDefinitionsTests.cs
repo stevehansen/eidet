@@ -115,12 +115,12 @@ public class McpToolDefinitionsTests
     }
 
     [Fact]
-    public void PackExport_RequiresBundleId()
+    public void PackExport_RequiresPackId()
     {
         var tools = McpToolDefinitions.GetAll();
         var tool = tools.First(t => t.Name == "eidet_pack_export");
         var required = tool.InputSchema["required"]!.AsArray();
-        Assert.Contains(required, r => r!.ToString() == "bundle_id");
+        Assert.Contains(required, r => r!.ToString() == "pack_id");
     }
 
     [Fact]

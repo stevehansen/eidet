@@ -67,7 +67,8 @@ public class MemoryServiceTests
         Assert.Equal(MemoryProvenance.AgentInferred, MemoryServiceTestHelper.ResolveProvenance("claude-session"));
         Assert.Equal(MemoryProvenance.Consolidation, MemoryServiceTestHelper.ResolveProvenance("consolidation"));
         Assert.Equal(MemoryProvenance.Intake, MemoryServiceTestHelper.ResolveProvenance("intake"));
-        Assert.Equal(MemoryProvenance.Bundle, MemoryServiceTestHelper.ResolveProvenance("bundle"));
+        Assert.Equal(MemoryProvenance.Pack, MemoryServiceTestHelper.ResolveProvenance("pack"));
+        Assert.Equal(MemoryProvenance.Pack, MemoryServiceTestHelper.ResolveProvenance("bundle")); // legacy alias
         Assert.Equal(MemoryProvenance.System, MemoryServiceTestHelper.ResolveProvenance("system"));
         Assert.Equal(MemoryProvenance.AgentInferred, MemoryServiceTestHelper.ResolveProvenance("unknown"));
     }
@@ -112,7 +113,7 @@ public static class MemoryServiceTestHelper
         "claude-session" => MemoryProvenance.AgentInferred,
         "consolidation" => MemoryProvenance.Consolidation,
         "intake" => MemoryProvenance.Intake,
-        "bundle" => MemoryProvenance.Bundle,
+        "pack" or "bundle" => MemoryProvenance.Pack,
         "system" => MemoryProvenance.System,
         _ => MemoryProvenance.AgentInferred,
     };

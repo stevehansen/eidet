@@ -102,10 +102,12 @@ curl -X POST http://localhost:19380/api/eidet \
 | `sessionId` | string | no | `null` | Session tracking |
 | `supersedes` | string | no | `null` | ID of memory this replaces |
 
-### GET /api/eidet/search — Recall Memories
+### GET /api/eidet/recall — Recall Memories
+
+_Legacy alias: `GET /api/eidet/search` (same response)._
 
 ```bash
-curl "http://localhost:19380/api/eidet/search?repo=P%3A%5CMyProject&q=authentication&limit=5&type=insight"
+curl "http://localhost:19380/api/eidet/recall?repo=P%3A%5CMyProject&q=authentication&limit=5&type=insight"
 ```
 
 ```json

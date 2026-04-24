@@ -22,7 +22,7 @@
 5. **Minimal wake-up cost** — L0 (~50 tokens) + L1 (~500 tokens) at session start for <600 token overhead.
 6. **Hybrid retrieval** — vector search + full-text + metadata filters in a single query round-trip.
 7. **Append-only corrections** — validity intervals instead of deletion; full audit trail.
-8. **Intake system** — structured ingestion from CLAUDE.md, README, docs, and package bundles.
+8. **Intake system** — structured ingestion from CLAUDE.md, README, docs, and imported packs.
 9. **Consolidation** — periodic merging of granular observations into stable insights.
 10. **MCP integration** — exposed as MCP tools for any compatible AI client.
 11. **Testable** — RavenDB.Embedded for integration tests; pure logic unit-testable without database.
@@ -32,7 +32,7 @@
 
 - General-purpose knowledge base or RAG over arbitrary documents (this is memory, not search).
 - LLM-in-the-loop for every write (zero-LLM write path for most operations).
-- Hosting a public bundle registry (bundles are files that can be shared via any mechanism).
+- Hosting a public pack registry (packs are files that can be shared via any mechanism).
 
 ---
 
@@ -71,7 +71,7 @@ public class MemoryEntry
 
     // Provenance
     public MemoryProvenance Provenance { get; set; } = MemoryProvenance.AgentInferred;
-    public string Source { get; set; } = "";        // "claude-session", "user", "consolidation", "intake", "bundle"
+    public string Source { get; set; } = "";        // "claude-session", "user", "consolidation", "intake", "pack"
     public string? SourceSessionId { get; set; }
     public List<string> DerivedFrom { get; set; } = [];
 
@@ -107,7 +107,7 @@ public enum MemoryProvenance
     ToolOutput,      // From tool execution results
     Consolidation,   // Merged from multiple observations
     Intake,          // From file intake (CLAUDE.md, README, etc.)
-    Bundle,          // From imported bundle
+    Pack,            // From an imported Pack (legacy "Bundle" values auto-map to Pack)
     System,          // System-generated
 }
 
@@ -211,7 +211,7 @@ public enum LayerType { Local, Shared, Base }
 - Base/Shared layers are immutable (agent writes cannot corrupt imported knowledge)
 - Recall searches ALL layers, tags results with source layer
 - Non-local results de-boosted by 0.8× (prefer local knowledge)
-- New bundle version = re-import; local memories untouched
+- New pack version = re-import; local memories untouched
 - `.eidet` pack files are portable (git, email, network share)
 - Auto-mount via dependency detection (NuGet/npm refs)
 
@@ -509,7 +509,7 @@ Each memory carries `Confidence` (0.0–1.0, default 0.7) independent of `Import
 
 ---
 
-## Eidet Packs (Memory Bundles)
+## Eidet Packs
 
 Exportable, shareable packages of memory — like Docker images for knowledge. Distributed as `.eidet` files.
 
@@ -660,7 +660,7 @@ Immediate value from session one. Bridges MEMORY.md → semantic search. Idempot
 - **No instructions in memory**: Content is data, never treated as system instructions. No prompt injection vector.
 - **Provenance tracking**: Every memory records source and session ID. Tainted memories traceable and bulk-invalidatable.
 - **Layer isolation**: Base/shared are read-only. Agent writes cannot corrupt imported knowledge.
-- **Bundle trust**: Explicit user import only. No auto-download from external sources.
+- **Pack trust**: Explicit user import only. No auto-download from external sources.
 - **Soft delete only**: No permanent destruction via MCP tools.
 - **Cross-repo boundaries**: Cross-repo recall is opt-in, follows explicit links only.
 

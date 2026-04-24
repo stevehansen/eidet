@@ -21,9 +21,9 @@ public sealed class ExportCommand : AsyncCommand<ExportCommand.Settings>
         [Description("Export format: dump (memory dump) or pack (shareable pack)")]
         public string? Format { get; set; }
 
-        [CommandOption("--bundle-id <ID>")]
-        [Description("Bundle ID for pack export")]
-        public string? BundleId { get; set; }
+        [CommandOption("--pack-id <ID>")]
+        [Description("Pack ID for pack export")]
+        public string? PackId { get; set; }
 
         [CommandOption("--name <NAME>")]
         [Description("Pack name for pack export")]
@@ -85,26 +85,26 @@ public sealed class ExportCommand : AsyncCommand<ExportCommand.Settings>
 
     private static async Task<int> ExportPack(ExportService exportSvc, string repoId, Settings settings, CancellationToken ct)
     {
-        var bundleId = settings.BundleId;
-        if (string.IsNullOrEmpty(bundleId))
+        var packId = settings.PackId;
+        if (string.IsNullOrEmpty(packId))
         {
-            AnsiConsole.MarkupLine("[red]--bundle-id is required for pack export[/]");
+            AnsiConsole.MarkupLine("[red]--pack-id is required for pack export[/]");
             return 1;
         }
 
-        var name = settings.Name ?? bundleId;
+        var name = settings.Name ?? packId;
         var version = settings.Version ?? "1.0.0";
         var author = settings.Author ?? Environment.UserName;
         var packages = string.IsNullOrEmpty(settings.Packages)
             ? null
             : settings.Packages.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
-        var pack = await exportSvc.ExportPackAsync(repoId, bundleId, name, version, author,
+        var pack = await exportSvc.ExportPackAsync(repoId, packId, name, version, author,
             applicablePackages: packages, ct: ct);
         pack.Description = settings.PackDescription;
 
         // Default output path based on extension
-        var output = settings.Output ?? $"{bundleId}.md";
+        var output = settings.Output ?? $"{packId}.md";
 
         await exportSvc.ExportPackToFileAsync(pack, output, ct);
         AnsiConsole.MarkupLine($"[green]Exported[/] {pack.Entries.Count} memories to {Markup.Escape(output)}");

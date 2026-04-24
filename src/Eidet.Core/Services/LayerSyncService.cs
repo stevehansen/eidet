@@ -29,13 +29,21 @@ public class LayerSyncService
         _layers = layers;
     }
 
+    // Prefer the canonical "pack:" layer ID for new mounts, but reuse a legacy
+    // "bundle:" mount if one already exists (pre-Pack-rename imports).
+    private async Task<string> ResolveDefaultLayerIdAsync(string packId, CancellationToken ct)
+    {
+        var legacy = $"bundle:{packId}";
+        return await _store.GetLayerAsync(legacy, ct) is not null ? legacy : $"pack:{packId}";
+    }
+
     /// <summary>
     /// Load a pack from disk and preview what a sync would do, without applying changes.
     /// </summary>
     public async Task<LayerSyncPreview> PreviewAsync(string packPath, string? layerId = null, CancellationToken ct = default)
     {
         var pack = await LoadPackAsync(packPath, ct);
-        layerId ??= $"bundle:{pack.Id}";
+        layerId ??= await ResolveDefaultLayerIdAsync(pack.Id, ct);
         return await DiffAsync(pack, layerId, ct);
     }
 
@@ -47,7 +55,7 @@ public class LayerSyncService
         string packPath, string? layerId = null, bool removeStale = true, CancellationToken ct = default)
     {
         var pack = await LoadPackAsync(packPath, ct);
-        layerId ??= $"bundle:{pack.Id}";
+        layerId ??= await ResolveDefaultLayerIdAsync(pack.Id, ct);
 
         var preview = await DiffAsync(pack, layerId, ct);
         var packEntryMap = pack.Entries.ToDictionary(e => e.Id, StringComparer.OrdinalIgnoreCase);

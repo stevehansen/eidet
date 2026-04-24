@@ -184,7 +184,7 @@ All endpoints on `localhost:19380` (configurable). Provided for tool integration
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/eidet/context?repo={repoId}` | L0+L1 context block |
-| `GET` | `/api/eidet/search?repo={repoId}&q={query}` | Search memories |
+| `GET` | `/api/eidet/recall?repo={repoId}&q={query}` | Recall memories (hybrid search). Legacy alias: `/api/eidet/search`. |
 | `GET` | `/api/eidet/{id}` | Get single memory |
 | `GET` | `/api/eidet/stats?repo={repoId}` | Counts by type/layer |
 | `POST` | `/api/eidet` | Store memory |
@@ -608,7 +608,7 @@ eidet config set <key> <v> # Write config value
 ### Memory Commands (shortcuts for REST API)
 
 ```bash
-eidet recall "auth patterns"           # Search memories
+eidet recall "auth patterns"           # Recall memories
 eidet store -t insight "CQRS pattern"  # Store a memory
 eidet stats                            # Memory counts
 eidet export -o memories.md            # Export as markdown

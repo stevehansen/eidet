@@ -1,0 +1,141 @@
+# Ubiquitous Language
+
+## Memory core
+
+| Term             | Definition                                                                                           | Aliases to avoid                       |
+| ---------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| **Memory**       | A single persisted unit of agent knowledge, typed and classified, with a deterministic ID            | Entry, record, note, document          |
+| **Content**      | The full prose body of a **Memory** as originally written                                            | Body, text, payload                    |
+| **Summary**      | A 1-2 sentence condensation of a **Memory**, produced by **Enrichment**                              | Abstract, description                  |
+| **One-liner**    | An ultra-compact (~10 word) restatement of a **Memory**, used to dense-pack **L1 Context**           | Headline, tagline                      |
+| **Entity**       | A concrete named thing extracted from **Content** (file path, class, command, identifier)            | Keyword, token, reference              |
+| **Tag**          | A free-form label attached to a **Memory** to aid **Recall** and browsing                            | Category, label, topic                 |
+| **Importance**   | An operator-set 0–1 weight expressing how much this **Memory** should influence **Recall**           | Weight, priority                       |
+| **Confidence**   | A 0–1 weight expressing how certain we are the **Memory** is true; distinct from **Importance**      | Certainty, trust                       |
+| **Provenance**   | Where a **Memory** came from: user-stated, agent-inferred, tool output, consolidation, intake, etc.  | Origin, author                         |
+
+## Memory types
+
+Every **Memory** has exactly one of the following types. Each type has its own retrieval budget in **Recall**.
+
+| Term             | Definition                                                                                           | Aliases to avoid                       |
+| ---------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| **Observation**  | A raw fact, event, or decision captured from a session; the most volatile memory type                | Note, log, finding                     |
+| **Insight**      | Stable, confirmed knowledge — usually produced by **Consolidation** of multiple **Observations**     | Conclusion, lesson                     |
+| **Procedure**    | A multi-step workflow or recipe for accomplishing a concrete task                                    | Runbook, how-to, script                |
+| **Heuristic**    | A do/don't rule of thumb distilled from experience                                                   | Rule, guideline, best practice         |
+
+## Namespacing & layers
+
+| Term             | Definition                                                                                           | Aliases to avoid                       |
+| ---------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| **Repo**         | A namespace for **Memories**, identified by a normalized filesystem path (e.g. `P--Eidet`)           | Project, workspace, namespace          |
+| **Layer**        | A read-only or read-write container of **Memories** that can be stacked, Docker-style                | Collection, pool                       |
+| **Local layer**  | The single read-write **Layer**; all new writes land here                                            | Default layer, working layer           |
+| **Shared layer** | A read-only **Layer** imported from a team or author; contributes to **Recall** but not writes       | Team layer, external layer             |
+| **Base layer**   | A read-only **Layer** shipped by a package or framework author                                       | System layer, vendor layer             |
+| **Link**         | A typed relation from one **Memory** (or **Repo**) to another, possibly across **Repos**             | Reference, edge, pointer               |
+
+## Retrieval & context loading
+
+| Term             | Definition                                                                                           | Aliases to avoid                       |
+| ---------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| **Recall**       | A single hybrid query (vector + full-text + filters) that returns ranked **Memories**                | Search, lookup, query                  |
+| **Context**      | A compact bundle of **Memories** packed for injection into an agent's prompt                         | Prompt context, preamble               |
+| **L0**           | ~50-token identity layer: repo name, role, non-negotiables; always loaded at session start           | Tier 0, header                         |
+| **L1**           | ~500-token top-ranked **One-liners**; loaded at session start for <600 token wake-up                 | Tier 1, hot set                        |
+| **L2**           | On-demand deep **Recall** — full **Content** pulled only when the agent asks                         | Tier 2, cold set                       |
+| **Foresight hint** | A predictive relevance signal attached to a **Memory**, nudging **Recall** in related situations   | Hint, prediction                       |
+| **Cross-repo**   | A **Recall** mode that also searches linked **Repos**; off by default                                | Global search, federated search        |
+
+## Feedback & scoring
+
+| Term             | Definition                                                                                           | Aliases to avoid                       |
+| ---------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| **Echo**         | Positive feedback: a recalled **Memory** was useful; boosts future **Recall** score                  | Upvote, thumbs-up                      |
+| **Fizzle**       | Negative feedback: a recalled **Memory** was irrelevant; dampens future **Recall** score             | Downvote, reject                       |
+| **FadeMem**      | The decay model that reduces a **Memory**'s influence over time unless reinforced by **Echoes**      | Decay, aging                           |
+| **Access count** | Number of times a **Memory** has been surfaced by **Recall**                                         | Views, hits                            |
+
+## Write path
+
+Every store attempt passes through these gates, in order. Any gate can reject the write.
+
+| Term               | Definition                                                                                         | Aliases to avoid                       |
+| ------------------ | -------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| **Write gate**     | A deterministic, local, always-on check that runs before a **Memory** is persisted                 | Filter, validator                      |
+| **Secret scanner** | The **Write gate** that rejects **Content** matching credential patterns (13 built-in)             | Credential filter, secret filter       |
+| **Signal gate**    | The **Write gate** that rejects low-signal, trivially-derivable **Content**                        | Noise filter, quality gate             |
+| **Enrichment**     | Optional Ollama-backed post-write step that generates **Summary**, **One-liner**, **Foresight hint** | Summarization, augmentation          |
+
+## Lifecycle
+
+| Term               | Definition                                                                                         | Aliases to avoid                       |
+| ------------------ | -------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| **Validity**       | A `ValidFrom`/`ValidUntil` interval attached to every **Memory**; drives point-in-time queries     | Lifetime, window                       |
+| **Supersession**   | A content edit produces a new **Memory** whose `ParentMemoryId` points at the old one              | Replacement, update, overwrite         |
+| **Version chain**  | The linked list of superseded **Memories** ending at the latest version                            | History, revision chain                |
+| **Forget**         | A soft-delete that records a reason and closes the **Validity** interval; never hard-deletes       | Delete, purge, remove                  |
+| **TTL expiry**     | A scheduled **Forget** driven by `ForgetAfter` on a **Memory**                                     | Expiration, timeout                    |
+| **Consolidation**  | A scheduled pass that merges related **Observations** into stable **Insights**                     | Compaction, rollup, summarization      |
+| **Maintenance**    | The periodic pipeline that runs **TTL expiry**, dedup, **FadeMem** decay, and **Enrichment**       | Housekeeping, cleanup, cron            |
+| **Intake**         | Bulk ingestion of project files (CLAUDE.md, README, docs) as seed **Memories**                     | Import, bootstrap, seeding             |
+
+## Sharing
+
+| Term               | Definition                                                                                         | Aliases to avoid                       |
+| ------------------ | -------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| **Pack**           | A shareable markdown bundle of **Memories** with YAML frontmatter; renders anywhere                | Bundle, archive, export                |
+| **Pack export**    | Producing a **Pack** from one or more **Layers**                                                   | Dump, snapshot                         |
+| **Pack import**    | Consuming a **Pack**; auto-mounts it as a **Shared layer**                                         | Load, install                          |
+| **ScribeGate**     | The external pack-format contract Eidet's **Pack** is compatible with                              | (proper name)                          |
+
+## Actors & surfaces
+
+| Term               | Definition                                                                                         | Aliases to avoid                       |
+| ------------------ | -------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| **Agent**          | An AI coding assistant that reads/writes **Memories** via MCP or REST                              | Bot, assistant, client                 |
+| **Session**        | A single agent run; identified by `SourceSessionId` on **Observations** it creates                 | Conversation, run                      |
+| **Operator**       | A human who curates **Memories** via Web UI, CLI, or API (PUT/forget/edit)                         | Maintainer, user                       |
+| **Service**        | The Eidet daemon process that hosts MCP, REST, scheduler, and Web UI                               | Server, daemon, host                   |
+| **Hook**           | A pre- or post-lifecycle shell command the **Service** invokes on one of six events                | Callback, trigger                      |
+
+## Relationships
+
+- A **Memory** belongs to exactly one **Repo** and exactly one **Layer**.
+- Only the **Local layer** accepts writes; **Shared** and **Base layers** are read-only but contribute to **Recall**.
+- Each **Memory** has exactly one **Memory type**, and each type has its own budget in **Context** assembly.
+- A **Supersession** creates a new **Memory** linked to its parent — the original is never mutated.
+- **Forget** closes a **Memory**'s **Validity** window but preserves the document for audit.
+- **Consolidation** produces **Insights** derived from multiple **Observations**; the **Observations** remain.
+- **Echo** and **Fizzle** adjust **Recall** ranking but do not alter **Content**.
+- A **Pack import** mounts a **Shared layer**; it never merges into the **Local layer**.
+
+## Example dialogue
+
+> **Dev:** "If the agent learns something during a **Session**, does it go straight in as an **Insight**?"
+
+> **Domain expert:** "No — it enters as an **Observation** in the **Local layer**. **Insights** come out of **Consolidation**, once we've seen the pattern enough times and with enough **Confidence**."
+
+> **Dev:** "What stops the agent from writing a secret into a **Memory**?"
+
+> **Domain expert:** "The **Secret scanner** **Write gate**. Every store passes through it before the **Memory** is persisted. If the **Content** matches a credential pattern, the write is rejected. The **Signal gate** runs right after and rejects low-signal noise."
+
+> **Dev:** "Say a teammate's **Pack** contains an **Insight** that turns out to be wrong here. Can I fix it?"
+
+> **Domain expert:** "Not in place — a **Pack import** lands in a **Shared layer**, which is read-only. You **Forget** it with a reason, or you write a correcting **Heuristic** in the **Local layer**. When the agent does **Recall**, the **Local layer** wins ties and the **Forget** closes the **Validity** window on the bad one."
+
+> **Dev:** "And at session start, the agent only gets the **One-liners**, right?"
+
+> **Domain expert:** "Right — **L0** (identity) plus **L1** (top-ranked **One-liners**), under 600 tokens total. Full **Content** is **L2** — pulled on demand via **Recall**."
+
+## Flagged ambiguities
+
+- **"Memory" vs. "document"** — in RavenDB every **Memory** is stored as a document, but we reserve "document" for the storage primitive and always say **Memory** at the domain level.
+- **"Layer" vs. "Repo"** — both scope **Memories**, but a **Repo** is the project namespace while a **Layer** is the read/write-and-sharing container. A single **Repo** can have multiple **Layers** (one **Local**, zero-or-more **Shared**/**Base**).
+- **"Bundle" vs. "Pack"** — early prose used "bundle" generically; the canonical term is **Pack** (the markdown format). Reserve "bundle" only when talking about packaging as a generic concept.
+- **"Search" vs. "Recall"** — both are used interchangeably in API paths, but **Recall** is the domain verb (ranked, typed, budgeted). Plain "search" is too generic and overlaps with full-text grep.
+- **"Delete" vs. "Forget"** — Eidet has no hard delete. Say **Forget** to emphasize the append-only, audit-preserving semantics.
+- **"Importance" vs. "Confidence"** — these are distinct: **Importance** is how much you want this **Memory** to rank, **Confidence** is how true you believe it to be. A critical-but-uncertain **Observation** is high **Importance**, low **Confidence**.
+- **"Insight"** (domain) vs. **"insight"** (colloquial "aha moment") — the domain term means a *consolidated, confirmed* **Memory**, not a fresh realization. A fresh realization is an **Observation** until **Consolidation** promotes it.
+- **"User"** is overloaded: in this domain prefer **Operator** for the human curator and **Agent** for the AI writer; reserve "user" only for end-user-preference **Memories**.

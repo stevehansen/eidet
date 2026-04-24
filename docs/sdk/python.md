@@ -89,7 +89,7 @@ eidet.store(
     supersedes: str | None = None,
 ) -> dict[str, Any]
 
-# Search memories
+# Recall memories
 eidet.recall(
     repo: str,
     query: str,

@@ -251,7 +251,7 @@ public static partial class MarkdownPackFormat
 
     // ─── Entry Parsing ──────────────────────────────────────────────────
 
-    internal static List<MemoryEntry> ParseEntries(string body, string bundleId)
+    internal static List<MemoryEntry> ParseEntries(string body, string packId)
     {
         var entries = new List<MemoryEntry>();
         MemoryType? currentType = null;
@@ -330,11 +330,11 @@ public static partial class MarkdownPackFormat
                     Type = currentType ?? MemoryType.Insight,
                     Content = content,
                     OneLiner = oneLiner,
-                    Provenance = MemoryProvenance.Bundle,
+                    Provenance = MemoryProvenance.Pack,
                     Source = "markdown-pack",
                     IsLatest = true,
                     CreatedAt = DateTime.UtcNow,
-                    LayerId = string.IsNullOrEmpty(bundleId) ? null : $"bundle:{bundleId}",
+                    LayerId = string.IsNullOrEmpty(packId) ? null : $"pack:{packId}",
                 };
 
                 // Parse metadata from HTML comments
@@ -342,8 +342,8 @@ public static partial class MarkdownPackFormat
                     ApplyMetadataComment(entry, comment);
 
                 // Generate deterministic ID
-                entry.RepoId = bundleId;
-                entry.Id = MemoryIdGenerator.Generate(bundleId, entry.Type, entry.Content, entry.CreatedAt);
+                entry.RepoId = packId;
+                entry.Id = MemoryIdGenerator.Generate(packId, entry.Type, entry.Content, entry.CreatedAt);
 
                 entries.Add(entry);
                 continue;

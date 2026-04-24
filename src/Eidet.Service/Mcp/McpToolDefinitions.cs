@@ -123,16 +123,16 @@ public static class McpToolDefinitions
             Name = "eidet_pack_export",
             Description = "Export memories as a shareable markdown pack. Creates a human-readable file with YAML frontmatter, type-grouped sections, and HTML comment metadata. Compatible with ScribeGate for publishing.",
             InputSchema = Schema([
-                Prop("bundle_id", "string", "Unique bundle identifier (e.g., 'react-best-practices')."),
-                PropOptional("name", "string", "Display name for the pack (defaults to bundle_id)."),
+                Prop("pack_id", "string", "Unique pack identifier (e.g., 'react-best-practices'). Legacy alias: bundle_id."),
+                PropOptional("name", "string", "Display name for the pack (defaults to pack_id)."),
                 PropOptional("version", "string", "Pack version (default '1.0.0')."),
                 PropOptional("author", "string", "Author name."),
                 PropOptional("description", "string", "Pack description."),
-                PropOptional("output", "string", "File path to write (.md for markdown, .eidet/.json for JSON). Defaults to {bundle_id}.md."),
+                PropOptional("output", "string", "File path to write (.md for markdown, .eidet/.json for JSON). Defaults to {pack_id}.md."),
                 PropOptional("types", "array", "Memory types to include (default: insight, procedure, heuristic).", items: "string"),
                 PropOptional("tags", "array", "Filter by tags.", items: "string"),
                 PropOptional("packages", "array", "Applicable packages (NuGet/npm) this pack covers.", items: "string"),
-            ], ["bundle_id"]),
+            ], ["pack_id"]),
         },
         new()
         {

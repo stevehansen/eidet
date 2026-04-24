@@ -227,8 +227,8 @@ Users see no difference. Same panels, same interactions, backed by the service.
 For users with existing embedded memories:
 
 1. TerminalHost Settings → Memory → "Migrate to Eidet" button
-2. Exports all memories via `memory_bundle_export` format
-3. Calls `POST /api/eidet/bundles/import` on the service
+2. Exports all memories via `eidet_pack_export` format
+3. Calls `POST /api/eidet/packs/import` on the service
 4. Reconfigures TerminalHost to use service API
 5. Shows migration summary: "Migrated 47 memories across 3 repos"
 6. Old embedded RavenDB data preserved as backup
@@ -247,7 +247,7 @@ A single-page application served by the remote backend (SaaS or self-hosted) or 
 | **Memory Browser** | Search, filter by type/tags/repo, detail panel with entities, foresight, confidence, provenance. Markdown rendering. |
 | **Timeline View** | Chronological view of memory evolution. Validity intervals as bars. Consolidation events highlighted. |
 | **Team Dashboard** | Team layer browser, member list, publishing activity, shared knowledge stats. |
-| **Settings** | Service configuration, sync status, team management, bundle catalog. |
+| **Settings** | Service configuration, sync status, team management, pack catalog. |
 | **Import/Export** | Upload .mempack files, export memories as markdown, bulk operations. |
 
 ### Local Web UI
@@ -313,7 +313,7 @@ Potential VS Code extension that integrates memory into the editor.
 
 ### Features (Conceptual)
 
-- **Memory sidebar**: Browse/search memories for current workspace
+- **Memory sidebar**: Browse and recall memories for current workspace
 - **Inline annotations**: Show relevant memories as CodeLens on files
 - **Quick store**: Select code → "Store as memory" command
 - **Recall on hover**: Hover over a function → show related memories

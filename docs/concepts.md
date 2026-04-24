@@ -44,7 +44,7 @@ Type budgets ensure diversity: ~50% insights, ~30% procedures, ~20% heuristics.
 
 ### L2 — On-Demand Recall
 
-Deeper search triggered by the agent when it needs specific knowledge. Uses hybrid retrieval (vector + full-text) with scoring and type diversity budgets.
+Deeper recall triggered by the agent when it needs specific knowledge. Uses hybrid retrieval (vector + full-text) with scoring and type diversity budgets.
 
 ## Scoring
 
@@ -140,7 +140,7 @@ Eidet uses a Docker-like layer model:
 |-------|--------|-------------|
 | **Local** | Read/Write | Your project's memories |
 | **Shared** | Read-only | Mounted from sibling projects or team packs |
-| **Base** | Read-only | Imported knowledge bundles |
+| **Base** | Read-only | Imported knowledge packs |
 
 Writes always go to the local layer. Non-local results get a 0.8x score de-boost.
 

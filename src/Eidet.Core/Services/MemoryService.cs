@@ -710,7 +710,7 @@ public class MemoryService
         "claude-session" => MemoryProvenance.AgentInferred,
         "consolidation" => MemoryProvenance.Consolidation,
         "intake" => MemoryProvenance.Intake,
-        "bundle" => MemoryProvenance.Bundle,
+        "pack" or "bundle" => MemoryProvenance.Pack,
         "system" => MemoryProvenance.System,
         _ => MemoryProvenance.AgentInferred,
     };

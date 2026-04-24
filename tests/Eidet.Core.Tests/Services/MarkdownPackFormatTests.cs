@@ -262,13 +262,13 @@ public class MarkdownPackFormatTests
     }
 
     [Fact]
-    public void Deserialize_SetsLayerIdFromBundleId()
+    public void Deserialize_SetsLayerIdFromPackId()
     {
         var md = """
             ---
             title: Test
             eidet:
-              id: my-bundle
+              id: my-pack
               version: 1.0.0
               author: test
             ---
@@ -284,7 +284,7 @@ public class MarkdownPackFormatTests
             """;
 
         var pack = MarkdownPackFormat.Deserialize(md);
-        Assert.Equal("bundle:my-bundle", pack.Entries[0].LayerId);
+        Assert.Equal("pack:my-pack", pack.Entries[0].LayerId);
     }
 
     [Fact]
@@ -310,7 +310,7 @@ public class MarkdownPackFormatTests
             """;
 
         var pack = MarkdownPackFormat.Deserialize(md);
-        Assert.Equal(MemoryProvenance.Bundle, pack.Entries[0].Provenance);
+        Assert.Equal(MemoryProvenance.Pack, pack.Entries[0].Provenance);
         Assert.Equal("markdown-pack", pack.Entries[0].Source);
     }
 

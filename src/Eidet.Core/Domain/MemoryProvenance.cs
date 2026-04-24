@@ -1,5 +1,8 @@
+using Newtonsoft.Json;
+
 namespace Eidet.Core.Domain;
 
+[JsonConverter(typeof(MemoryProvenanceJsonConverter))]
 public enum MemoryProvenance
 {
     UserStated,
@@ -7,6 +10,6 @@ public enum MemoryProvenance
     ToolOutput,
     Consolidation,
     Intake,
-    Bundle,
+    Pack,
     System,
 }

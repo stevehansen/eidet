@@ -78,7 +78,7 @@ await eidet.store({
   supersedes?: string,     // ID of memory to replace
 }): Promise<StoreResult>
 
-// Search memories
+// Recall memories
 await eidet.recall(
   repo: string,
   query: string,

@@ -80,7 +80,7 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 | Repository Paths | Normalized to repo IDs (e.g., `P--Eidet`) | Low — filesystem layout info |
 | Configuration | RavenDB URL, Ollama URL, bind address, hook commands | Medium — service topology |
 | Backup Files | Full RavenDB export in .eidetbackup ZIP | High — contains all memories |
-| Pack Files | Exported memory bundles in .eidet JSON | Medium — portable memory sets |
+| Pack Files | Exported Packs in .eidet (markdown/JSON) | Medium — portable memory sets |
 | Enrichment Data | Ollama-generated summaries, foresight hints, entities | Low — derived from content |
 
 ---

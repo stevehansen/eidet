@@ -149,7 +149,7 @@ public class EidetApiServer
             else if (method == "GET" && path == "/api/eidet/context")
                 await HandleGetContext(ctx, ct);
 
-            else if (method == "GET" && path == "/api/eidet/search")
+            else if (method == "GET" && (path == "/api/eidet/recall" || path == "/api/eidet/search"))
                 await HandleSearch(ctx, ct);
 
             else if (method == "GET" && path.StartsWith("/api/eidet/history/"))
@@ -490,15 +490,16 @@ public class EidetApiServer
     private async Task HandlePackExport(HttpListenerContext ctx, CancellationToken ct)
     {
         var req = await ReadJson<PackExportRequest>(ctx);
-        if (req is null || string.IsNullOrEmpty(req.Repo) || string.IsNullOrEmpty(req.BundleId)
+        var packId = req?.ResolvedPackId ?? "";
+        if (req is null || string.IsNullOrEmpty(req.Repo) || string.IsNullOrEmpty(packId)
             || string.IsNullOrEmpty(req.Name) || string.IsNullOrEmpty(req.Version))
         {
-            await WriteJson(ctx, new { error = "Missing required fields: repo, bundleId, name, version" }, 400);
+            await WriteJson(ctx, new { error = "Missing required fields: repo, packId, name, version" }, 400);
             return;
         }
 
         var pack = await _export.ExportPackAsync(
-            RepoIdNormalizer.Normalize(req.Repo), req.BundleId, req.Name, req.Version, "user",
+            RepoIdNormalizer.Normalize(req.Repo), packId, req.Name, req.Version, "user",
             ct: ct);
 
         if (!string.IsNullOrEmpty(req.OutputPath))
@@ -1074,10 +1075,13 @@ public record FeedbackRequest
 public record PackExportRequest
 {
     public string Repo { get; init; } = "";
-    public string BundleId { get; init; } = "";
+    public string PackId { get; init; } = "";
+    public string? BundleId { get; init; } // legacy alias for PackId
     public string Name { get; init; } = "";
     public string Version { get; init; } = "";
     public string? OutputPath { get; init; }
+
+    public string ResolvedPackId => !string.IsNullOrEmpty(PackId) ? PackId : (BundleId ?? "");
 }
 
 public record PackImportRequest

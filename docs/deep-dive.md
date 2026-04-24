@@ -457,7 +457,7 @@ Eidet uses a Docker-like layer model for memory scope:
 ├─────────────────────────┤
 │    Shared Layer (ro)     │  Mounted from sibling projects
 ├─────────────────────────┤
-│     Base Layer (ro)      │  Imported knowledge bundles
+│     Base Layer (ro)      │  Imported knowledge packs
 └─────────────────────────┘
 ```
 
@@ -467,7 +467,7 @@ Eidet uses a Docker-like layer model for memory scope:
 
 - **Shared layers:** You have a monorepo with multiple services. Each service has its own memory scope, but they can mount each other's layers to share architectural knowledge.
 - **Base layers:** You import a community knowledge pack (e.g., "React best practices" or "PostgreSQL optimization tips") as a read-only base layer.
-- **Pack import:** When importing an `.eidet` pack file, it can be auto-mounted as a Base layer via `bundle:{packId}` convention.
+- **Pack import:** When importing an `.eidet` pack file, it can be auto-mounted as a Base layer. The layer ID uses the legacy `bundle:{packId}` prefix on disk (retained for backward compatibility).
 
 ---
 
@@ -488,7 +488,7 @@ Eidet exposes 13 tools via MCP. Here's what each does and when agents typically 
 | `eidet_consolidate` | Group observations into insights | Periodically, after many stores |
 | `eidet_maintenance` | Run full maintenance pipeline | Periodically, or when quality degrades |
 | `eidet_export` | Export as markdown | Sharing or backup |
-| `eidet_pack_export` | Export as portable .eidet file | Sharing knowledge bundles |
+| `eidet_pack_export` | Export as portable .eidet file | Sharing knowledge packs |
 | `eidet_pack_import` | Import .eidet pack | Importing shared knowledge |
 
 ### The Typical Agent Session
@@ -831,6 +831,6 @@ eidet config set service.port 19380  # Change a setting
 | **Consolidation** | Grouping observations into insights |
 | **Supersession** | Replacing a memory with an updated version (preserving history) |
 | **Write gate** | Pre-storage filter (secret scanner + signal gate) |
-| **Pack** | Portable `.eidet` file for sharing memory bundles |
+| **Pack** | Portable `.eidet` file — the canonical shareable memory bundle |
 | **Layer** | Scope for memory isolation (Local/Shared/Base) |
 | **RepoId** | Normalized identifier for a project (e.g., `P--Eidet` for `P:\Eidet`) |

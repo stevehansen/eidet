@@ -37,7 +37,7 @@ Store a new memory.
 
 ### eidet_recall
 
-Search memories by semantic query.
+Recall memories by semantic query (hybrid vector + full-text search).
 
 ```json
 {

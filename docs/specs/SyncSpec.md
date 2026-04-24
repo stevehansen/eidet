@@ -439,7 +439,7 @@ No credit card for free tier. No email verification required for basic sync (jus
 
 ### Account Tiers
 
-| Tier | Price | Sync | Teams | Bundles | Web UI |
+| Tier | Price | Sync | Teams | Packs | Web UI |
 |------|-------|------|-------|---------|--------|
 | Free | $0 | 1 device, 5K memories | No | Import only | Read-only |
 | Pro | $X/mo | Unlimited devices + memories | Create/join | Full | Full |
@@ -479,7 +479,7 @@ No credit card for free tier. No email verification required for basic sync (jus
 | Organizations (shared vaults) | Teams (shared layers) |
 | Collections (selective sharing) | Published memories (selective publish) |
 | Master password → encryption key | User key → E2E encryption |
-| Sends (time-limited sharing) | Bundles (.eidet, shareable) |
+| Sends (time-limited sharing) | Packs (.eidet, shareable) |
 | Emergency access | Memory export (markdown, portable) |
 
 ---
@@ -543,7 +543,7 @@ eidet import --from-raven "http://localhost:8080" --database "TerminalHostMemory
 The migration preserves:
 - All memory entries (with full metadata, provenance, links)
 - Layer configuration
-- Bundle mounts
+- Pack mounts
 - Cross-repo links
 - Event history (reconstructed from memory creation timestamps)
 
@@ -553,6 +553,6 @@ The migration preserves:
 
 - **Peer-to-peer sync**: Direct device-to-device sync without any remote, using mDNS discovery on local network.
 - **Conflict resolution for shared layers**: If two team members publish contradicting insights, flag for team review.
-- **Memory marketplace**: Public bundles for popular frameworks/libraries, discoverable and installable via CLI.
+- **Memory marketplace**: Public packs for popular frameworks/libraries, discoverable and installable via CLI.
 - **Webhooks**: Notify external systems when memories are stored/recalled (CI/CD integration).
 - **GraphQL API**: Alternative to REST for flexible querying from web UI and custom tools.

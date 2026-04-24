@@ -54,10 +54,10 @@ public class ExportService
         return sb.ToString();
     }
 
-    // ─── Bundle Export ────────────────────────────────────────────────────
+    // ─── Pack Export ─────────────────────────────────────────────────────
 
     public async Task<EidetPack> ExportPackAsync(
-        string repoId, string bundleId, string name, string version, string author,
+        string repoId, string packId, string name, string version, string author,
         List<MemoryType>? types = null, List<string>? tags = null,
         List<string>? applicablePackages = null, CancellationToken ct = default)
     {
@@ -77,12 +77,12 @@ public class ExportService
             entry.SourceSessionId = null;
             entry.EchoCount = 0;
             entry.FizzleCount = 0;
-            entry.LayerId = $"bundle:{bundleId}";
+            entry.LayerId = $"pack:{packId}";
         }
 
         return new EidetPack
         {
-            Id = bundleId,
+            Id = packId,
             Name = name,
             Version = version,
             Author = author,
@@ -112,7 +112,7 @@ public class ExportService
         await File.WriteAllTextAsync(path, markdown, ct);
     }
 
-    // ─── Bundle Import ───────────────────────────────────────────────────
+    // ─── Pack Import ─────────────────────────────────────────────────────
 
     public async Task<EidetPack> ImportPackFromFileAsync(string path, CancellationToken ct = default)
     {
@@ -154,7 +154,12 @@ public class ExportService
     {
         var imported = await ImportPackAsync(pack, ct);
 
-        var layerId = $"bundle:{pack.Id}";
+        // Reuse legacy "bundle:" layer if one was mounted before the Pack rename.
+        var layerId = $"pack:{pack.Id}";
+        var legacyLayerId = $"bundle:{pack.Id}";
+        if (await _store.GetLayerAsync(legacyLayerId, ct) is not null)
+            layerId = legacyLayerId;
+
         var layer = await layerService.MountAsync(
             layerId,
             $"{pack.Name} v{pack.Version}",
