@@ -56,15 +56,9 @@ public class MemoryService
         if (!preHook.Allowed)
             return StoreResult.Rejected($"Hook rejected: {preHook.Reason}");
 
-        // Gate 1: Secret scanning
-        var secretResult = SecretScanner.Scan(content);
-        if (!secretResult.Passed)
-            return StoreResult.Rejected(secretResult.Reason!);
-
-        // Gate 2: Signal gate
-        var signalResult = SignalGate.Check(content, type);
-        if (!signalResult.Passed)
-            return StoreResult.Rejected(signalResult.Reason!);
+        var gate = WriteValidator.Validate(content, type);
+        if (!gate.Passed)
+            return StoreResult.Rejected(gate.Reason!);
 
         // Resolve provenance
         var resolvedProvenance = provenance ?? ResolveProvenance(source);
@@ -462,12 +456,8 @@ public class MemoryService
 
         if (contentChanged)
         {
-            // Content change: validate through gates
-            var secretResult = SecretScanner.Scan(content!);
-            if (!secretResult.Passed) return false;
-
-            var signalResult = SignalGate.Check(content!, type ?? entry.Type);
-            if (!signalResult.Passed) return false;
+            var gate = WriteValidator.Validate(content!, type ?? entry.Type);
+            if (!gate.Passed) return false;
 
             // Create new version (supersession)
             entry.IsLatest = false;

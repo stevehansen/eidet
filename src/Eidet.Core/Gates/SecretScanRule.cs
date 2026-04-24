@@ -1,9 +1,13 @@
 using System.Text.RegularExpressions;
+using Eidet.Core.Domain;
 
 namespace Eidet.Core.Gates;
 
-public static partial class SecretScanner
+internal sealed partial class SecretScanRule : IValidationRule
 {
+    public const string GateName = "secret-scan";
+    public string Name => GateName;
+
     private static readonly (Regex Pattern, string Description)[] Patterns =
     [
         (AwsKeyRegex(), "AWS access key"),
@@ -21,14 +25,14 @@ public static partial class SecretScanner
         (SlackTokenRegex(), "Slack token"),
     ];
 
-    public static GateResult Scan(string content)
+    public ValidationResult Check(string content, MemoryType type)
     {
         foreach (var (pattern, description) in Patterns)
         {
             if (pattern.IsMatch(content))
-                return GateResult.Fail($"Blocked: content contains {description}");
+                return ValidationResult.Fail(GateName, $"Blocked: content contains {description}");
         }
-        return GateResult.Pass();
+        return ValidationResult.Pass();
     }
 
     [GeneratedRegex(@"AKIA[0-9A-Z]{16}")]

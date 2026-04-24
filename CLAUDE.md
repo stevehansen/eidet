@@ -24,7 +24,7 @@ Design decisions live in `docs/specs/`:
 - **16 MCP tools**: store, recall, context, forget, feedback, history, intake, link, consolidate, maintenance, export, pack_export, pack_import, edit (+ layer mgmt)
 - **4 memory types**: Observation, Insight, Procedure, Heuristic — each with per-type retrieval budgets
 - **Storage**: RavenDB (embedded or external) with vector + full-text hybrid search on composite `SearchText` field
-- **Write gates**: SecretScanner (13 patterns), SignalGate (low-signal filter), WriteGate — deterministic, local, always-on
+- **Write gates**: `WriteValidator` chains rules (13 secret patterns + signal/low-signal + self-talk) — deterministic, local, always-on; single entry point from `MemoryService.StoreAsync` and `UpdateMemoryAsync`
 - **Optional enrichment**: Ollama background workers generate one-liners, summaries, foresight hints, entity supplements
 - **Layers**: Local (rw) + Shared/Base (ro); auto-mount on pack import
 - **Interfaces**: MCP stdio, MCP HTTP, REST API, CLI, Web UI (`/ui`), SDKs (TS/Python/C#)
