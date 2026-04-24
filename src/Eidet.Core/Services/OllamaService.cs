@@ -4,7 +4,7 @@ namespace Eidet.Core.Services;
 
 /// <summary>
 /// Ollama model management: list, pull, check availability.
-/// Separate from OllamaEnrichmentService (which handles enrichment tasks).
+/// Separate from Eidet.Core.Enrichment (which handles enrichment tasks).
 /// </summary>
 public sealed class OllamaService : IDisposable
 {

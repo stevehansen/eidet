@@ -1,4 +1,5 @@
 using Eidet.Core.Domain;
+using Eidet.Core.Enrichment;
 using Eidet.Core.Storage;
 
 namespace Eidet.Core.Services;
@@ -7,14 +8,14 @@ public class MaintenanceService
 {
     private readonly IEidetStore _store;
     private readonly ConsolidationService _consolidation;
-    private readonly IEnrichmentService _enrichment;
+    private readonly EnrichmentService _enrichment;
 
     public MaintenanceService(IEidetStore store, ConsolidationService consolidation,
-        IEnrichmentService? enrichment = null)
+        EnrichmentService? enrichment = null)
     {
         _store = store;
         _consolidation = consolidation;
-        _enrichment = enrichment ?? NullEnrichmentService.Instance;
+        _enrichment = enrichment ?? EnrichmentService.CreateNull();
     }
 
     public async Task<MaintenanceResult> RunAsync(
@@ -176,21 +177,21 @@ public class MaintenanceService
         {
             var changed = false;
 
-            var cleanedSummary = OllamaEnrichmentService.StripChainOfThought(entry.Summary);
+            var cleanedSummary = OllamaTextSanitizer.Clean(entry.Summary);
             if (cleanedSummary != entry.Summary)
             {
                 entry.Summary = cleanedSummary;
                 changed = true;
             }
 
-            var cleanedOneLiner = OllamaEnrichmentService.StripChainOfThought(entry.OneLiner);
+            var cleanedOneLiner = OllamaTextSanitizer.Clean(entry.OneLiner);
             if (cleanedOneLiner != entry.OneLiner)
             {
                 entry.OneLiner = cleanedOneLiner;
                 changed = true;
             }
 
-            var cleanedHint = OllamaEnrichmentService.StripChainOfThought(entry.ForesightHint);
+            var cleanedHint = OllamaTextSanitizer.Clean(entry.ForesightHint);
             if (cleanedHint != entry.ForesightHint)
             {
                 entry.ForesightHint = cleanedHint;
@@ -249,58 +250,7 @@ public class MaintenanceService
 
         foreach (var entry in entries)
         {
-            var changed = false;
-
-            // Summary (1-2 sentence)
-            if (string.IsNullOrEmpty(entry.Summary) && !string.IsNullOrWhiteSpace(entry.Content))
-            {
-                var summary = await _enrichment.GenerateSummaryAsync(entry.Content, ct);
-                if (!string.IsNullOrEmpty(summary))
-                {
-                    entry.Summary = summary;
-                    changed = true;
-                }
-            }
-
-            // One-liner upgrade (replace heuristic with LLM if available)
-            if (!string.IsNullOrWhiteSpace(entry.Content) && entry.OneLiner == EntityExtractor.GenerateHeuristicOneLiner(entry.Content))
-            {
-                var oneLiner = await _enrichment.GenerateOneLinerAsync(entry.Content, ct);
-                if (!string.IsNullOrEmpty(oneLiner))
-                {
-                    entry.OneLiner = oneLiner;
-                    changed = true;
-                }
-            }
-
-            // Foresight hint
-            if (string.IsNullOrEmpty(entry.ForesightHint) && !string.IsNullOrWhiteSpace(entry.Content))
-            {
-                var hint = await _enrichment.GenerateForesightHintAsync(entry.Content, ct);
-                if (!string.IsNullOrEmpty(hint))
-                {
-                    entry.ForesightHint = hint;
-                    changed = true;
-                }
-            }
-
-            // LLM entity extraction (supplement regex)
-            if (entry.Entities.Count < 2 && !string.IsNullOrWhiteSpace(entry.Content))
-            {
-                var llmEntities = await _enrichment.ExtractEntitiesAsync(entry.Content, ct);
-                if (llmEntities.Count > 0)
-                {
-                    var existing = new HashSet<string>(entry.Entities, StringComparer.OrdinalIgnoreCase);
-                    foreach (var e in llmEntities)
-                    {
-                        if (existing.Add(e))
-                            entry.Entities.Add(e);
-                    }
-                    changed = true;
-                }
-            }
-
-            if (changed)
+            if (await _enrichment.EnrichMemoryAsync(entry, ct))
             {
                 await _store.UpdateAsync(entry, ct);
                 enriched++;

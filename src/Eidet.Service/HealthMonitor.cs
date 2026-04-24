@@ -98,7 +98,7 @@ public sealed class HealthMonitor : IDisposable
 
     private async Task CheckOllamaAsync()
     {
-        // Direct lightweight check — bypasses OllamaEnrichmentService's 5-minute cache
+        // Direct lightweight check — bypasses the Ollama adapter's 5-minute health cache
         // so we can detect status changes within 30 seconds.
         bool healthy;
         try

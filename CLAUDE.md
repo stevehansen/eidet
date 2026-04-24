@@ -88,7 +88,7 @@ eidet/
 - **Hooks system** — 6 lifecycle events; pre-hooks gate via exit code, post-hooks fire-and-forget; zero overhead with `NullHookRunner`
 - **Persisted scheduler** — RavenDB Refresh feature as alarm clock; survives restarts; overdue tasks run within 30s of startup
 - **Repo path tracking** — `RepoUsage.OriginalPath` maps normalized IDs back to filesystem paths; enables Web UI intake
-- **Enrichment CoT stripping** — `StripChainOfThought()` handles `<channel|>` and `<think>` delimiters from Ollama responses
+- **Enrichment port/adapter** — `Eidet.Core.Enrichment`: `EnrichmentService` facade over `IEnrichmentPort`; `OllamaEnrichmentAdapter`/`NullEnrichmentAdapter` internal, `InMemoryEnrichmentAdapter` public for tests. `EnrichMemoryAsync(entry)` replaces the duplicated per-field loop; `OllamaTextSanitizer.Clean()` handles `<channel|>` and `<think>` delimiters from Ollama/Gemma responses.
 - **Versioned curation** — content edits create supersession chains; metadata edits update in place
 - **Markdown pack format** — YAML frontmatter + HTML comment metadata; renders in any viewer, machine-parseable, ScribeGate compatible
 - **Embedded Web UI** — vanilla HTML/CSS/JS SPA, canvas graph, shipped in the binary; dark theme, responsive

@@ -1,4 +1,5 @@
 using Eidet.Core.Configuration;
+using Eidet.Core.Enrichment;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Mcp;
@@ -24,9 +25,9 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
         var store = DocumentStoreFactory.CreateFromConfig(config);
         DatabaseProvisioner.DeployIndexes(store);
         var eidetStore = new RavenEidetStore(store);
-        IEnrichmentService enrichment = config.Enrichment.OllamaEnabled
-            ? new OllamaEnrichmentService(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
-            : NullEnrichmentService.Instance;
+        using var enrichment = config.Enrichment.OllamaEnabled
+            ? EnrichmentService.CreateOllama(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
+            : EnrichmentService.CreateNull();
         IHookRunner hookRunner = config.Hooks.PreStore.Count > 0 || config.Hooks.PostStore.Count > 0
             || config.Hooks.PreRecall.Count > 0 || config.Hooks.PostRecall.Count > 0
             || config.Hooks.PreForget.Count > 0 || config.Hooks.PostForget.Count > 0

@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using Eidet.Core;
 using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
+using Eidet.Core.Enrichment;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Mcp;
@@ -32,7 +33,7 @@ public class EidetApiServer
     private readonly LayerSyncService? _layerSync;
     private readonly McpServer? _mcpServer;
     private readonly ConcurrentDictionary<string, McpServer> _mcpServerPool = new();
-    private readonly IEnrichmentService? _enrichment;
+    private readonly EnrichmentService? _enrichment;
     private readonly EidetConfig? _config;
     private readonly AuthConfig _auth;
     private readonly UsageTracker? _usage;
@@ -45,7 +46,7 @@ public class EidetApiServer
         MaintenanceService maintenance, ExportService export, string bindAddress, int port,
         LayerService? layers = null, LayerSyncService? layerSync = null,
         McpServer? mcpServer = null, AuthConfig? auth = null,
-        QualityService? quality = null, IEnrichmentService? enrichment = null, EidetConfig? config = null,
+        QualityService? quality = null, EnrichmentService? enrichment = null, EidetConfig? config = null,
         UsageTracker? usage = null, ScheduledTaskService? scheduledTasks = null)
     {
         _svc = svc;
@@ -860,9 +861,9 @@ public class EidetApiServer
         {
             string? result = req.Task switch
             {
-                "oneliner" => await _enrichment.GenerateOneLinerAsync(req.Content, ct),
-                "summary" => await _enrichment.GenerateSummaryAsync(req.Content, ct),
-                "foresight" => await _enrichment.GenerateForesightHintAsync(req.Content, ct),
+                "oneliner" => await _enrichment.GenerateAsync(EnrichmentPrompt.OneLiner, req.Content, ct),
+                "summary" => await _enrichment.GenerateAsync(EnrichmentPrompt.Summary, req.Content, ct),
+                "foresight" => await _enrichment.GenerateAsync(EnrichmentPrompt.ForesightHint, req.Content, ct),
                 "entities" => string.Join(", ", await _enrichment.ExtractEntitiesAsync(req.Content, ct)),
                 _ => null,
             };

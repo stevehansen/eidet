@@ -1,4 +1,5 @@
 using Eidet.Core.Domain;
+using Eidet.Core.Enrichment;
 using Eidet.Core.Storage;
 
 namespace Eidet.Core.Services;
@@ -6,7 +7,7 @@ namespace Eidet.Core.Services;
 public class ConsolidationService
 {
     private readonly IEidetStore _store;
-    private readonly IEnrichmentService _enrichment;
+    private readonly EnrichmentService _enrichment;
 
     // FadeMem decay parameters per type
     private static readonly Dictionary<MemoryType, (double HalfLifeDays, double Shape)> DecayParams = new()
@@ -17,10 +18,10 @@ public class ConsolidationService
         [MemoryType.Heuristic] = (730, 0.7),     // Sub-linear: nearly immortal
     };
 
-    public ConsolidationService(IEidetStore store, IEnrichmentService? enrichment = null)
+    public ConsolidationService(IEidetStore store, EnrichmentService? enrichment = null)
     {
         _store = store;
-        _enrichment = enrichment ?? NullEnrichmentService.Instance;
+        _enrichment = enrichment ?? EnrichmentService.CreateNull();
     }
 
     public async Task<ConsolidationResult> ConsolidateAsync(string repoId, bool dryRun = false, CancellationToken ct = default)

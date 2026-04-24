@@ -1,4 +1,5 @@
 using Eidet.Core.Configuration;
+using Eidet.Core.Enrichment;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Spectre.Console;
@@ -22,9 +23,9 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
         var config = ConfigManager.Load();
         var store = DocumentStoreFactory.CreateFromConfig(config);
         var eidetStore = new RavenEidetStore(store);
-        IEnrichmentService enrichment = config.Enrichment.OllamaEnabled
-            ? new OllamaEnrichmentService(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
-            : NullEnrichmentService.Instance;
+        using var enrichment = config.Enrichment.OllamaEnabled
+            ? EnrichmentService.CreateOllama(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
+            : EnrichmentService.CreateNull();
         var consolidationSvc = new ConsolidationService(eidetStore, enrichment);
         var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc, enrichment);
 

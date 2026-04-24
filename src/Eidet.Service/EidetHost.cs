@@ -1,5 +1,6 @@
 using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
+using Eidet.Core.Enrichment;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Api;
@@ -15,7 +16,7 @@ public sealed class EidetHost : IDisposable
 {
     private readonly IDocumentStore _store;
     private readonly IEidetStore _eidetStore;
-    private readonly IEnrichmentService _enrichment;
+    private readonly EnrichmentService _enrichment;
     private readonly ScheduledTaskService _scheduler;
     private readonly EnrichmentWorker _enrichmentWorker;
     private readonly EidetApiServer _apiServer;
@@ -35,7 +36,7 @@ public sealed class EidetHost : IDisposable
     public string OllamaUrl { get; }
     public int HookCount { get; }
 
-    private EidetHost(IDocumentStore store, IEidetStore eidetStore, IEnrichmentService enrichment,
+    private EidetHost(IDocumentStore store, IEidetStore eidetStore, EnrichmentService enrichment,
         ScheduledTaskService scheduler, EnrichmentWorker enrichmentWorker,
         EidetApiServer apiServer, EidetConfig config,
         string bind, int port)
@@ -78,9 +79,9 @@ public sealed class EidetHost : IDisposable
 
         var eidetStore = new RavenEidetStore(store);
 
-        IEnrichmentService enrichment = config.Enrichment.OllamaEnabled
-            ? new OllamaEnrichmentService(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
-            : NullEnrichmentService.Instance;
+        var enrichment = config.Enrichment.OllamaEnabled
+            ? EnrichmentService.CreateOllama(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
+            : EnrichmentService.CreateNull();
 
         var layerSvc = new LayerService(eidetStore);
         IHookRunner hookRunner = config.Hooks.PreStore.Count > 0 || config.Hooks.PostStore.Count > 0
@@ -153,7 +154,7 @@ public sealed class EidetHost : IDisposable
         _healthMonitor?.Dispose();
         _enrichmentWorker.Dispose();
         _scheduler.Dispose();
-        if (_enrichment is IDisposable d) d.Dispose();
+        _enrichment.Dispose();
         _store.Dispose();
     }
 }

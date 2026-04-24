@@ -1,0 +1,112 @@
+using Eidet.Core.Domain;
+using Eidet.Core.Services;
+
+namespace Eidet.Core.Enrichment;
+
+/// <summary>
+/// Enrichment facade. Owns the "what fields does a memory need" policy and the merge
+/// semantics for consolidation. Hides prompt wording, HTTP transport, health caching,
+/// and Ollama/Gemma CoT quirks behind an <see cref="IEnrichmentPort"/>.
+/// </summary>
+public sealed class EnrichmentService : IDisposable
+{
+    private readonly IEnrichmentPort _port;
+    private readonly bool _ownsPort;
+
+    public EnrichmentService(IEnrichmentPort port, bool ownsPort = true)
+    {
+        _port = port;
+        _ownsPort = ownsPort;
+    }
+
+    public static EnrichmentService CreateOllama(string ollamaUrl, string model)
+        => new(new OllamaEnrichmentAdapter(ollamaUrl, model));
+
+    public static EnrichmentService CreateNull()
+        => new(new NullEnrichmentAdapter());
+
+    public bool IsAvailable => _port.IsAvailable;
+
+    public Task<bool> CheckHealthAsync(CancellationToken ct = default) => _port.CheckHealthAsync(ct);
+
+    /// <summary>
+    /// Fills missing enrichment fields on the entry in place. Returns true if anything
+    /// changed. Skips cleanly when the port is unavailable or the entry has no content.
+    /// </summary>
+    public async Task<bool> EnrichMemoryAsync(MemoryEntry entry, CancellationToken ct = default)
+    {
+        if (!IsAvailable) return false;
+        if (string.IsNullOrWhiteSpace(entry.Content)) return false;
+
+        var changed = false;
+
+        if (string.IsNullOrEmpty(entry.Summary))
+        {
+            var summary = await GenerateAsync(EnrichmentPrompt.Summary, entry.Content, ct);
+            if (!string.IsNullOrEmpty(summary))
+            {
+                entry.Summary = summary;
+                changed = true;
+            }
+        }
+
+        if (entry.OneLiner == EntityExtractor.GenerateHeuristicOneLiner(entry.Content))
+        {
+            var oneLiner = await GenerateAsync(EnrichmentPrompt.OneLiner, entry.Content, ct);
+            if (!string.IsNullOrEmpty(oneLiner))
+            {
+                entry.OneLiner = oneLiner;
+                changed = true;
+            }
+        }
+
+        if (string.IsNullOrEmpty(entry.ForesightHint))
+        {
+            var hint = await GenerateAsync(EnrichmentPrompt.ForesightHint, entry.Content, ct);
+            if (!string.IsNullOrEmpty(hint))
+            {
+                entry.ForesightHint = hint;
+                changed = true;
+            }
+        }
+
+        if (entry.Entities.Count < 2)
+        {
+            var llmEntities = await ExtractEntitiesAsync(entry.Content, ct);
+            if (llmEntities.Count > 0)
+            {
+                var existing = new HashSet<string>(entry.Entities, StringComparer.OrdinalIgnoreCase);
+                foreach (var e in llmEntities)
+                {
+                    if (existing.Add(e))
+                        entry.Entities.Add(e);
+                }
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    public Task<string?> GenerateAsync(EnrichmentPrompt kind, string content, CancellationToken ct = default)
+        => _port.CompleteAsync(new EnrichmentRequest(kind, content), ct);
+
+    public async Task<List<string>> ExtractEntitiesAsync(string content, CancellationToken ct = default)
+    {
+        var raw = await GenerateAsync(EnrichmentPrompt.Entities, content, ct);
+        if (string.IsNullOrWhiteSpace(raw)) return [];
+
+        return raw.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(e => e.Length > 1 && e.Length < 100)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public Task<string?> MergeObservationsAsync(IReadOnlyList<string> observations, CancellationToken ct = default)
+        => _port.CompleteAsync(new EnrichmentRequest(EnrichmentPrompt.MergeObservations, string.Empty, observations), ct);
+
+    public void Dispose()
+    {
+        if (_ownsPort && _port is IDisposable d) d.Dispose();
+    }
+}
