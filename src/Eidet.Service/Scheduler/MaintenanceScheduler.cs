@@ -1,4 +1,5 @@
 using Eidet.Core.Configuration;
+using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 
@@ -11,8 +12,8 @@ namespace Eidet.Service.Scheduler;
 public sealed class MaintenanceScheduler : IDisposable
 {
     private readonly IEidetStore _store;
-    private readonly MaintenanceService _maintenance;
-    private readonly ConsolidationService _consolidation;
+    private readonly IMaintenanceRunner _maintenance;
+    private readonly ConsolidationEngine _consolidation;
     private readonly MemoryService _memorySvc;
     private readonly MaintenanceConfig _config;
     private readonly Timer _maintenanceTimer;
@@ -22,8 +23,8 @@ public sealed class MaintenanceScheduler : IDisposable
     public MaintenanceScheduler(
         IEidetStore store,
         MemoryService memorySvc,
-        MaintenanceService maintenance,
-        ConsolidationService consolidation,
+        IMaintenanceRunner maintenance,
+        ConsolidationEngine consolidation,
         MaintenanceConfig config)
     {
         _store = store;
@@ -67,7 +68,7 @@ public sealed class MaintenanceScheduler : IDisposable
             foreach (var repoId in repoIds)
             {
                 var isActive = _memorySvc.IsRepoActive(repoId);
-                await _maintenance.RunAsync(repoId, isRepoActive: isActive);
+                await _maintenance.RunAsync(new MaintenanceRequest { RepoId = repoId, IsRepoActive = isActive });
             }
         }
         catch

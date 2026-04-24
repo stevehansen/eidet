@@ -216,7 +216,7 @@ public class QualityService
             for (var j = i + 1; j < top.Count && conflicts.Count < 5; j++)
             {
                 if (top[i].Type != top[j].Type) continue;
-                var sim = MaintenanceService.ComputeWordSimilarity(top[i].Content, top[j].Content);
+                var sim = Eidet.Core.Text.WordSimilarity.Compute(top[i].Content, top[j].Content);
                 if (sim is >= 0.50f and < 0.84f)
                     conflicts.Add((top[i].Id, top[j].Id));
             }

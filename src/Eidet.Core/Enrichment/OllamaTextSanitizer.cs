@@ -2,8 +2,9 @@ namespace Eidet.Core.Enrichment;
 
 /// <summary>
 /// Cleans Ollama/Gemma chain-of-thought leakage from model output.
-/// Used inside the Ollama adapter on fresh responses, and by MaintenanceService
-/// to retroactively clean corrupted fields stored before CoT stripping existed.
+/// Used inside the Ollama adapter on fresh responses, and by the
+/// EnrichmentCleanupStage to retroactively clean corrupted fields stored
+/// before CoT stripping existed.
 /// </summary>
 internal static class OllamaTextSanitizer
 {

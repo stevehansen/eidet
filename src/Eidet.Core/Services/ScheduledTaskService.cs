@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
+using Eidet.Core.Maintenance;
 using Eidet.Core.Storage;
 using Raven.Client.Documents;
 using Raven.Client.Documents.Session;
@@ -26,8 +27,8 @@ public sealed class ScheduledTaskService : IDisposable
     private readonly IDocumentStore _documentStore;
     private readonly IEidetStore _eidetStore;
     private readonly MemoryService _memorySvc;
-    private readonly MaintenanceService _maintenance;
-    private readonly ConsolidationService _consolidation;
+    private readonly IMaintenanceRunner _maintenance;
+    private readonly ConsolidationEngine _consolidation;
     private readonly MaintenanceConfig _config;
     private CancellationTokenSource? _cts;
     private Task? _pollingTask;
@@ -42,8 +43,8 @@ public sealed class ScheduledTaskService : IDisposable
         IDocumentStore documentStore,
         IEidetStore eidetStore,
         MemoryService memorySvc,
-        MaintenanceService maintenance,
-        ConsolidationService consolidation,
+        IMaintenanceRunner maintenance,
+        ConsolidationEngine consolidation,
         MaintenanceConfig config)
     {
         _documentStore = documentStore;
@@ -212,7 +213,7 @@ public sealed class ScheduledTaskService : IDisposable
                 {
                     case ScheduledTaskType.Maintenance:
                         var isActive = _memorySvc.IsRepoActive(repoId);
-                        await _maintenance.RunAsync(repoId, isRepoActive: isActive);
+                        await _maintenance.RunAsync(new MaintenanceRequest { RepoId = repoId, IsRepoActive = isActive });
                         break;
 
                     case ScheduledTaskType.Consolidation:

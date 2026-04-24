@@ -1,12 +1,12 @@
 using Eidet.Core.Domain;
-using Eidet.Core.Services;
+using Eidet.Core.Maintenance;
 
-namespace Eidet.Core.Tests.Services;
+namespace Eidet.Core.Tests.Maintenance;
 
-public class ConsolidationServiceTests
+public class TagOverlapGrouperTests
 {
     [Fact]
-    public void GroupByTagOverlap_SharedTag_GroupsTogether()
+    public void SharedTag_GroupsTogether()
     {
         var obs = new List<MemoryEntry>
         {
@@ -15,16 +15,15 @@ public class ConsolidationServiceTests
             MakeObs("c", ["docker", "deploy"]),
         };
 
-        var groups = ConsolidationService.GroupByTagOverlap(obs);
+        var groups = TagOverlapGrouper.Group(obs);
 
-        // "a" and "b" share "raven" → one group; "c" is separate
         Assert.Equal(2, groups.Count);
         var ravenGroup = groups.First(g => g.Any(e => e.Id == "a"));
         Assert.Contains(ravenGroup, e => e.Id == "b");
     }
 
     [Fact]
-    public void GroupByTagOverlap_NoSharedTags_AllSeparate()
+    public void NoSharedTags_AllSeparate()
     {
         var obs = new List<MemoryEntry>
         {
@@ -33,14 +32,12 @@ public class ConsolidationServiceTests
             MakeObs("c", ["gamma"]),
         };
 
-        var groups = ConsolidationService.GroupByTagOverlap(obs);
-        Assert.Equal(3, groups.Count);
+        Assert.Equal(3, TagOverlapGrouper.Group(obs).Count);
     }
 
     [Fact]
-    public void GroupByTagOverlap_TransitiveMerge()
+    public void TransitiveMerge()
     {
-        // a shares "x" with b; b shares "y" with c → all in one group
         var obs = new List<MemoryEntry>
         {
             MakeObs("a", ["x"]),
@@ -48,13 +45,13 @@ public class ConsolidationServiceTests
             MakeObs("c", ["y"]),
         };
 
-        var groups = ConsolidationService.GroupByTagOverlap(obs);
+        var groups = TagOverlapGrouper.Group(obs);
         Assert.Single(groups);
         Assert.Equal(3, groups[0].Count);
     }
 
     [Fact]
-    public void GroupByTagOverlap_CaseInsensitive()
+    public void CaseInsensitive()
     {
         var obs = new List<MemoryEntry>
         {
@@ -62,37 +59,30 @@ public class ConsolidationServiceTests
             MakeObs("b", ["ravendb"]),
         };
 
-        var groups = ConsolidationService.GroupByTagOverlap(obs);
-        Assert.Single(groups);
+        Assert.Single(TagOverlapGrouper.Group(obs));
     }
 
     [Fact]
-    public void GroupByTagOverlap_Empty_ReturnsEmpty()
-    {
-        var groups = ConsolidationService.GroupByTagOverlap([]);
-        Assert.Empty(groups);
-    }
+    public void Empty_ReturnsEmpty() =>
+        Assert.Empty(TagOverlapGrouper.Group([]));
 
     [Fact]
-    public void GroupByTagOverlap_SingleEntry_SingleGroup()
+    public void SingleEntry_SingleGroup()
     {
-        var obs = new List<MemoryEntry> { MakeObs("a", ["tag"]) };
-        var groups = ConsolidationService.GroupByTagOverlap(obs);
+        var groups = TagOverlapGrouper.Group([MakeObs("a", ["tag"])]);
         Assert.Single(groups);
         Assert.Single(groups[0]);
     }
 
     [Fact]
-    public void GroupByTagOverlap_NoTags_AllSeparate()
+    public void NoTags_AllSeparate()
     {
         var obs = new List<MemoryEntry>
         {
             MakeObs("a", []),
             MakeObs("b", []),
         };
-
-        var groups = ConsolidationService.GroupByTagOverlap(obs);
-        Assert.Equal(2, groups.Count);
+        Assert.Equal(2, TagOverlapGrouper.Group(obs).Count);
     }
 
     private static MemoryEntry MakeObs(string id, List<string> tags) => new()

@@ -7,6 +7,7 @@ using Eidet.Core;
 using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
 using Eidet.Core.Enrichment;
+using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Mcp;
@@ -25,8 +26,8 @@ public class EidetApiServer
 
     private readonly MemoryService _svc;
     private readonly IntakeService _intake;
-    private readonly ConsolidationService _consolidation;
-    private readonly MaintenanceService _maintenance;
+    private readonly ConsolidationEngine _consolidation;
+    private readonly IMaintenanceRunner _maintenance;
     private readonly ExportService _export;
     private readonly QualityService? _quality;
     private readonly LayerService? _layers;
@@ -42,8 +43,8 @@ public class EidetApiServer
     private readonly string _baseUrl;
     private readonly DateTime _startedAt = DateTime.UtcNow;
 
-    public EidetApiServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
-        MaintenanceService maintenance, ExportService export, string bindAddress, int port,
+    public EidetApiServer(MemoryService svc, IntakeService intake, ConsolidationEngine consolidation,
+        IMaintenanceRunner maintenance, ExportService export, string bindAddress, int port,
         LayerService? layers = null, LayerSyncService? layerSync = null,
         McpServer? mcpServer = null, AuthConfig? auth = null,
         QualityService? quality = null, EnrichmentService? enrichment = null, EidetConfig? config = null,
@@ -451,7 +452,8 @@ public class EidetApiServer
             return;
         }
         using var scope = _usage?.StartScope(repo, "Maintenance");
-        var result = await _maintenance.RunAsync(RepoIdNormalizer.Normalize(repo), ct: ct);
+        var result = await _maintenance.RunAsync(
+            new MaintenanceRequest { RepoId = RepoIdNormalizer.Normalize(repo) }, ct);
         await WriteJson(ctx, result);
     }
 

@@ -1,6 +1,7 @@
 using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
 using Eidet.Core.Enrichment;
+using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Api;
@@ -91,17 +92,18 @@ public sealed class EidetHost : IDisposable
 
         var memorySvc = new MemoryService(eidetStore, layerSvc, hookRunner);
         var intakeSvc = new IntakeService(eidetStore);
-        var consolidationSvc = new ConsolidationService(eidetStore, enrichment);
-        var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc, enrichment);
+        var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment);
+        IMaintenanceRunner maintenanceRunner = new MaintenanceRunner(
+            new MaintenanceOrchestrator(eidetStore, enrichment, consolidationEngine));
         var exportSvc = new ExportService(eidetStore);
         var qualitySvc = new QualityService(eidetStore);
         var usageTracker = new UsageTracker(store);
         var layerSyncSvc = new LayerSyncService(eidetStore, layerSvc);
-        var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc,
+        var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationEngine, maintenanceRunner,
             Directory.GetCurrentDirectory(), autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker,
             export: exportSvc, layers: layerSvc);
-        var scheduler = new ScheduledTaskService(store, eidetStore, memorySvc, maintenanceSvc, consolidationSvc, config.Maintenance);
-        var apiServer = new EidetApiServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, exportSvc,
+        var scheduler = new ScheduledTaskService(store, eidetStore, memorySvc, maintenanceRunner, consolidationEngine, config.Maintenance);
+        var apiServer = new EidetApiServer(memorySvc, intakeSvc, consolidationEngine, maintenanceRunner, exportSvc,
             actualBind, actualPort, layerSvc, layerSyncSvc, mcpServer, config.Auth, qualitySvc, enrichment, config, usageTracker, scheduler);
         var enrichmentWorker = new EnrichmentWorker(store, enrichment);
 

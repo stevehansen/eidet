@@ -1,5 +1,6 @@
 using Eidet.Core.Configuration;
 using Eidet.Core.Enrichment;
+using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Spectre.Console;
@@ -26,32 +27,31 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
         using var enrichment = config.Enrichment.OllamaEnabled
             ? EnrichmentService.CreateOllama(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
             : EnrichmentService.CreateNull();
-        var consolidationSvc = new ConsolidationService(eidetStore, enrichment);
-        var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc, enrichment);
+        var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment);
+        IMaintenanceRunner runner = new MaintenanceRunner(
+            new MaintenanceOrchestrator(eidetStore, enrichment, consolidationEngine));
 
         var repoId = Eidet.Core.Domain.RepoIdNormalizer.Normalize(settings.Repo ?? Directory.GetCurrentDirectory());
 
         try
         {
-            var result = await maintenanceSvc.RunAsync(repoId, ct: cancellation);
+            var report = await runner.RunAsync(new MaintenanceRequest { RepoId = repoId }, cancellation);
 
             if (settings.Json)
             {
-                var json = System.Text.Json.JsonSerializer.Serialize(result);
+                var json = System.Text.Json.JsonSerializer.Serialize(report);
                 Console.WriteLine(json);
             }
             else
             {
                 AnsiConsole.MarkupLine($"[bold]Maintenance complete[/] — {Markup.Escape(repoId)}");
-                AnsiConsole.MarkupLine($"  TTL expired:    {result.ExpiredByTtl}");
-                AnsiConsole.MarkupLine($"  Retention:      {result.ExpiredByRetention}");
-                AnsiConsole.MarkupLine($"  Dedup merged:   {result.DedupMerged}");
-                AnsiConsole.MarkupLine($"  Decay updated:  {result.DecayUpdated}");
-                AnsiConsole.MarkupLine($"  Orphans:        {result.OrphansCleaned}");
-                AnsiConsole.MarkupLine($"  Enrichment fix: {result.EnrichmentCleaned}");
-                AnsiConsole.MarkupLine($"  Backfill:       {result.BackfillEnriched}");
-                AnsiConsole.MarkupLine($"  Ollama:         {result.OllamaEnriched}");
-                AnsiConsole.MarkupLine($"  Consolidated:   {result.ConsolidatedInsights}");
+                foreach (var stage in report.Stages)
+                {
+                    var label = stage.Succeeded
+                        ? $"{stage.Affected}"
+                        : $"[red]ERROR[/] {Markup.Escape(stage.Error!)}";
+                    AnsiConsole.MarkupLine($"  {stage.Name,-32} {label}");
+                }
             }
         }
         finally

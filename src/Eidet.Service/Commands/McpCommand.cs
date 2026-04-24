@@ -1,5 +1,6 @@
 using Eidet.Core.Configuration;
 using Eidet.Core.Enrichment;
+using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Mcp;
@@ -35,14 +36,15 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
             : NullHookRunner.Instance;
         var memorySvc = new MemoryService(eidetStore, hooks: hookRunner);
         var intakeSvc = new IntakeService(eidetStore);
-        var consolidationSvc = new ConsolidationService(eidetStore, enrichment);
-        var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc, enrichment);
+        var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment);
+        IMaintenanceRunner maintenanceRunner = new MaintenanceRunner(
+            new MaintenanceOrchestrator(eidetStore, enrichment, consolidationEngine));
 
         var exportSvc = new ExportService(eidetStore);
         var layerSvc = new LayerService(eidetStore);
         var usageTracker = new UsageTracker(store);
         var workDir = settings.Repo ?? settings.WorkDir ?? Directory.GetCurrentDirectory();
-        var server = new McpServer(memorySvc, intakeSvc, consolidationSvc, maintenanceSvc, workDir,
+        var server = new McpServer(memorySvc, intakeSvc, consolidationEngine, maintenanceRunner, workDir,
             autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker,
             export: exportSvc, layers: layerSvc);
 

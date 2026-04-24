@@ -89,6 +89,7 @@ eidet/
 - **Persisted scheduler** — RavenDB Refresh feature as alarm clock; survives restarts; overdue tasks run within 30s of startup
 - **Repo path tracking** — `RepoUsage.OriginalPath` maps normalized IDs back to filesystem paths; enables Web UI intake
 - **Enrichment port/adapter** — `Eidet.Core.Enrichment`: `EnrichmentService` facade over `IEnrichmentPort`; `OllamaEnrichmentAdapter`/`NullEnrichmentAdapter` internal, `InMemoryEnrichmentAdapter` public for tests. `EnrichMemoryAsync(entry)` replaces the duplicated per-field loop; `OllamaTextSanitizer.Clean()` handles `<channel|>` and `<think>` delimiters from Ollama/Gemma responses.
+- **Maintenance pipeline** — `Eidet.Core.Maintenance`: composable `IMaintenanceStage` (9 internal stages) + `MaintenanceOrchestrator` (per-stage try/catch, `OnlyStages`/`SkipStages`) + thin `IMaintenanceRunner` facade for scheduler/REST/MCP. `ConsolidationEngine` exposes `ConsolidateAsync(dryRun)` for ad-hoc API/MCP use. Helpers extracted: `Eidet.Core.Text.WordSimilarity`, `FadeMemCurve.Defaults`, `TagOverlapGrouper`.
 - **Versioned curation** — content edits create supersession chains; metadata edits update in place
 - **Markdown pack format** — YAML frontmatter + HTML comment metadata; renders in any viewer, machine-parseable, ScribeGate compatible
 - **Embedded Web UI** — vanilla HTML/CSS/JS SPA, canvas graph, shipped in the binary; dark theme, responsive

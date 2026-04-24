@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Eidet.Core;
 using Eidet.Core.Domain;
+using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 
 namespace Eidet.Service.Mcp;
@@ -17,8 +18,8 @@ public class McpServer
 
     private readonly MemoryService _svc;
     private readonly IntakeService _intake;
-    private readonly ConsolidationService _consolidation;
-    private readonly MaintenanceService _maintenance;
+    private readonly ConsolidationEngine _consolidation;
+    private readonly IMaintenanceRunner _maintenance;
     private readonly UsageTracker? _usage;
     private readonly ExportService? _export;
     private readonly LayerService? _layers;
@@ -26,8 +27,8 @@ public class McpServer
     private readonly bool _autoIntake;
     private bool _autoIntakeDone;
 
-    public McpServer(MemoryService svc, IntakeService intake, ConsolidationService consolidation,
-        MaintenanceService maintenance, string repoId, bool autoIntake = true,
+    public McpServer(MemoryService svc, IntakeService intake, ConsolidationEngine consolidation,
+        IMaintenanceRunner maintenance, string repoId, bool autoIntake = true,
         UsageTracker? usage = null, ExportService? export = null, LayerService? layers = null)
     {
         _svc = svc;
@@ -422,7 +423,8 @@ public class McpServer
     {
         var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
         var isActive = _svc.IsRepoActive(normalizedRepoId);
-        var result = await _maintenance.RunAsync(normalizedRepoId, isRepoActive: isActive, ct: ct);
+        var result = await _maintenance.RunAsync(
+            new MaintenanceRequest { RepoId = normalizedRepoId, IsRepoActive = isActive }, ct);
         return McpCallToolResult.Text(result.ToString());
     }
 

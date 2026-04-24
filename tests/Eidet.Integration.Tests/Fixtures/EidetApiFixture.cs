@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using Eidet.Core.Configuration;
+using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Api;
@@ -39,8 +40,9 @@ public class EidetApiFixture : IAsyncLifetime
             var layerSvc = new LayerService(eidetStore);
             var memorySvc = new MemoryService(eidetStore, layerSvc);
             var intakeSvc = new IntakeService(eidetStore);
-            var consolidationSvc = new ConsolidationService(eidetStore);
-            var maintenanceSvc = new MaintenanceService(eidetStore, consolidationSvc);
+            var consolidationEngine = new ConsolidationEngine(eidetStore);
+            IMaintenanceRunner maintenanceRunner = new MaintenanceRunner(
+                new MaintenanceOrchestrator(eidetStore, consolidation: consolidationEngine));
             var exportSvc = new ExportService(eidetStore);
             var qualitySvc = new QualityService(eidetStore);
 
@@ -49,8 +51,8 @@ public class EidetApiFixture : IAsyncLifetime
 
             var layerSyncSvc = new LayerSyncService(eidetStore, layerSvc);
 
-            var server = new EidetApiServer(memorySvc, intakeSvc, consolidationSvc,
-                maintenanceSvc, exportSvc, "127.0.0.1", port,
+            var server = new EidetApiServer(memorySvc, intakeSvc, consolidationEngine,
+                maintenanceRunner, exportSvc, "127.0.0.1", port,
                 layerSvc, layerSyncSvc, quality: qualitySvc);
 
             _serverTask = server.RunAsync(_cts.Token);
