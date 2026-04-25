@@ -33,6 +33,7 @@ public class EidetApiServer
     private readonly UsageTracker? _usage;
     private readonly ScheduledTaskService? _scheduledTasks;
     private readonly ToolDispatcher _dispatcher;
+    private readonly ApiRouter _router;
     private readonly HttpListener _listener;
     private readonly string _baseUrl;
     private readonly DateTime _startedAt = DateTime.UtcNow;
@@ -76,6 +77,74 @@ public class EidetApiServer
         _baseUrl = $"http://{bindAddress}:{port}/";
         _listener = new HttpListener();
         _listener.Prefixes.Add(_baseUrl);
+        _router = BuildRouter();
+    }
+
+    private ApiRouter BuildRouter()
+    {
+        var r = new ApiRouter();
+
+        // MCP
+        r.MapPost("/mcp", (ctx, _, ct) => HandleMcpRequest(ctx, ct));
+
+        // Meta
+        r.MapGet("/api/health", (ctx, _, _) => HttpJson.WriteAsync(ctx, new { status = "ok", version = EidetVersion.Current }));
+        r.MapGet("/api/status", (ctx, _, ct) => HandleStatus(ctx, ct));
+
+        // Memory — exact + non-id-prefixed
+        r.MapGet("/api/eidet/context", (ctx, _, ct) => HandleGetContext(ctx, ct));
+        r.Map("GET", p => p == "/api/eidet/recall" || p == "/api/eidet/search", (ctx, _, ct) => HandleSearch(ctx, ct));
+        r.MapGetPrefix("/api/eidet/history/", (ctx, path, ct) => HandleHistory(ctx, path["/api/eidet/history/".Length..], ct));
+        r.MapGetPrefix("/api/eidet/stats", (ctx, _, ct) => HandleStats(ctx, ct));
+        r.MapPost("/api/eidet", (ctx, _, ct) => HandleStore(ctx, ct));
+        r.MapPost("/api/eidet/feedback", (ctx, _, ct) => HandleFeedback(ctx, ct));
+        r.MapPost("/api/eidet/intake", (ctx, _, ct) => HandleIntake(ctx, ct));
+        r.MapPost("/api/eidet/consolidate", (ctx, _, ct) => HandleConsolidate(ctx, ct));
+        r.MapPost("/api/maintenance", (ctx, _, ct) => HandleMaintenance(ctx, ct));
+        r.MapGet("/api/eidet/export", (ctx, _, ct) => HandleExport(ctx, ct));
+        r.MapPost("/api/eidet/packs/export", (ctx, _, ct) => HandlePackExport(ctx, ct));
+        r.MapPost("/api/eidet/packs/import", (ctx, _, ct) => HandlePackImport(ctx, ct));
+        r.MapPost("/api/eidet/links", (ctx, _, ct) => HandleCreateLink(ctx, ct));
+        r.MapGet("/api/eidet/links", (ctx, _, ct) => HandleGetLinks(ctx, ct));
+
+        // Layers
+        r.MapGet("/api/eidet/layers", (ctx, _, ct) => HandleGetLayers(ctx, ct));
+        r.MapPost("/api/eidet/layers/mount", (ctx, _, ct) => HandleMountLayer(ctx, ct));
+        r.MapPost("/api/eidet/layers/sync", (ctx, _, ct) => HandleLayerSync(ctx, ct));
+
+        // Memory by id (must come after the more specific /api/eidet/* exact routes above)
+        r.Map("PUT", p => p.StartsWith("/api/eidet/") && !p.Contains("/links"),
+            (ctx, path, ct) => HandleUpdateMemory(ctx, path["/api/eidet/".Length..], ct));
+        r.Map("POST", p => p.EndsWith("/links") && p.StartsWith("/api/eidet/") && p != "/api/eidet/links",
+            (ctx, path, ct) => HandleAddMemoryLink(ctx, ExtractMemoryIdFromLinkPath(path), ct));
+        r.Map("DELETE", p => p.EndsWith("/links") && p.StartsWith("/api/eidet/") && p != "/api/eidet/links",
+            (ctx, path, ct) => HandleRemoveMemoryLink(ctx, ExtractMemoryIdFromLinkPath(path), ct));
+        r.Map("DELETE", p => p.StartsWith("/api/eidet/layers/"),
+            (ctx, path, ct) => HandleUnmountLayer(ctx, path["/api/eidet/layers/".Length..], ct));
+        r.Map("DELETE", p => p.StartsWith("/api/eidet/"),
+            (ctx, path, ct) => HandleForget(ctx, path["/api/eidet/".Length..], ct));
+
+        // Quality / context preview / usage / enrich / scheduler / repos / browse / graph
+        r.MapGet("/api/eidet/quality", (ctx, _, ct) => HandleQuality(ctx, ct));
+        r.MapGet("/api/eidet/context/preview", (ctx, _, ct) => HandleContextPreview(ctx, ct));
+        r.MapGet("/api/eidet/usage", (ctx, _, ct) => HandleUsage(ctx, ct));
+        r.MapGet("/api/eidet/usage/timeseries", (ctx, _, ct) => HandleUsageTimeSeries(ctx, ct));
+        r.MapGet("/api/eidet/usage/hourly", (ctx, _, ct) => HandleUsageHourly(ctx, ct));
+        r.MapPost("/api/eidet/enrich", (ctx, _, ct) => HandleEnrich(ctx, ct));
+        r.MapGet("/api/eidet/scheduled-tasks", (ctx, _, ct) => HandleScheduledTasks(ctx, ct));
+        r.MapGet("/api/eidet/repos", (ctx, _, ct) => HandleGetRepos(ctx, ct));
+        r.MapGet("/api/eidet/browse", (ctx, _, ct) => HandleBrowse(ctx, ct));
+        r.MapGet("/api/eidet/graph", (ctx, _, ct) => HandleGraph(ctx, ct));
+
+        // Catch-all GET memory by id (last GET under /api/eidet/)
+        r.MapGetPrefix("/api/eidet/", (ctx, path, ct) => HandleGetMemory(ctx, path["/api/eidet/".Length..], ct));
+
+        // Embedded Web UI + root
+        r.MapAny(p => p == "/ui" || p == "/ui/", (ctx, _, _) => EmbeddedAssets.ServeAsync(ctx, "index.html"));
+        r.MapAny(p => p.StartsWith("/ui/"), (ctx, path, _) => EmbeddedAssets.ServeAsync(ctx, path["/ui/".Length..]));
+        r.MapAny(p => p == "/" || p == "", (ctx, _, _) => HandleRoot(ctx));
+
+        return r;
     }
 
     public string BaseUrl => _baseUrl;
@@ -119,124 +188,7 @@ public class EidetApiServer
 
             if (!await _auth.CheckAsync(ctx, method, path)) return;
 
-            if (method == "POST" && path == "/mcp")
-                await HandleMcpRequest(ctx, ct);
-
-            else if (method == "GET" && path == "/api/health")
-                await HttpJson.WriteAsync(ctx, new { status = "ok", version = Eidet.Core.EidetVersion.Current });
-
-            else if (method == "GET" && path == "/api/status")
-                await HandleStatus(ctx, ct);
-
-            else if (method == "GET" && path == "/api/eidet/context")
-                await HandleGetContext(ctx, ct);
-
-            else if (method == "GET" && (path == "/api/eidet/recall" || path == "/api/eidet/search"))
-                await HandleSearch(ctx, ct);
-
-            else if (method == "GET" && path.StartsWith("/api/eidet/history/"))
-                await HandleHistory(ctx, path["/api/eidet/history/".Length..], ct);
-
-            else if (method == "GET" && path.StartsWith("/api/eidet/stats"))
-                await HandleStats(ctx, ct);
-
-            else if (method == "POST" && path == "/api/eidet")
-                await HandleStore(ctx, ct);
-
-            else if (method == "POST" && path == "/api/eidet/feedback")
-                await HandleFeedback(ctx, ct);
-
-            else if (method == "POST" && path == "/api/eidet/intake")
-                await HandleIntake(ctx, ct);
-
-            else if (method == "POST" && path == "/api/eidet/consolidate")
-                await HandleConsolidate(ctx, ct);
-
-            else if (method == "POST" && path == "/api/maintenance")
-                await HandleMaintenance(ctx, ct);
-
-            else if (method == "GET" && path == "/api/eidet/export")
-                await HandleExport(ctx, ct);
-
-            else if (method == "POST" && path == "/api/eidet/packs/export")
-                await HandlePackExport(ctx, ct);
-
-            else if (method == "POST" && path == "/api/eidet/packs/import")
-                await HandlePackImport(ctx, ct);
-
-            else if (method == "POST" && path == "/api/eidet/links")
-                await HandleCreateLink(ctx, ct);
-
-            else if (method == "GET" && path == "/api/eidet/links")
-                await HandleGetLinks(ctx, ct);
-
-            else if (method == "GET" && path == "/api/eidet/layers")
-                await HandleGetLayers(ctx, ct);
-
-            else if (method == "POST" && path == "/api/eidet/layers/mount")
-                await HandleMountLayer(ctx, ct);
-
-            else if (method == "POST" && path == "/api/eidet/layers/sync")
-                await HandleLayerSync(ctx, ct);
-
-            else if (method == "PUT" && path.StartsWith("/api/eidet/") && !path.Contains("/links"))
-                await HandleUpdateMemory(ctx, path["/api/eidet/".Length..], ct);
-
-            else if (method == "POST" && path.EndsWith("/links") && path.StartsWith("/api/eidet/") && path != "/api/eidet/links")
-                await HandleAddMemoryLink(ctx, ExtractMemoryIdFromLinkPath(path), ct);
-
-            else if (method == "DELETE" && path.EndsWith("/links") && path.StartsWith("/api/eidet/") && path != "/api/eidet/links")
-                await HandleRemoveMemoryLink(ctx, ExtractMemoryIdFromLinkPath(path), ct);
-
-            else if (method == "DELETE" && path.StartsWith("/api/eidet/layers/"))
-                await HandleUnmountLayer(ctx, path["/api/eidet/layers/".Length..], ct);
-
-            else if (method == "DELETE" && path.StartsWith("/api/eidet/"))
-                await HandleForget(ctx, path["/api/eidet/".Length..], ct);
-
-            else if (method == "GET" && path == "/api/eidet/quality")
-                await HandleQuality(ctx, ct);
-
-            else if (method == "GET" && path == "/api/eidet/context/preview")
-                await HandleContextPreview(ctx, ct);
-
-            else if (method == "GET" && path == "/api/eidet/usage")
-                await HandleUsage(ctx, ct);
-
-            else if (method == "GET" && path == "/api/eidet/usage/timeseries")
-                await HandleUsageTimeSeries(ctx, ct);
-
-            else if (method == "GET" && path == "/api/eidet/usage/hourly")
-                await HandleUsageHourly(ctx, ct);
-
-            else if (method == "POST" && path == "/api/eidet/enrich")
-                await HandleEnrich(ctx, ct);
-
-            else if (method == "GET" && path == "/api/eidet/scheduled-tasks")
-                await HandleScheduledTasks(ctx, ct);
-
-            else if (method == "GET" && path == "/api/eidet/repos")
-                await HandleGetRepos(ctx, ct);
-
-            else if (method == "GET" && path == "/api/eidet/browse")
-                await HandleBrowse(ctx, ct);
-
-            else if (method == "GET" && path == "/api/eidet/graph")
-                await HandleGraph(ctx, ct);
-
-            else if (method == "GET" && path.StartsWith("/api/eidet/"))
-                await HandleGetMemory(ctx, path["/api/eidet/".Length..], ct);
-
-            else if (path == "/ui" || path == "/ui/")
-                await EmbeddedAssets.ServeAsync(ctx, "index.html");
-
-            else if (path.StartsWith("/ui/"))
-                await EmbeddedAssets.ServeAsync(ctx, path["/ui/".Length..]);
-
-            else if (path == "/" || path == "")
-                await HandleRoot(ctx);
-
-            else
+            if (!await _router.DispatchAsync(ctx, method, path, ct))
                 await HttpJson.WriteAsync(ctx, new { error = "Not found", hint = "Try /ui for the Web UI, or /api/health for the API." }, 404);
         }
         catch (Exception ex)
