@@ -29,7 +29,7 @@ public class EidetApiServer
     private readonly ConcurrentDictionary<string, McpServer> _mcpServerPool = new();
     private readonly EnrichmentService? _enrichment;
     private readonly EidetConfig? _config;
-    private readonly AuthConfig _auth;
+    private readonly ApiAuthGate _auth;
     private readonly UsageTracker? _usage;
     private readonly ScheduledTaskService? _scheduledTasks;
     private readonly ToolDispatcher _dispatcher;
@@ -55,7 +55,7 @@ public class EidetApiServer
         _mcpServer = mcpServer;
         _enrichment = enrichment;
         _config = config;
-        _auth = auth ?? new AuthConfig();
+        _auth = new ApiAuthGate(auth ?? new AuthConfig());
         _usage = usage;
         _scheduledTasks = scheduledTasks;
         _dispatcher = new ToolDispatcher([
@@ -117,36 +117,7 @@ public class EidetApiServer
 
             HttpJson.AddCorsHeaders(ctx);
 
-            // Auth check
-            if (_auth.Enabled)
-            {
-                var requiredScope = ApiKeyService.GetRequiredScope(method, path);
-                if (!string.IsNullOrEmpty(requiredScope))
-                {
-                    var authHeader = ctx.Request.Headers["Authorization"];
-                    var rawKey = authHeader?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true
-                        ? authHeader["Bearer ".Length..] : null;
-
-                    if (string.IsNullOrEmpty(rawKey))
-                    {
-                        await HttpJson.WriteAsync(ctx, new { error = "Authentication required" }, 401);
-                        return;
-                    }
-
-                    var entry = ApiKeyService.ValidateKey(_auth, rawKey);
-                    if (entry is null)
-                    {
-                        await HttpJson.WriteAsync(ctx, new { error = "Invalid API key" }, 401);
-                        return;
-                    }
-
-                    if (!ApiKeyService.HasScope(entry, requiredScope))
-                    {
-                        await HttpJson.WriteAsync(ctx, new { error = "Insufficient permissions", required = requiredScope }, 403);
-                        return;
-                    }
-                }
-            }
+            if (!await _auth.CheckAsync(ctx, method, path)) return;
 
             if (method == "POST" && path == "/mcp")
                 await HandleMcpRequest(ctx, ct);
