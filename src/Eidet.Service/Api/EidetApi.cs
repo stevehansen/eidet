@@ -1,42 +1,37 @@
-using System.Collections.Concurrent;
 using System.Net;
-using System.Text.Json;
 using Eidet.Core;
 using Eidet.Core.Configuration;
-using Eidet.Core.Domain;
 using Eidet.Core.Enrichment;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
-using Eidet.Core.Storage;
+using Eidet.Service.Api.Endpoints;
 using Eidet.Service.Mcp;
 using Eidet.Service.Tools;
-using Eidet.Service.Tools.Formatters;
 using Eidet.Service.Tools.Handlers;
 
 namespace Eidet.Service.Api;
 
+/// <summary>
+/// HTTP listener for the local Eidet REST API + MCP-over-HTTP bridge. Owns the
+/// <see cref="HttpListener"/>, the <see cref="ApiAuthGate"/>, the per-area
+/// endpoint classes (memory/layers/usage/maintenance/enrich/meta/mcp), and the
+/// <see cref="ApiRouter"/> that dispatches incoming requests to them.
+/// </summary>
 public class EidetApiServer
 {
-    private readonly MemoryService _svc;
-    private readonly IntakeService _intake;
-    private readonly ConsolidationEngine _consolidation;
-    private readonly IMaintenanceRunner _maintenance;
-    private readonly ExportService _export;
-    private readonly QualityService? _quality;
-    private readonly LayerService? _layers;
-    private readonly LayerSyncService? _layerSync;
-    private readonly McpServer? _mcpServer;
-    private readonly ConcurrentDictionary<string, McpServer> _mcpServerPool = new();
-    private readonly EnrichmentService? _enrichment;
-    private readonly EidetConfig? _config;
     private readonly ApiAuthGate _auth;
-    private readonly UsageTracker? _usage;
-    private readonly ScheduledTaskService? _scheduledTasks;
-    private readonly ToolDispatcher _dispatcher;
     private readonly ApiRouter _router;
     private readonly HttpListener _listener;
     private readonly string _baseUrl;
     private readonly DateTime _startedAt = DateTime.UtcNow;
+
+    private readonly MemoryEndpoints _memory;
+    private readonly LayerEndpoints _layerEndpoints;
+    private readonly MaintenanceEndpoints _maintenanceEndpoints;
+    private readonly UsageEndpoints _usageEndpoints;
+    private readonly EnrichEndpoint _enrichEndpoint;
+    private readonly MetaEndpoints _meta;
+    private readonly McpEndpoint _mcp;
 
     public EidetApiServer(MemoryService svc, IntakeService intake, ConsolidationEngine consolidation,
         IMaintenanceRunner maintenance, ExportService export, string bindAddress, int port,
@@ -45,21 +40,12 @@ public class EidetApiServer
         QualityService? quality = null, EnrichmentService? enrichment = null, EidetConfig? config = null,
         UsageTracker? usage = null, ScheduledTaskService? scheduledTasks = null)
     {
-        _svc = svc;
-        _intake = intake;
-        _consolidation = consolidation;
-        _maintenance = maintenance;
-        _export = export;
-        _quality = quality;
-        _layers = layers;
-        _layerSync = layerSync;
-        _mcpServer = mcpServer;
-        _enrichment = enrichment;
-        _config = config;
         _auth = new ApiAuthGate(auth ?? new AuthConfig());
-        _usage = usage;
-        _scheduledTasks = scheduledTasks;
-        _dispatcher = new ToolDispatcher([
+        _baseUrl = $"http://{bindAddress}:{port}/";
+        _listener = new HttpListener();
+        _listener.Prefixes.Add(_baseUrl);
+
+        var dispatcher = new ToolDispatcher([
             new StoreToolHandler(svc),
             new RecallToolHandler(svc),
             new ForgetToolHandler(svc),
@@ -74,77 +60,16 @@ public class EidetApiServer
             new PackExportToolHandler(export),
             new PackImportToolHandler(export, layers),
         ], usage);
-        _baseUrl = $"http://{bindAddress}:{port}/";
-        _listener = new HttpListener();
-        _listener.Prefixes.Add(_baseUrl);
+
+        _memory = new MemoryEndpoints(svc, dispatcher, export, usage, layers);
+        _layerEndpoints = new LayerEndpoints(layers, layerSync);
+        _maintenanceEndpoints = new MaintenanceEndpoints(dispatcher, quality, scheduledTasks, usage);
+        _usageEndpoints = new UsageEndpoints(usage);
+        _enrichEndpoint = new EnrichEndpoint(enrichment);
+        _meta = new MetaEndpoints(svc, enrichment, config, _baseUrl, _startedAt);
+        _mcp = new McpEndpoint(mcpServer, svc, intake, consolidation, maintenance);
+
         _router = BuildRouter();
-    }
-
-    private ApiRouter BuildRouter()
-    {
-        var r = new ApiRouter();
-
-        // MCP
-        r.MapPost("/mcp", (ctx, _, ct) => HandleMcpRequest(ctx, ct));
-
-        // Meta
-        r.MapGet("/api/health", (ctx, _, _) => HttpJson.WriteAsync(ctx, new { status = "ok", version = EidetVersion.Current }));
-        r.MapGet("/api/status", (ctx, _, ct) => HandleStatus(ctx, ct));
-
-        // Memory — exact + non-id-prefixed
-        r.MapGet("/api/eidet/context", (ctx, _, ct) => HandleGetContext(ctx, ct));
-        r.Map("GET", p => p == "/api/eidet/recall" || p == "/api/eidet/search", (ctx, _, ct) => HandleSearch(ctx, ct));
-        r.MapGetPrefix("/api/eidet/history/", (ctx, path, ct) => HandleHistory(ctx, path["/api/eidet/history/".Length..], ct));
-        r.MapGetPrefix("/api/eidet/stats", (ctx, _, ct) => HandleStats(ctx, ct));
-        r.MapPost("/api/eidet", (ctx, _, ct) => HandleStore(ctx, ct));
-        r.MapPost("/api/eidet/feedback", (ctx, _, ct) => HandleFeedback(ctx, ct));
-        r.MapPost("/api/eidet/intake", (ctx, _, ct) => HandleIntake(ctx, ct));
-        r.MapPost("/api/eidet/consolidate", (ctx, _, ct) => HandleConsolidate(ctx, ct));
-        r.MapPost("/api/maintenance", (ctx, _, ct) => HandleMaintenance(ctx, ct));
-        r.MapGet("/api/eidet/export", (ctx, _, ct) => HandleExport(ctx, ct));
-        r.MapPost("/api/eidet/packs/export", (ctx, _, ct) => HandlePackExport(ctx, ct));
-        r.MapPost("/api/eidet/packs/import", (ctx, _, ct) => HandlePackImport(ctx, ct));
-        r.MapPost("/api/eidet/links", (ctx, _, ct) => HandleCreateLink(ctx, ct));
-        r.MapGet("/api/eidet/links", (ctx, _, ct) => HandleGetLinks(ctx, ct));
-
-        // Layers
-        r.MapGet("/api/eidet/layers", (ctx, _, ct) => HandleGetLayers(ctx, ct));
-        r.MapPost("/api/eidet/layers/mount", (ctx, _, ct) => HandleMountLayer(ctx, ct));
-        r.MapPost("/api/eidet/layers/sync", (ctx, _, ct) => HandleLayerSync(ctx, ct));
-
-        // Memory by id (must come after the more specific /api/eidet/* exact routes above)
-        r.Map("PUT", p => p.StartsWith("/api/eidet/") && !p.Contains("/links"),
-            (ctx, path, ct) => HandleUpdateMemory(ctx, path["/api/eidet/".Length..], ct));
-        r.Map("POST", p => p.EndsWith("/links") && p.StartsWith("/api/eidet/") && p != "/api/eidet/links",
-            (ctx, path, ct) => HandleAddMemoryLink(ctx, ExtractMemoryIdFromLinkPath(path), ct));
-        r.Map("DELETE", p => p.EndsWith("/links") && p.StartsWith("/api/eidet/") && p != "/api/eidet/links",
-            (ctx, path, ct) => HandleRemoveMemoryLink(ctx, ExtractMemoryIdFromLinkPath(path), ct));
-        r.Map("DELETE", p => p.StartsWith("/api/eidet/layers/"),
-            (ctx, path, ct) => HandleUnmountLayer(ctx, path["/api/eidet/layers/".Length..], ct));
-        r.Map("DELETE", p => p.StartsWith("/api/eidet/"),
-            (ctx, path, ct) => HandleForget(ctx, path["/api/eidet/".Length..], ct));
-
-        // Quality / context preview / usage / enrich / scheduler / repos / browse / graph
-        r.MapGet("/api/eidet/quality", (ctx, _, ct) => HandleQuality(ctx, ct));
-        r.MapGet("/api/eidet/context/preview", (ctx, _, ct) => HandleContextPreview(ctx, ct));
-        r.MapGet("/api/eidet/usage", (ctx, _, ct) => HandleUsage(ctx, ct));
-        r.MapGet("/api/eidet/usage/timeseries", (ctx, _, ct) => HandleUsageTimeSeries(ctx, ct));
-        r.MapGet("/api/eidet/usage/hourly", (ctx, _, ct) => HandleUsageHourly(ctx, ct));
-        r.MapPost("/api/eidet/enrich", (ctx, _, ct) => HandleEnrich(ctx, ct));
-        r.MapGet("/api/eidet/scheduled-tasks", (ctx, _, ct) => HandleScheduledTasks(ctx, ct));
-        r.MapGet("/api/eidet/repos", (ctx, _, ct) => HandleGetRepos(ctx, ct));
-        r.MapGet("/api/eidet/browse", (ctx, _, ct) => HandleBrowse(ctx, ct));
-        r.MapGet("/api/eidet/graph", (ctx, _, ct) => HandleGraph(ctx, ct));
-
-        // Catch-all GET memory by id (last GET under /api/eidet/)
-        r.MapGetPrefix("/api/eidet/", (ctx, path, ct) => HandleGetMemory(ctx, path["/api/eidet/".Length..], ct));
-
-        // Embedded Web UI + root
-        r.MapAny(p => p == "/ui" || p == "/ui/", (ctx, _, _) => EmbeddedAssets.ServeAsync(ctx, "index.html"));
-        r.MapAny(p => p.StartsWith("/ui/"), (ctx, path, _) => EmbeddedAssets.ServeAsync(ctx, path["/ui/".Length..]));
-        r.MapAny(p => p == "/" || p == "", (ctx, _, _) => HandleRoot(ctx));
-
-        return r;
     }
 
     public string BaseUrl => _baseUrl;
@@ -175,7 +100,6 @@ public class EidetApiServer
             var path = ctx.Request.Url?.AbsolutePath ?? "";
             var method = ctx.Request.HttpMethod;
 
-            // CORS preflight
             if (method == "OPTIONS")
             {
                 HttpJson.AddCorsHeaders(ctx);
@@ -199,780 +123,72 @@ public class EidetApiServer
         }
     }
 
-    private async Task HandleGetContext(HttpListenerContext ctx, CancellationToken ct)
+    private ApiRouter BuildRouter()
     {
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
-            return;
-        }
+        var r = new ApiRouter();
 
-        var args = JsonDocument.Parse("{}").RootElement;
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_context", repo, args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result);
+        // MCP-over-HTTP
+        r.MapPost("/mcp", (ctx, _, ct) => _mcp.Handle(ctx, ct));
+
+        // Meta
+        r.MapGet("/api/health", (ctx, _, _) => _meta.Health(ctx));
+        r.MapGet("/api/status", (ctx, _, ct) => _meta.Status(ctx, ct));
+
+        // Memory — exact + non-id-prefixed
+        r.MapGet("/api/eidet/context", (ctx, _, ct) => _memory.GetContext(ctx, ct));
+        r.Map("GET", p => p == "/api/eidet/recall" || p == "/api/eidet/search",
+            (ctx, _, ct) => _memory.Search(ctx, ct));
+        r.MapGetPrefix("/api/eidet/history/",
+            (ctx, path, ct) => _memory.History(ctx, path["/api/eidet/history/".Length..], ct));
+        r.MapGetPrefix("/api/eidet/stats", (ctx, _, ct) => _memory.Stats(ctx, ct));
+        r.MapPost("/api/eidet", (ctx, _, ct) => _memory.Store(ctx, ct));
+        r.MapPost("/api/eidet/feedback", (ctx, _, ct) => _memory.Feedback(ctx, ct));
+        r.MapPost("/api/eidet/intake", (ctx, _, ct) => _memory.Intake(ctx, ct));
+        r.MapPost("/api/eidet/consolidate", (ctx, _, ct) => _memory.Consolidate(ctx, ct));
+        r.MapPost("/api/maintenance", (ctx, _, ct) => _maintenanceEndpoints.Maintenance(ctx, ct));
+        r.MapGet("/api/eidet/export", (ctx, _, ct) => _memory.Export(ctx, ct));
+        r.MapPost("/api/eidet/packs/export", (ctx, _, ct) => _memory.PackExport(ctx, ct));
+        r.MapPost("/api/eidet/packs/import", (ctx, _, ct) => _memory.PackImport(ctx, ct));
+        r.MapPost("/api/eidet/links", (ctx, _, ct) => _memory.CreateLink(ctx, ct));
+        r.MapGet("/api/eidet/links", (ctx, _, ct) => _memory.GetLinks(ctx, ct));
+
+        // Layers
+        r.MapGet("/api/eidet/layers", (ctx, _, ct) => _layerEndpoints.GetLayers(ctx, ct));
+        r.MapPost("/api/eidet/layers/mount", (ctx, _, ct) => _layerEndpoints.MountLayer(ctx, ct));
+        r.MapPost("/api/eidet/layers/sync", (ctx, _, ct) => _layerEndpoints.LayerSync(ctx, ct));
+
+        // Memory by id (must come after the more specific /api/eidet/* exact routes above)
+        r.Map("PUT", p => p.StartsWith("/api/eidet/") && !p.Contains("/links"),
+            (ctx, path, ct) => _memory.UpdateMemory(ctx, path["/api/eidet/".Length..], ct));
+        r.Map("POST", p => p.EndsWith("/links") && p.StartsWith("/api/eidet/") && p != "/api/eidet/links",
+            (ctx, path, ct) => _memory.AddMemoryLink(ctx, MemoryEndpoints.ExtractMemoryIdFromLinkPath(path), ct));
+        r.Map("DELETE", p => p.EndsWith("/links") && p.StartsWith("/api/eidet/") && p != "/api/eidet/links",
+            (ctx, path, ct) => _memory.RemoveMemoryLink(ctx, MemoryEndpoints.ExtractMemoryIdFromLinkPath(path), ct));
+        r.Map("DELETE", p => p.StartsWith("/api/eidet/layers/"),
+            (ctx, path, ct) => _layerEndpoints.UnmountLayer(ctx, path["/api/eidet/layers/".Length..], ct));
+        r.Map("DELETE", p => p.StartsWith("/api/eidet/"),
+            (ctx, path, ct) => _memory.Forget(ctx, path["/api/eidet/".Length..], ct));
+
+        // Quality / context preview / usage / enrich / scheduler / repos / browse / graph
+        r.MapGet("/api/eidet/quality", (ctx, _, ct) => _maintenanceEndpoints.Quality(ctx, ct));
+        r.MapGet("/api/eidet/context/preview", (ctx, _, ct) => _memory.ContextPreview(ctx, ct));
+        r.MapGet("/api/eidet/usage", (ctx, _, ct) => _usageEndpoints.Usage(ctx, ct));
+        r.MapGet("/api/eidet/usage/timeseries", (ctx, _, ct) => _usageEndpoints.TimeSeries(ctx, ct));
+        r.MapGet("/api/eidet/usage/hourly", (ctx, _, ct) => _usageEndpoints.Hourly(ctx, ct));
+        r.MapPost("/api/eidet/enrich", (ctx, _, ct) => _enrichEndpoint.Enrich(ctx, ct));
+        r.MapGet("/api/eidet/scheduled-tasks", (ctx, _, ct) => _maintenanceEndpoints.ScheduledTasks(ctx, ct));
+        r.MapGet("/api/eidet/repos", (ctx, _, ct) => _memory.GetRepos(ctx, ct));
+        r.MapGet("/api/eidet/browse", (ctx, _, ct) => _memory.Browse(ctx, ct));
+        r.MapGet("/api/eidet/graph", (ctx, _, ct) => _memory.Graph(ctx, ct));
+
+        // Catch-all GET memory by id (last GET under /api/eidet/)
+        r.MapGetPrefix("/api/eidet/", (ctx, path, ct) => _memory.GetMemory(ctx, path["/api/eidet/".Length..], ct));
+
+        // Embedded Web UI + root
+        r.MapAny(p => p == "/ui" || p == "/ui/", (ctx, _, _) => EmbeddedAssets.ServeAsync(ctx, "index.html"));
+        r.MapAny(p => p.StartsWith("/ui/"), (ctx, path, _) => EmbeddedAssets.ServeAsync(ctx, path["/ui/".Length..]));
+        r.MapAny(p => p == "/" || p == "", (ctx, _, _) => _meta.Root(ctx));
+
+        return r;
     }
-
-    private async Task HandleSearch(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var repo = ctx.Request.QueryString["repo"];
-        var q = ctx.Request.QueryString["q"];
-        if (string.IsNullOrEmpty(repo) || string.IsNullOrEmpty(q))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' and 'q' parameters" }, 400);
-            return;
-        }
-
-        var args = JsonSerializer.SerializeToElement(new
-        {
-            query = q,
-            limit = int.TryParse(ctx.Request.QueryString["limit"], out var lim) ? lim : 10,
-            type = ctx.Request.QueryString["type"],
-            tags = ctx.Request.QueryString["tags"]?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToArray() ?? [],
-            cross_repo = string.Equals(ctx.Request.QueryString["cross_repo"], "true", StringComparison.OrdinalIgnoreCase),
-        }, HttpJson.Options);
-
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_recall", repo, args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result);
-    }
-
-    private async Task HandleGetMemory(HttpListenerContext ctx, string id, CancellationToken ct)
-    {
-        var decoded = Uri.UnescapeDataString(id);
-        var chain = await _svc.GetVersionChainAsync(decoded, ct);
-        if (chain.Count == 0)
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Memory not found" }, 404);
-            return;
-        }
-        await HttpJson.WriteAsync(ctx, chain[0]);
-    }
-
-    private async Task HandleStore(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var req = await HttpJson.ReadAsync<StoreRequest>(ctx);
-        if (req is null || string.IsNullOrEmpty(req.Repo))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing required field: repo" }, 400);
-            return;
-        }
-
-        var args = JsonSerializer.SerializeToElement(new
-        {
-            content = req.Content,
-            type = req.Type.ToString(),
-            tags = req.Tags,
-            importance = req.Importance,
-            source = req.Source,
-            sessionId = req.SessionId,
-            supersedes = req.Supersedes,
-        }, HttpJson.Options);
-
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_store", req.Repo, args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result, successStatus: 201);
-    }
-
-    private async Task HandleForget(HttpListenerContext ctx, string id, CancellationToken ct)
-    {
-        var args = JsonSerializer.SerializeToElement(new
-        {
-            id = Uri.UnescapeDataString(id),
-            reason = ctx.Request.QueryString["reason"],
-        }, HttpJson.Options);
-
-        var repo = ctx.Request.QueryString["repo"] ?? "";
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_forget", repo, args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result);
-    }
-
-    private async Task HandleFeedback(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var req = await HttpJson.ReadAsync<FeedbackRequest>(ctx);
-        if (req is null || string.IsNullOrEmpty(req.MemoryId))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing required field: memoryId" }, 400);
-            return;
-        }
-
-        var args = JsonSerializer.SerializeToElement(new
-        {
-            id = req.MemoryId,
-            used = req.WasUsed,
-        }, HttpJson.Options);
-
-        var repo = ExtractRepoFromMemoryId(req.MemoryId) ?? "";
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_feedback", repo, args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result);
-    }
-
-    private async Task HandleHistory(HttpListenerContext ctx, string id, CancellationToken ct)
-    {
-        var args = JsonSerializer.SerializeToElement(new { id = Uri.UnescapeDataString(id) }, HttpJson.Options);
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_history", "", args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result);
-    }
-
-    private async Task HandleStats(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
-            return;
-        }
-        var context = await _svc.GetContextAsync(repo, maxTokens: 50, ct: ct);
-        await HttpJson.WriteAsync(ctx, new { repo, summary = context.Trim() });
-    }
-
-    private async Task HandleIntake(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
-            return;
-        }
-
-        // Resolve the filesystem path: use explicit path param, the repo value if it looks
-        // like a path, or look up the original path from the usage anchor document.
-        var path = ctx.Request.QueryString["path"];
-        if (string.IsNullOrEmpty(path))
-            path = RepoUsage.LooksLikePath(repo) ? repo : null;
-        if (string.IsNullOrEmpty(path) && _usage is not null)
-            path = await _usage.GetOriginalPathAsync(repo);
-        if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = $"Cannot resolve filesystem path for repo '{repo}'. The path '{path ?? "(unknown)"}' does not exist." }, 400);
-            return;
-        }
-
-        // Repo-wide intake (no path arg): handler treats request.RepoId as the project path.
-        var args = JsonSerializer.SerializeToElement(new { }, HttpJson.Options);
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_intake", path, args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result);
-    }
-
-    private async Task HandleConsolidate(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
-            return;
-        }
-
-        var args = JsonDocument.Parse("{}").RootElement;
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_consolidate", repo, args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result);
-    }
-
-    private async Task HandleMaintenance(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
-            return;
-        }
-
-        var args = JsonDocument.Parse("{}").RootElement;
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_maintenance", repo, args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result);
-    }
-
-    private async Task HandleStatus(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var info = await _svc.GetStoreInfoAsync(ct);
-
-        // Check Ollama health if enrichment is configured
-        object? ollamaStatus = null;
-        if (_config?.Enrichment.OllamaEnabled == true && _enrichment != null)
-        {
-            var healthy = await _enrichment.CheckHealthAsync(ct);
-            ollamaStatus = new
-            {
-                enabled = true,
-                healthy,
-                model = _config.Enrichment.OllamaModel,
-                url = _config.Enrichment.OllamaUrl,
-            };
-        }
-        else if (_config != null)
-        {
-            ollamaStatus = new { enabled = false };
-        }
-
-        await HttpJson.WriteAsync(ctx, new
-        {
-            version = Eidet.Core.EidetVersion.Current,
-            status = "running",
-            uptime = (DateTime.UtcNow - _startedAt).ToString(@"d\.hh\:mm\:ss"),
-            api = _baseUrl,
-            database = info,
-            ollama = ollamaStatus,
-        });
-    }
-
-    private async Task HandlePackExport(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var req = await HttpJson.ReadAsync<PackExportRequest>(ctx);
-        var packId = req?.ResolvedPackId ?? "";
-        if (req is null || string.IsNullOrEmpty(req.Repo) || string.IsNullOrEmpty(packId)
-            || string.IsNullOrEmpty(req.Name) || string.IsNullOrEmpty(req.Version))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing required fields: repo, packId, name, version" }, 400);
-            return;
-        }
-
-        var args = JsonSerializer.SerializeToElement(new
-        {
-            pack_id = packId,
-            name = req.Name,
-            version = req.Version,
-            author = "user",
-            output = req.OutputPath,
-        }, HttpJson.Options);
-
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_pack_export", req.Repo, args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result);
-    }
-
-    private async Task HandlePackImport(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var req = await HttpJson.ReadAsync<PackImportRequest>(ctx);
-        if (req is null || string.IsNullOrEmpty(req.Path))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing required field: path" }, 400);
-            return;
-        }
-
-        var args = JsonSerializer.SerializeToElement(new { path = req.Path }, HttpJson.Options);
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_pack_import", "", args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result);
-    }
-
-    private async Task HandleCreateLink(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var req = await HttpJson.ReadAsync<CreateLinkRequest>(ctx);
-        if (req is null || string.IsNullOrEmpty(req.Repo) || string.IsNullOrEmpty(req.TargetRepo)
-            || string.IsNullOrEmpty(req.Relation))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing required fields: repo, targetRepo, relation" }, 400);
-            return;
-        }
-
-        var args = JsonSerializer.SerializeToElement(new
-        {
-            target_repo = req.TargetRepo,
-            relation = req.Relation,
-            source = "user",
-        }, HttpJson.Options);
-
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_link", req.Repo, args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result, successStatus: 201);
-    }
-
-    private async Task HandleGetLinks(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
-            return;
-        }
-
-        var query = new Eidet.Core.Domain.MemoryQuery
-        {
-            Text = "cross-repo link",
-            Tags = ["cross-repo-link"],
-            Limit = 50,
-        };
-        var results = await _svc.RecallAsync(repo, query, ct);
-        await HttpJson.WriteAsync(ctx, new { repo, links = results });
-    }
-
-    private async Task HandleExport(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
-            return;
-        }
-        var markdown = await _export.ExportMarkdownAsync(RepoIdNormalizer.Normalize(repo), ct);
-        ctx.Response.StatusCode = 200;
-        ctx.Response.ContentType = "text/markdown";
-        var bytes = System.Text.Encoding.UTF8.GetBytes(markdown);
-        await ctx.Response.OutputStream.WriteAsync(bytes, ct);
-        ctx.Response.Close();
-    }
-
-    private async Task HandleMcpRequest(HttpListenerContext ctx, CancellationToken ct)
-    {
-        if (_mcpServer is null)
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "MCP server not available" }, 501);
-            return;
-        }
-
-        // Support per-request repo override via query string (used by container overlays)
-        var repoOverride = ctx.Request.QueryString["repo"];
-        var server = string.IsNullOrEmpty(repoOverride)
-            ? _mcpServer
-            : _mcpServerPool.GetOrAdd(repoOverride, id =>
-                new McpServer(_svc, _intake, _consolidation, _maintenance, id));
-
-        using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
-        var body = await reader.ReadToEndAsync(ct);
-
-        var response = await server.ProcessRequestAsync(body, ct);
-
-        if (response is null)
-        {
-            // Notification — no response needed (204 No Content)
-            ctx.Response.StatusCode = 204;
-            ctx.Response.Close();
-            return;
-        }
-
-        ctx.Response.StatusCode = 200;
-        ctx.Response.ContentType = "application/json";
-        await JsonSerializer.SerializeAsync(ctx.Response.OutputStream, response, McpServer.SerializerOptions, ct);
-        ctx.Response.Close();
-    }
-
-    private async Task HandleGetLayers(HttpListenerContext ctx, CancellationToken ct)
-    {
-        if (_layers is null) { await HttpJson.WriteAsync(ctx, new { error = "Layer service not available" }, 501); return; }
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo)) { await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400); return; }
-        var layers = await _layers.GetApplicableLayersAsync(RepoIdNormalizer.Normalize(repo), ct: ct);
-        await HttpJson.WriteAsync(ctx, new { repo, layers });
-    }
-
-    private async Task HandleMountLayer(HttpListenerContext ctx, CancellationToken ct)
-    {
-        if (_layers is null) { await HttpJson.WriteAsync(ctx, new { error = "Layer service not available" }, 501); return; }
-        var req = await HttpJson.ReadAsync<MountLayerRequest>(ctx);
-        if (req is null || string.IsNullOrEmpty(req.LayerId) || string.IsNullOrEmpty(req.Name))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing required fields: layerId, name" }, 400);
-            return;
-        }
-        var layer = await _layers.MountAsync(req.LayerId, req.Name, req.Type,
-            req.ApplicableRepos, req.ApplicablePackages, req.SourcePath, ct: ct);
-        await HttpJson.WriteAsync(ctx, layer, 201);
-    }
-
-    private async Task HandleLayerSync(HttpListenerContext ctx, CancellationToken ct)
-    {
-        if (_layerSync is null) { await HttpJson.WriteAsync(ctx, new { error = "Layer sync service not available" }, 501); return; }
-        var req = await HttpJson.ReadAsync<LayerSyncRequest>(ctx);
-        if (req is null || string.IsNullOrEmpty(req.Path))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing required field: path" }, 400);
-            return;
-        }
-
-        if (req.Preview == true)
-        {
-            var preview = await _layerSync.PreviewAsync(req.Path, req.LayerId, ct);
-            await HttpJson.WriteAsync(ctx, preview);
-        }
-        else
-        {
-            var result = await _layerSync.SyncAsync(req.Path, req.LayerId, req.RemoveStale ?? true, ct);
-            await HttpJson.WriteAsync(ctx, result);
-        }
-    }
-
-    private async Task HandleUnmountLayer(HttpListenerContext ctx, string layerId, CancellationToken ct)
-    {
-        if (_layers is null) { await HttpJson.WriteAsync(ctx, new { error = "Layer service not available" }, 501); return; }
-        var decoded = Uri.UnescapeDataString(layerId);
-        var ok = await _layers.UnmountAsync(decoded, ct);
-        if (ok) await HttpJson.WriteAsync(ctx, new { unmounted = true });
-        else await HttpJson.WriteAsync(ctx, new { error = "Layer not found" }, 404);
-    }
-
-    private async Task HandleGetRepos(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var repos = await _svc.GetRepoIdsAsync(ct);
-        var pathMap = _usage is not null
-            ? await _usage.GetAllRepoPathsAsync()
-            : new Dictionary<string, string?>();
-        await HttpJson.WriteAsync(ctx, new
-        {
-            repos = repos.Select(r => new
-            {
-                repoId = r,
-                originalPath = pathMap.TryGetValue(r, out var p) ? p : null,
-            })
-        });
-    }
-
-    private async Task HandleBrowse(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
-            return;
-        }
-        var skip = int.TryParse(ctx.Request.QueryString["skip"], out var s) ? s : 0;
-        var take = int.TryParse(ctx.Request.QueryString["take"], out var t) ? t : 50;
-        var type = Enum.TryParse<MemoryType>(ctx.Request.QueryString["type"], true, out var mt) ? mt : (MemoryType?)null;
-
-        using var scope = _usage?.StartScope(repo, "Browse");
-        var entries = await _svc.BrowseAsync(repo, skip, take, type, ct);
-        scope?.SetResultCount(entries.Count);
-        await HttpJson.WriteAsync(ctx, new { repo, skip, take, count = entries.Count, entries });
-    }
-
-    private async Task HandleGraph(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
-            return;
-        }
-        var limit = int.TryParse(ctx.Request.QueryString["limit"], out var lim) ? lim : 200;
-        using var scope = _usage?.StartScope(repo, "Graph");
-        var graph = await _svc.GetGraphDataAsync(repo, limit, ct);
-        scope?.SetResultCount(graph.Nodes.Count);
-        await HttpJson.WriteAsync(ctx, graph);
-    }
-
-    private async Task HandleQuality(HttpListenerContext ctx, CancellationToken ct)
-    {
-        if (_quality is null) { await HttpJson.WriteAsync(ctx, new { error = "Quality service not available" }, 503); return; }
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo)) { await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400); return; }
-        using var scope = _usage?.StartScope(repo, "Quality");
-        var report = await _quality.AnalyzeAsync(repo, ct);
-        await HttpJson.WriteAsync(ctx, report);
-    }
-
-    private async Task HandleScheduledTasks(HttpListenerContext ctx, CancellationToken ct)
-    {
-        if (_scheduledTasks is null)
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Scheduler not available" }, 503);
-            return;
-        }
-
-        var tasks = await _scheduledTasks.GetTasksAsync(ct);
-        await HttpJson.WriteAsync(ctx, new { tasks });
-    }
-
-    private async Task HandleContextPreview(HttpListenerContext ctx, CancellationToken ct)
-    {
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
-            return;
-        }
-
-        var maxTokens = int.TryParse(ctx.Request.QueryString["tokens"], out var t) ? t : 600;
-        var contextText = await _svc.GetContextAsync(repo, maxTokens, ct);
-
-        // Gather cross-repo scope info
-        List<object>? layerInfo = null;
-        List<string>? scope = null;
-        if (_layers != null)
-        {
-            var normalizedRepoId = RepoIdNormalizer.Normalize(repo);
-            var layers = await _layers.GetApplicableLayersAsync(normalizedRepoId, ct: ct);
-            layerInfo = layers.Select(l => (object)new { l.Id, l.Name, type = l.Type.ToString() }).ToList();
-            scope = await _layers.ResolveScopeAsync(normalizedRepoId, crossRepo: true, ct: ct);
-        }
-
-        await HttpJson.WriteAsync(ctx, new
-        {
-            repo,
-            maxTokens,
-            context = contextText.Trim(),
-            estimatedTokens = (int)Math.Ceiling(contextText.Length / 4.0),
-            layers = layerInfo,
-            crossRepoScope = scope,
-        });
-    }
-
-    private async Task HandleRoot(HttpListenerContext ctx)
-    {
-        var userAgent = ctx.Request.Headers["User-Agent"] ?? "";
-        var isBrowser = userAgent.Contains("Mozilla/") || userAgent.Contains("Chrome/")
-            || userAgent.Contains("Safari/") || userAgent.Contains("Edge/");
-
-        if (isBrowser)
-        {
-            ctx.Response.StatusCode = 302;
-            ctx.Response.Headers.Add("Location", "/ui");
-            ctx.Response.Close();
-            return;
-        }
-
-        await HttpJson.WriteAsync(ctx, new
-        {
-            service = "Eidet Memory Service",
-            version = Eidet.Core.EidetVersion.Current,
-            endpoints = new
-            {
-                ui = "/ui",
-                health = "/api/health",
-                status = "/api/status",
-                docs = "https://github.com/stevehansen/eidet",
-            },
-        });
-    }
-
-    private async Task HandleUsage(HttpListenerContext ctx, CancellationToken ct)
-    {
-        if (_usage is null) { await HttpJson.WriteAsync(ctx, new { error = "Usage tracking not available" }, 503); return; }
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo)) { await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400); return; }
-        var days = int.TryParse(ctx.Request.QueryString["days"], out var d) ? d : 30;
-        var report = await _usage.GetUsageAsync(repo, DateTime.UtcNow.AddDays(-days));
-        await HttpJson.WriteAsync(ctx, report);
-    }
-
-    private async Task HandleUsageTimeSeries(HttpListenerContext ctx, CancellationToken ct)
-    {
-        if (_usage is null) { await HttpJson.WriteAsync(ctx, new { error = "Usage tracking not available" }, 503); return; }
-        var repo = ctx.Request.QueryString["repo"];
-        var op = ctx.Request.QueryString["operation"];
-        if (string.IsNullOrEmpty(repo) || string.IsNullOrEmpty(op))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' and 'operation' parameters" }, 400);
-            return;
-        }
-        var days = int.TryParse(ctx.Request.QueryString["days"], out var d) ? d : 30;
-        var data = await _usage.GetTimeSeriesAsync(repo, op, DateTime.UtcNow.AddDays(-days));
-        await HttpJson.WriteAsync(ctx, new { repo, operation = op, data });
-    }
-
-    private async Task HandleUsageHourly(HttpListenerContext ctx, CancellationToken ct)
-    {
-        if (_usage is null) { await HttpJson.WriteAsync(ctx, new { error = "Usage tracking not available" }, 503); return; }
-        var repo = ctx.Request.QueryString["repo"];
-        if (string.IsNullOrEmpty(repo)) { await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400); return; }
-        var days = int.TryParse(ctx.Request.QueryString["days"], out var d) ? d : 7;
-        var buckets = await _usage.GetHourlyBreakdownAsync(repo, days);
-        await HttpJson.WriteAsync(ctx, new { repo, days, buckets });
-    }
-
-    private async Task HandleEnrich(HttpListenerContext ctx, CancellationToken ct)
-    {
-        if (_enrichment is null || !_enrichment.IsAvailable)
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Enrichment service not available. Configure Ollama in eidet setup." }, 503);
-            return;
-        }
-
-        var req = await HttpJson.ReadAsync<EnrichRequest>(ctx);
-        if (req is null || string.IsNullOrEmpty(req.Content) || string.IsNullOrEmpty(req.Task))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing required fields: content, task" }, 400);
-            return;
-        }
-
-        try
-        {
-            string? result = req.Task switch
-            {
-                "oneliner" => await _enrichment.GenerateAsync(EnrichmentPrompt.OneLiner, req.Content, ct),
-                "summary" => await _enrichment.GenerateAsync(EnrichmentPrompt.Summary, req.Content, ct),
-                "foresight" => await _enrichment.GenerateAsync(EnrichmentPrompt.ForesightHint, req.Content, ct),
-                "entities" => string.Join(", ", await _enrichment.ExtractEntitiesAsync(req.Content, ct)),
-                _ => null,
-            };
-
-            if (result is null)
-                await HttpJson.WriteAsync(ctx, new { error = $"Unknown task: {req.Task}. Use: oneliner, summary, foresight, entities" }, 400);
-            else
-                await HttpJson.WriteAsync(ctx, new { task = req.Task, result });
-        }
-        catch (Exception ex)
-        {
-            await HttpJson.WriteAsync(ctx, new { error = $"Enrichment failed: {ex.Message}" }, 500);
-        }
-    }
-
-    private async Task HandleUpdateMemory(HttpListenerContext ctx, string id, CancellationToken ct)
-    {
-        var decoded = Uri.UnescapeDataString(id);
-        var req = await HttpJson.ReadAsync<UpdateMemoryRequest>(ctx);
-        if (req is null)
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Invalid request body" }, 400);
-            return;
-        }
-
-        var args = JsonSerializer.SerializeToElement(new
-        {
-            id = decoded,
-            content = req.Content,
-            tags = req.Tags,
-            importance = req.Importance,
-            confidence = req.Confidence,
-            type = req.Type,
-            oneLiner = req.OneLiner,
-            summary = req.Summary,
-            foresightHint = req.ForesightHint,
-        }, HttpJson.Options);
-
-        var repo = ExtractRepoFromMemoryId(decoded) ?? "";
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_edit", repo, args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result);
-    }
-
-    private async Task HandleAddMemoryLink(HttpListenerContext ctx, string memoryId, CancellationToken ct)
-    {
-        if (string.IsNullOrEmpty(memoryId))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Invalid memory ID in path" }, 400);
-            return;
-        }
-        var decoded = Uri.UnescapeDataString(memoryId);
-        var req = await HttpJson.ReadAsync<AddMemoryLinkRequest>(ctx);
-        if (req is null || string.IsNullOrEmpty(req.TargetRepoId) || string.IsNullOrEmpty(req.Relation))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing required fields: targetRepoId, relation" }, 400);
-            return;
-        }
-
-        var ok = await _svc.AddLinkAsync(decoded, req.TargetRepoId, req.Relation, req.TargetMemoryId, ct);
-        if (ok) await HttpJson.WriteAsync(ctx, new { linked = true }, 201);
-        else await HttpJson.WriteAsync(ctx, new { error = "Memory not found" }, 404);
-    }
-
-    private async Task HandleRemoveMemoryLink(HttpListenerContext ctx, string memoryId, CancellationToken ct)
-    {
-        if (string.IsNullOrEmpty(memoryId))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Invalid memory ID in path" }, 400);
-            return;
-        }
-        var decoded = Uri.UnescapeDataString(memoryId);
-        var targetRepo = ctx.Request.QueryString["targetRepoId"];
-        var relation = ctx.Request.QueryString["relation"];
-        if (string.IsNullOrEmpty(targetRepo) || string.IsNullOrEmpty(relation))
-        {
-            await HttpJson.WriteAsync(ctx, new { error = "Missing query params: targetRepoId, relation" }, 400);
-            return;
-        }
-
-        var ok = await _svc.RemoveLinkAsync(decoded, targetRepo, relation, ct);
-        if (ok) await HttpJson.WriteAsync(ctx, new { removed = true });
-        else await HttpJson.WriteAsync(ctx, new { error = "Link or memory not found" }, 404);
-    }
-
-    /// <summary>
-    /// Extract memory ID from paths like /api/eidet/{memoryId}/links.
-    /// Memory IDs contain slashes (memories/repoSlug/type/hash), so we take everything between /api/eidet/ and /links.
-    /// </summary>
-    private static string ExtractMemoryIdFromLinkPath(string path)
-    {
-        var prefix = "/api/eidet/";
-        var suffix = "/links";
-        if (path.StartsWith(prefix) && path.EndsWith(suffix) && path.Length > prefix.Length + suffix.Length)
-            return path[prefix.Length..^suffix.Length];
-        return "";
-    }
-
-    private static string? ExtractRepoFromMemoryId(string memoryId)
-    {
-        // Memory IDs follow: memories/{repoSlug}/{type}/{hash}
-        if (!memoryId.StartsWith("memories/", StringComparison.OrdinalIgnoreCase)) return null;
-        var parts = memoryId.Split('/');
-        return parts.Length >= 3 ? parts[1].Replace("--", ":\\").Replace('-', '\\') : null;
-    }
-
-}
-
-public record StoreRequest
-{
-    public string Repo { get; init; } = "";
-    public string Content { get; init; } = "";
-    public MemoryType Type { get; init; }
-    public List<string>? Tags { get; init; }
-    public float? Importance { get; init; }
-    public string? Source { get; init; }
-    public string? SessionId { get; init; }
-    public string? Supersedes { get; init; }
-}
-
-public record FeedbackRequest
-{
-    public string MemoryId { get; init; } = "";
-    public bool WasUsed { get; init; }
-}
-
-public record PackExportRequest
-{
-    public string Repo { get; init; } = "";
-    public string PackId { get; init; } = "";
-    public string? BundleId { get; init; } // legacy alias for PackId
-    public string Name { get; init; } = "";
-    public string Version { get; init; } = "";
-    public string? OutputPath { get; init; }
-
-    public string ResolvedPackId => !string.IsNullOrEmpty(PackId) ? PackId : (BundleId ?? "");
-}
-
-public record PackImportRequest
-{
-    public string Path { get; init; } = "";
-}
-
-public record CreateLinkRequest
-{
-    public string Repo { get; init; } = "";
-    public string TargetRepo { get; init; } = "";
-    public string Relation { get; init; } = "";
-}
-
-public record MountLayerRequest
-{
-    public string LayerId { get; init; } = "";
-    public string Name { get; init; } = "";
-    public LayerType Type { get; init; }
-    public List<string>? ApplicableRepos { get; init; }
-    public List<string>? ApplicablePackages { get; init; }
-    public string? SourcePath { get; init; }
-}
-
-public record LayerSyncRequest
-{
-    public string Path { get; init; } = "";
-    public string? LayerId { get; init; }
-    public bool? Preview { get; init; }
-    public bool? RemoveStale { get; init; }
-}
-
-public record UpdateMemoryRequest
-{
-    public string? Content { get; init; }
-    public List<string>? Tags { get; init; }
-    public float? Importance { get; init; }
-    public float? Confidence { get; init; }
-    public string? Type { get; init; }
-    public string? OneLiner { get; init; }
-    public string? Summary { get; init; }
-    public string? ForesightHint { get; init; }
-}
-
-public record AddMemoryLinkRequest
-{
-    public string TargetRepoId { get; init; } = "";
-    public string? TargetMemoryId { get; init; }
-    public string Relation { get; init; } = "";
-}
-
-public record EnrichRequest
-{
-    public string Content { get; init; } = "";
-    public string Task { get; init; } = "";  // oneliner, summary, foresight, entities
 }
