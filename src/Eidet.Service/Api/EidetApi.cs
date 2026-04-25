@@ -11,6 +11,9 @@ using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Mcp;
+using Eidet.Service.Tools;
+using Eidet.Service.Tools.Formatters;
+using Eidet.Service.Tools.Handlers;
 
 namespace Eidet.Service.Api;
 
@@ -39,6 +42,7 @@ public class EidetApiServer
     private readonly AuthConfig _auth;
     private readonly UsageTracker? _usage;
     private readonly ScheduledTaskService? _scheduledTasks;
+    private readonly ToolDispatcher _dispatcher;
     private readonly HttpListener _listener;
     private readonly string _baseUrl;
     private readonly DateTime _startedAt = DateTime.UtcNow;
@@ -64,6 +68,7 @@ public class EidetApiServer
         _auth = auth ?? new AuthConfig();
         _usage = usage;
         _scheduledTasks = scheduledTasks;
+        _dispatcher = new ToolDispatcher([new StoreToolHandler(svc)], usage);
         _baseUrl = $"http://{bindAddress}:{port}/";
         _listener = new HttpListener();
         _listener.Prefixes.Add(_baseUrl);
@@ -322,37 +327,25 @@ public class EidetApiServer
     private async Task HandleStore(HttpListenerContext ctx, CancellationToken ct)
     {
         var req = await ReadJson<StoreRequest>(ctx);
-        if (req is null || string.IsNullOrEmpty(req.Repo) || string.IsNullOrEmpty(req.Content))
+        if (req is null || string.IsNullOrEmpty(req.Repo))
         {
-            await WriteJson(ctx, new { error = "Missing required fields: repo, content" }, 400);
+            await WriteJson(ctx, new { error = "Missing required field: repo" }, 400);
             return;
         }
 
-        using var scope = _usage?.StartScope(req.Repo, "Store");
-        var result = await _svc.StoreAsync(
-            repoId: req.Repo,
-            content: req.Content,
-            type: req.Type,
-            tags: req.Tags,
-            importance: req.Importance ?? 0.5f,
-            source: req.Source ?? "claude-session",
-            sessionId: req.SessionId,
-            supersedes: req.Supersedes,
-            ct: ct);
-
-        if (!result.Success)
+        var args = JsonSerializer.SerializeToElement(new
         {
-            if (result.DuplicateId != null)
-            {
-                await WriteJson(ctx, new { error = result.Reason, duplicateId = result.DuplicateId }, 409);
-                return;
-            }
-            await WriteJson(ctx, new { error = result.Reason }, 422);
-            return;
-        }
+            content = req.Content,
+            type = req.Type.ToString(),
+            tags = req.Tags,
+            importance = req.Importance,
+            source = req.Source,
+            sessionId = req.SessionId,
+            supersedes = req.Supersedes,
+        }, JsonOptions);
 
-        scope?.SetResultCount(1);
-        await WriteJson(ctx, new { id = result.Id }, 201);
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_store", req.Repo, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result, successStatus: 201);
     }
 
     private async Task HandleForget(HttpListenerContext ctx, string id, CancellationToken ct)

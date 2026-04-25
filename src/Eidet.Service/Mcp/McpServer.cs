@@ -4,6 +4,9 @@ using Eidet.Core;
 using Eidet.Core.Domain;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
+using Eidet.Service.Tools;
+using Eidet.Service.Tools.Formatters;
+using Eidet.Service.Tools.Handlers;
 
 namespace Eidet.Service.Mcp;
 
@@ -25,6 +28,7 @@ public class McpServer
     private readonly LayerService? _layers;
     private readonly string _repoId;
     private readonly bool _autoIntake;
+    private readonly ToolDispatcher _dispatcher;
     private bool _autoIntakeDone;
 
     public McpServer(MemoryService svc, IntakeService intake, ConsolidationEngine consolidation,
@@ -40,7 +44,11 @@ public class McpServer
         _usage = usage;
         _export = export;
         _layers = layers;
+        _dispatcher = BuildDispatcher(svc, usage);
     }
+
+    private static ToolDispatcher BuildDispatcher(MemoryService svc, UsageTracker? usage) =>
+        new([new StoreToolHandler(svc)], usage);
 
     public async Task RunStdioAsync(CancellationToken ct)
     {
@@ -156,13 +164,18 @@ public class McpServer
 
     private async Task<McpCallToolResult> ExecuteToolAsync(string name, JsonElement args, CancellationToken ct)
     {
+        if (_dispatcher.IsRegistered(name))
+        {
+            var dispatched = await _dispatcher.InvokeAsync(new ToolRequest(name, _repoId, args, "mcp", ct));
+            return McpFormatter.Format(dispatched);
+        }
+
         var opName = ToolToOperation.GetValueOrDefault(name);
         using var scope = opName != null ? _usage?.StartScope(_repoId, opName) : null;
         try
         {
             var result = name switch
             {
-                "eidet_store" => await ExecuteStore(args, ct),
                 "eidet_recall" => await ExecuteRecall(args, ct),
                 "eidet_context" => await ExecuteContext(args, ct),
                 "eidet_forget" => await ExecuteForget(args, ct),
@@ -188,35 +201,6 @@ public class McpServer
             EidetLog.Error($"MCP tool '{name}' failed for repo '{_repoId}'", ex);
             return McpCallToolResult.Error($"Internal error ({ex.GetType().Name}): {ex.Message}");
         }
-    }
-
-    private async Task<McpCallToolResult> ExecuteStore(JsonElement args, CancellationToken ct)
-    {
-        var content = RequireString(args, "content");
-        var typeStr = RequireString(args, "type");
-        if (!Enum.TryParse<MemoryType>(typeStr, true, out var type))
-            return McpCallToolResult.Error($"Invalid type: {typeStr}. Use: observation, insight, procedure, heuristic.");
-
-        var tags = GetStringArray(args, "tags");
-        var importance = GetFloat(args, "importance", 0.5f);
-        var supersedes = GetString(args, "supersedes");
-        var provenanceStr = GetString(args, "provenance");
-        MemoryProvenance? provenance = provenanceStr switch
-        {
-            null => null,
-            var s when s.Equals("Bundle", StringComparison.OrdinalIgnoreCase) => MemoryProvenance.Pack,
-            var s when Enum.TryParse<MemoryProvenance>(s, true, out var p) => p,
-            _ => null,
-        };
-
-        var result = await _svc.StoreAsync(_repoId, content, type, tags, importance,
-            source: "claude-session", supersedes: supersedes, provenance: provenance, ct: ct);
-
-        if (result.DuplicateId != null)
-            return McpCallToolResult.Text($"Near-duplicate of existing memory: {result.DuplicateId}");
-        if (!result.Success)
-            return McpCallToolResult.Error(result.Reason!);
-        return McpCallToolResult.Text($"Stored: {result.Id}");
     }
 
     private async Task<McpCallToolResult> ExecuteRecall(JsonElement args, CancellationToken ct)
