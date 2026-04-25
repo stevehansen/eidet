@@ -48,7 +48,14 @@ public class McpServer
     }
 
     private static ToolDispatcher BuildDispatcher(MemoryService svc, UsageTracker? usage) =>
-        new([new StoreToolHandler(svc)], usage);
+        new([
+            new StoreToolHandler(svc),
+            new RecallToolHandler(svc),
+            new ForgetToolHandler(svc),
+            new FeedbackToolHandler(svc),
+            new HistoryToolHandler(svc),
+            new ContextToolHandler(svc),
+        ], usage);
 
     public async Task RunStdioAsync(CancellationToken ct)
     {
@@ -164,6 +171,10 @@ public class McpServer
 
     private async Task<McpCallToolResult> ExecuteToolAsync(string name, JsonElement args, CancellationToken ct)
     {
+        // MCP-only side effect: first eidet_context call auto-ingests this repo if it has no memories.
+        if (name == "eidet_context")
+            await TryAutoIntakeAsync(ct);
+
         if (_dispatcher.IsRegistered(name))
         {
             var dispatched = await _dispatcher.InvokeAsync(new ToolRequest(name, _repoId, args, "mcp", ct));
@@ -176,11 +187,6 @@ public class McpServer
         {
             var result = name switch
             {
-                "eidet_recall" => await ExecuteRecall(args, ct),
-                "eidet_context" => await ExecuteContext(args, ct),
-                "eidet_forget" => await ExecuteForget(args, ct),
-                "eidet_feedback" => await ExecuteFeedback(args, ct),
-                "eidet_history" => await ExecuteHistory(args, ct),
                 "eidet_intake" => await ExecuteIntake(args, ct),
                 "eidet_link" => await ExecuteLink(args, ct),
                 "eidet_consolidate" => await ExecuteConsolidate(args, ct),
@@ -203,104 +209,19 @@ public class McpServer
         }
     }
 
-    private async Task<McpCallToolResult> ExecuteRecall(JsonElement args, CancellationToken ct)
+    private async Task TryAutoIntakeAsync(CancellationToken ct)
     {
-        var query = new MemoryQuery
+        if (!_autoIntake || _autoIntakeDone) return;
+        _autoIntakeDone = true;
+        try
         {
-            Text = RequireString(args, "query"),
-            Type = GetEnum<MemoryType>(args, "type"),
-            Tags = GetStringArray(args, "tags"),
-            Limit = GetInt(args, "limit", 10),
-            IncludeExpired = GetBool(args, "include_expired"),
-            CrossRepo = GetBool(args, "cross_repo", defaultValue: true),
-        };
-
-        var results = await _svc.RecallAsync(_repoId, query, ct);
-
-        if (results.Count == 0)
-            return McpCallToolResult.Text("No memories found.");
-
-        var lines = new List<string> { $"{results.Count} memory(ies) found:" };
-        foreach (var r in results)
-        {
-            var prefix = r.Type switch
-            {
-                MemoryType.Insight => "[I]",
-                MemoryType.Observation => "[O]",
-                MemoryType.Procedure => "[P]",
-                MemoryType.Heuristic => "[H]",
-                _ => "[?]",
-            };
-            var stale = r.StalenessWarning != null ? $" {r.StalenessWarning}" : "";
-            var display = r.OneLiner ?? r.Summary ?? Truncate(r.Content, 120);
-            lines.Add($"  {prefix} {display}{stale}");
-            lines.Add($"      id={r.Id} importance={r.Importance:F2} score={r.Score:F2}");
+            var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
+            var counts = await _svc.GetCountsByTypeAsync(normalizedRepoId, ct);
+            var totalForRepo = counts.Values.Sum();
+            if (totalForRepo == 0)
+                await _intake.IngestAsync(_repoId, _repoId, dryRun: false, ct: ct);
         }
-
-        return McpCallToolResult.Text(string.Join("\n", lines));
-    }
-
-    private async Task<McpCallToolResult> ExecuteContext(JsonElement args, CancellationToken ct)
-    {
-        // Auto-intake on first context call if no memories exist for THIS repo
-        if (_autoIntake && !_autoIntakeDone)
-        {
-            _autoIntakeDone = true;
-            try
-            {
-                var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
-                var counts = await _svc.GetCountsByTypeAsync(normalizedRepoId, ct);
-                var totalForRepo = counts.Values.Sum();
-                if (totalForRepo == 0)
-                {
-                    await _intake.IngestAsync(_repoId, _repoId, dryRun: false, ct: ct);
-                }
-            }
-            catch { /* Non-critical — don't fail context for auto-intake issues */ }
-        }
-
-        var maxTokens = GetInt(args, "max_tokens", 600);
-        var context = await _svc.GetContextAsync(_repoId, maxTokens, ct);
-        return McpCallToolResult.Text(context);
-    }
-
-    private async Task<McpCallToolResult> ExecuteForget(JsonElement args, CancellationToken ct)
-    {
-        var id = RequireString(args, "id");
-        var reason = GetString(args, "reason");
-        var ok = await _svc.ForgetAsync(id, reason, ct: ct);
-        return ok ? McpCallToolResult.Text($"Memory {id} has been invalidated.") : McpCallToolResult.Error($"Memory not found: {id}");
-    }
-
-    private async Task<McpCallToolResult> ExecuteFeedback(JsonElement args, CancellationToken ct)
-    {
-        var id = RequireString(args, "id");
-        var used = RequireBool(args, "used");
-        var ok = await _svc.ApplyFeedbackAsync(id, used, ct);
-        var label = used ? "Echo" : "Fizzle";
-        return ok ? McpCallToolResult.Text($"{label} feedback applied to {id}.") : McpCallToolResult.Error($"Memory not found: {id}");
-    }
-
-    private async Task<McpCallToolResult> ExecuteHistory(JsonElement args, CancellationToken ct)
-    {
-        var id = RequireString(args, "id");
-        var chain = await _svc.GetVersionChainAsync(id, ct);
-
-        if (chain.Count == 0)
-            return McpCallToolResult.Error($"Memory not found: {id}");
-
-        var lines = new List<string> { $"Version history for {id} ({chain.Count} version(s)):" };
-        for (var i = 0; i < chain.Count; i++)
-        {
-            var e = chain[i];
-            var current = i == 0 ? " (current)" : "";
-            var expired = e.Validity.ValidUntil != null ? $" [expired: {e.ForgetReason ?? "superseded"}]" : "";
-            lines.Add($"  {i + 1}. {e.Id}{current}{expired}");
-            lines.Add($"     Created: {e.CreatedAt:u} | Importance: {e.Importance:F2}");
-            lines.Add($"     {Truncate(e.Content, 100)}");
-        }
-
-        return McpCallToolResult.Text(string.Join("\n", lines));
+        catch { /* Non-critical — don't fail context for auto-intake issues */ }
     }
 
     private async Task<McpCallToolResult> ExecuteIntake(JsonElement args, CancellationToken ct)

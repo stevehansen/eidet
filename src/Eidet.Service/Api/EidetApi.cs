@@ -68,7 +68,14 @@ public class EidetApiServer
         _auth = auth ?? new AuthConfig();
         _usage = usage;
         _scheduledTasks = scheduledTasks;
-        _dispatcher = new ToolDispatcher([new StoreToolHandler(svc)], usage);
+        _dispatcher = new ToolDispatcher([
+            new StoreToolHandler(svc),
+            new RecallToolHandler(svc),
+            new ForgetToolHandler(svc),
+            new FeedbackToolHandler(svc),
+            new HistoryToolHandler(svc),
+            new ContextToolHandler(svc),
+        ], usage);
         _baseUrl = $"http://{bindAddress}:{port}/";
         _listener = new HttpListener();
         _listener.Prefixes.Add(_baseUrl);
@@ -280,10 +287,10 @@ public class EidetApiServer
             await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
             return;
         }
-        using var scope = _usage?.StartScope(repo, "Context");
-        var context = await _svc.GetContextAsync(repo, ct: ct);
-        scope?.SetResultCount(1);
-        await WriteJson(ctx, new { repo, context });
+
+        var args = JsonDocument.Parse("{}").RootElement;
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_context", repo, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
     }
 
     private async Task HandleSearch(HttpListenerContext ctx, CancellationToken ct)
@@ -296,20 +303,17 @@ public class EidetApiServer
             return;
         }
 
-        var crossRepo = ctx.Request.QueryString["cross_repo"];
-        var query = new MemoryQuery
+        var args = JsonSerializer.SerializeToElement(new
         {
-            Text = q,
-            Limit = int.TryParse(ctx.Request.QueryString["limit"], out var lim) ? lim : 10,
-            Type = Enum.TryParse<MemoryType>(ctx.Request.QueryString["type"], true, out var t) ? t : null,
-            Tags = ctx.Request.QueryString["tags"]?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList() ?? [],
-            CrossRepo = string.Equals(crossRepo, "true", StringComparison.OrdinalIgnoreCase),
-        };
+            query = q,
+            limit = int.TryParse(ctx.Request.QueryString["limit"], out var lim) ? lim : 10,
+            type = ctx.Request.QueryString["type"],
+            tags = ctx.Request.QueryString["tags"]?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToArray() ?? [],
+            cross_repo = string.Equals(ctx.Request.QueryString["cross_repo"], "true", StringComparison.OrdinalIgnoreCase),
+        }, JsonOptions);
 
-        using var scope = _usage?.StartScope(repo, "Search");
-        var results = await _svc.RecallAsync(repo, query, ct);
-        scope?.SetResultCount(results.Count);
-        await WriteJson(ctx, new { repo, query = q, results });
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_recall", repo, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
     }
 
     private async Task HandleGetMemory(HttpListenerContext ctx, string id, CancellationToken ct)
@@ -350,12 +354,15 @@ public class EidetApiServer
 
     private async Task HandleForget(HttpListenerContext ctx, string id, CancellationToken ct)
     {
-        var decoded = Uri.UnescapeDataString(id);
-        var reason = ctx.Request.QueryString["reason"];
-        var ok = await _svc.ForgetAsync(decoded, reason, ct: ct);
+        var args = JsonSerializer.SerializeToElement(new
+        {
+            id = Uri.UnescapeDataString(id),
+            reason = ctx.Request.QueryString["reason"],
+        }, JsonOptions);
 
-        if (ok) await WriteJson(ctx, new { forgotten = true });
-        else await WriteJson(ctx, new { error = "Memory not found" }, 404);
+        var repo = ctx.Request.QueryString["repo"] ?? "";
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_forget", repo, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
     }
 
     private async Task HandleFeedback(HttpListenerContext ctx, CancellationToken ct)
@@ -367,19 +374,22 @@ public class EidetApiServer
             return;
         }
 
-        // Extract repo from memory ID (format: memories/{repoSlug}/...)
-        var repoHint = ExtractRepoFromMemoryId(req.MemoryId);
-        using var scope = repoHint != null ? _usage?.StartScope(repoHint, "Feedback") : null;
-        var ok = await _svc.ApplyFeedbackAsync(req.MemoryId, req.WasUsed, ct);
-        if (ok) await WriteJson(ctx, new { applied = true });
-        else await WriteJson(ctx, new { error = "Memory not found" }, 404);
+        var args = JsonSerializer.SerializeToElement(new
+        {
+            id = req.MemoryId,
+            used = req.WasUsed,
+        }, JsonOptions);
+
+        var repo = ExtractRepoFromMemoryId(req.MemoryId) ?? "";
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_feedback", repo, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
     }
 
     private async Task HandleHistory(HttpListenerContext ctx, string id, CancellationToken ct)
     {
-        var decoded = Uri.UnescapeDataString(id);
-        var chain = await _svc.GetVersionChainAsync(decoded, ct);
-        await WriteJson(ctx, new { chain });
+        var args = JsonSerializer.SerializeToElement(new { id = Uri.UnescapeDataString(id) }, JsonOptions);
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_history", "", args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
     }
 
     private async Task HandleStats(HttpListenerContext ctx, CancellationToken ct)
