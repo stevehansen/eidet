@@ -1,8 +1,7 @@
-using System.Collections.Concurrent;
-using System.Security.Cryptography;
 using System.Text;
 using Eidet.Core.Domain;
 using Eidet.Core.Gates;
+using Eidet.Core.Memory;
 using Eidet.Core.Storage;
 
 namespace Eidet.Core.Services;
@@ -10,15 +9,12 @@ namespace Eidet.Core.Services;
 public class MemoryService
 {
     private const float DuplicateThreshold = 0.92f;
-    private const double RecencyHalfLifeDays = 7.0;
-    private const int CacheMaxEntries = 100;
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
 
     private readonly IEidetStore _store;
     private readonly LayerService? _layers;
     private readonly IHookRunner _hooks;
-    private readonly ConcurrentDictionary<string, CacheEntry> _recallCache = new();
-    private readonly ConcurrentDictionary<string, DateTime> _lastActiveDate = new();
+    private readonly RecallCache _recallCache = new();
+    private readonly RepoActivityTracker _activity = new();
 
     public int StalenessWarningDays { get; set; } = 7;
 
@@ -44,7 +40,7 @@ public class MemoryService
         CancellationToken ct = default)
     {
         var normalizedRepoId = RepoIdNormalizer.Normalize(repoId);
-        TrackRepoActivity(normalizedRepoId);
+        _activity.Track(normalizedRepoId);
 
         // Hook: pre-store
         var preHook = await _hooks.RunPreHooksAsync(HookEvent.PreStore, new HookContext
@@ -61,7 +57,7 @@ public class MemoryService
             return StoreResult.Rejected(gate.Reason!);
 
         // Resolve provenance
-        var resolvedProvenance = provenance ?? ResolveProvenance(source);
+        var resolvedProvenance = provenance ?? ProvenanceResolver.FromSource(source);
 
         // Duplicate detection
         var duplicate = await _store.FindDuplicateAsync(normalizedRepoId, content, DuplicateThreshold, ct);
@@ -103,7 +99,7 @@ public class MemoryService
         };
 
         var id = await _store.StoreAsync(entry, ct);
-        InvalidateCache();
+        _recallCache.Invalidate();
 
         // Hook: post-store (fire-and-forget)
         _ = _hooks.RunPostHooksAsync(HookEvent.PostStore, new HookContext
@@ -124,7 +120,7 @@ public class MemoryService
         CancellationToken ct = default)
     {
         var normalizedRepoId = RepoIdNormalizer.Normalize(repoId);
-        TrackRepoActivity(normalizedRepoId);
+        _activity.Track(normalizedRepoId);
 
         // Hook: pre-recall
         var preHook = await _hooks.RunPreHooksAsync(HookEvent.PreRecall, new HookContext
@@ -137,9 +133,9 @@ public class MemoryService
             return []; // Pre-recall rejection returns empty results
 
         // Check cache
-        var cacheKey = ComputeCacheKey(normalizedRepoId, query);
-        if (_recallCache.TryGetValue(cacheKey, out var cached) && !cached.IsExpired)
-            return cached.Results;
+        var cacheKey = RecallCache.ComputeKey(normalizedRepoId, query);
+        if (_recallCache.TryGet(cacheKey, out var cached))
+            return cached;
 
         // Resolve repo scope (layer-aware)
         var repoIds = _layers != null && query.CrossRepo
@@ -161,13 +157,13 @@ public class MemoryService
         foreach (var entry in textResults)
         {
             if (seen.Add(entry.Id))
-                merged.Add(ToSearchResult(entry, score: 1.0f));
+                merged.Add(RecallScoring.ToSearchResult(entry, score: 1.0f));
         }
 
         foreach (var entry in vectorResults)
         {
             if (seen.Add(entry.Id))
-                merged.Add(ToSearchResult(entry, score: 0.9f));
+                merged.Add(RecallScoring.ToSearchResult(entry, score: 0.9f));
         }
 
         // Post-processing
@@ -185,7 +181,7 @@ public class MemoryService
         }
 
         // Apply type diversity budgets
-        var budgeted = ApplyTypeBudgets(merged, query.Limit);
+        var budgeted = RecallScoring.ApplyTypeBudgets(merged, query.Limit);
 
         // Bump access count on local memories (fire-and-forget, don't block recall)
         _ = BumpAccessCountsAsync(budgeted, normalizedRepoId, ct);
@@ -198,9 +194,7 @@ public class MemoryService
             Data = new { query = query.Text, resultCount = budgeted.Count },
         }, ct);
 
-        // Cache results
-        EvictCacheIfNeeded();
-        _recallCache[cacheKey] = new CacheEntry(budgeted);
+        _recallCache.Set(cacheKey, budgeted);
 
         return budgeted;
     }
@@ -234,7 +228,7 @@ public class MemoryService
         CancellationToken ct = default)
     {
         var normalizedRepoId = RepoIdNormalizer.Normalize(repoId);
-        TrackRepoActivity(normalizedRepoId);
+        _activity.Track(normalizedRepoId);
 
         var sb = new StringBuilder();
 
@@ -250,7 +244,7 @@ public class MemoryService
         }
         sb.AppendLine("]");
 
-        var remainingTokens = maxTokens - EstimateTokens(sb.Length);
+        var remainingTokens = maxTokens - RecallScoring.EstimateTokens(sb.Length);
         if (remainingTokens <= 0)
             return sb.ToString();
 
@@ -263,7 +257,7 @@ public class MemoryService
 
         var now = DateTime.UtcNow;
         var scored = candidates
-            .Select(e => new { Entry = e, Score = ComputeL1Score(e, now) })
+            .Select(e => new { Entry = e, Score = RecallScoring.ComputeL1Score(e, now) })
             .OrderByDescending(x => x.Score)
             .ToList();
 
@@ -300,7 +294,7 @@ public class MemoryService
             var content = e.OneLiner ?? e.Summary ?? e.Content;
             var line = $"{typePrefix} {content}";
 
-            var lineTokens = EstimateTokens(line.Length);
+            var lineTokens = RecallScoring.EstimateTokens(line.Length);
             if (lineTokens > remainingTokens)
                 break;
 
@@ -366,7 +360,7 @@ public class MemoryService
             }
         }
 
-        InvalidateCache();
+        _recallCache.Invalidate();
 
         // Hook: post-forget (fire-and-forget)
         _ = _hooks.RunPostHooksAsync(HookEvent.PostForget, new HookContext
@@ -403,7 +397,7 @@ public class MemoryService
         entry.LastAccessedAt = DateTime.UtcNow;
         entry.AccessCount++;
         await _store.UpdateAsync(entry, ct);
-        InvalidateCache();
+        _recallCache.Invalidate();
         return true;
     }
 
@@ -506,7 +500,7 @@ public class MemoryService
             await _store.UpdateAsync(entry, ct);
         }
 
-        InvalidateCache();
+        _recallCache.Invalidate();
         return true;
     }
 
@@ -538,7 +532,7 @@ public class MemoryService
         });
 
         await _store.UpdateAsync(entry, ct);
-        InvalidateCache();
+        _recallCache.Invalidate();
         return true;
     }
 
@@ -559,7 +553,7 @@ public class MemoryService
         if (removed == 0) return false;
 
         await _store.UpdateAsync(entry, ct);
-        InvalidateCache();
+        _recallCache.Invalidate();
         return true;
     }
 
@@ -616,138 +610,5 @@ public class MemoryService
         return new GraphData { Nodes = nodes, Edges = edges };
     }
 
-    // ─── Helpers ─────────────────────────────────────────────────────────
-
-    private static double ComputeL1Score(MemoryEntry entry, DateTime now)
-    {
-        var importance = (double)entry.Importance;
-        var confidence = (double)entry.Confidence;
-
-        var daysSinceCreation = Math.Max(0, (now - entry.CreatedAt).TotalDays);
-        var recency = Math.Exp(-0.693 * daysSinceCreation / RecencyHalfLifeDays);
-
-        var frequency = Math.Min(1.0, entry.AccessCount / 10.0);
-
-        return importance * 0.3 + confidence * 0.15 + recency * 0.25 + frequency * 0.3;
-    }
-
-    private static List<MemorySearchResult> ApplyTypeBudgets(List<MemorySearchResult> results, int limit)
-    {
-        var insightBudget = (int)Math.Ceiling(limit * 0.40);
-        var observationBudget = (int)Math.Ceiling(limit * 0.25);
-        var procedureBudget = (int)Math.Ceiling(limit * 0.20);
-        var heuristicBudget = Math.Max(1, limit - insightBudget - observationBudget - procedureBudget);
-
-        var budgeted = new List<MemorySearchResult>();
-        var typeCounts = new Dictionary<MemoryType, int>
-        {
-            [MemoryType.Insight] = 0,
-            [MemoryType.Observation] = 0,
-            [MemoryType.Procedure] = 0,
-            [MemoryType.Heuristic] = 0,
-        };
-
-        var budgets = new Dictionary<MemoryType, int>
-        {
-            [MemoryType.Insight] = insightBudget,
-            [MemoryType.Observation] = observationBudget,
-            [MemoryType.Procedure] = procedureBudget,
-            [MemoryType.Heuristic] = heuristicBudget,
-        };
-
-        // First pass: fill within budgets
-        foreach (var result in results.OrderByDescending(r => r.Score))
-        {
-            if (budgeted.Count >= limit) break;
-            if (typeCounts[result.Type] < budgets[result.Type])
-            {
-                budgeted.Add(result);
-                typeCounts[result.Type]++;
-            }
-        }
-
-        // Second pass: fill remaining slots with any type
-        foreach (var result in results.OrderByDescending(r => r.Score))
-        {
-            if (budgeted.Count >= limit) break;
-            if (!budgeted.Contains(result))
-                budgeted.Add(result);
-        }
-
-        return budgeted;
-    }
-
-    private static MemorySearchResult ToSearchResult(MemoryEntry entry, float score) => new()
-    {
-        Id = entry.Id,
-        RepoId = entry.RepoId,
-        Type = entry.Type,
-        Content = entry.Content,
-        Summary = entry.Summary,
-        Tags = entry.Tags,
-        Entities = entry.Entities,
-        Importance = entry.Importance,
-        OneLiner = entry.OneLiner,
-        CreatedAt = entry.CreatedAt,
-        Score = score,
-        LayerSource = entry.LayerId,
-        IsSuperseded = !entry.IsLatest,
-    };
-
-    private static MemoryProvenance ResolveProvenance(string source) => source switch
-    {
-        "user" => MemoryProvenance.UserStated,
-        "claude-session" => MemoryProvenance.AgentInferred,
-        "consolidation" => MemoryProvenance.Consolidation,
-        "intake" => MemoryProvenance.Intake,
-        "pack" or "bundle" => MemoryProvenance.Pack,
-        "system" => MemoryProvenance.System,
-        _ => MemoryProvenance.AgentInferred,
-    };
-
-    private static int EstimateTokens(int charCount) => (int)Math.Ceiling(charCount / 4.0);
-
-    private static string ComputeCacheKey(string repoId, MemoryQuery query)
-    {
-        var raw = $"{repoId}|{query.Text}|{query.Type}|{string.Join(",", query.Tags)}|{query.Limit}|{query.IncludeExpired}|{query.CrossRepo}";
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
-        return Convert.ToHexString(hash)[..16];
-    }
-
-    private void InvalidateCache() => _recallCache.Clear();
-
-    private void EvictCacheIfNeeded()
-    {
-        if (_recallCache.Count < CacheMaxEntries) return;
-
-        var expiredKeys = _recallCache.Where(kv => kv.Value.IsExpired).Select(kv => kv.Key).ToList();
-        foreach (var key in expiredKeys)
-            _recallCache.TryRemove(key, out _);
-
-        if (_recallCache.Count >= CacheMaxEntries)
-        {
-            var toRemove = _recallCache.OrderBy(kv => kv.Value.CreatedAt)
-                .Take(_recallCache.Count - CacheMaxEntries + 10)
-                .Select(kv => kv.Key).ToList();
-            foreach (var key in toRemove)
-                _recallCache.TryRemove(key, out _);
-        }
-    }
-
-    private void TrackRepoActivity(string repoId) =>
-        _lastActiveDate[repoId] = DateTime.UtcNow;
-
-    public bool IsRepoActive(string repoId, int withinDays = 7)
-    {
-        if (_lastActiveDate.TryGetValue(repoId, out var lastActive))
-            return (DateTime.UtcNow - lastActive).TotalDays <= withinDays;
-        return false;
-    }
-
-    private sealed class CacheEntry(List<MemorySearchResult> results)
-    {
-        public List<MemorySearchResult> Results { get; } = results;
-        public DateTime CreatedAt { get; } = DateTime.UtcNow;
-        public bool IsExpired => DateTime.UtcNow - CreatedAt > CacheTtl;
-    }
+    public bool IsRepoActive(string repoId, int withinDays = 7) => _activity.IsActive(repoId, withinDays);
 }
