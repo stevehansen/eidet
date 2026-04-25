@@ -1,6 +1,6 @@
 using System.Net;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using Eidet.Service.Api;
 
 namespace Eidet.Service.Tools.Formatters;
 
@@ -11,14 +11,6 @@ namespace Eidet.Service.Tools.Formatters;
 /// </summary>
 public static class RestFormatter
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        WriteIndented = false,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
-    };
-
     public static int StatusCodeFor(ToolStatus status, int successStatus = 200) => status switch
     {
         ToolStatus.Ok => successStatus,
@@ -40,7 +32,7 @@ public static class RestFormatter
             ? result.Payload ?? new { }
             : new { error = result.HumanSummary, duplicateId = result.DuplicateId };
 
-        await JsonSerializer.SerializeAsync(ctx.Response.OutputStream, body, JsonOptions);
+        await JsonSerializer.SerializeAsync(ctx.Response.OutputStream, body, HttpJson.Options);
         ctx.Response.Close();
     }
 }
