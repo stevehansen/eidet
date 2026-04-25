@@ -7,7 +7,6 @@ using Eidet.Core.Services;
 using Eidet.Service.Api.Endpoints;
 using Eidet.Service.Mcp;
 using Eidet.Service.Tools;
-using Eidet.Service.Tools.Handlers;
 
 namespace Eidet.Service.Api;
 
@@ -47,21 +46,7 @@ public class EidetApiServer
         _listener = new HttpListener();
         _listener.Prefixes.Add(_baseUrl);
 
-        var dispatcher = new ToolDispatcher([
-            new StoreToolHandler(svc),
-            new RecallToolHandler(svc),
-            new ForgetToolHandler(svc),
-            new FeedbackToolHandler(svc),
-            new HistoryToolHandler(svc),
-            new ContextToolHandler(svc),
-            new LinkToolHandler(svc),
-            new ConsolidateToolHandler(consolidation),
-            new MaintenanceToolHandler(maintenance, svc),
-            new EditToolHandler(svc),
-            new IntakeToolHandler(intake),
-            new PackExportToolHandler(export),
-            new PackImportToolHandler(export, layers),
-        ], usage);
+        var dispatcher = ToolDispatcherFactory.Create(svc, intake, consolidation, maintenance, export, layers, usage);
 
         _memoryRead = new MemoryReadEndpoints(svc, dispatcher, usage, layers);
         _memoryWrite = new MemoryWriteEndpoints(svc, dispatcher);

@@ -5,7 +5,6 @@ using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Service.Tools;
 using Eidet.Service.Tools.Formatters;
-using Eidet.Service.Tools.Handlers;
 
 namespace Eidet.Service.Mcp;
 
@@ -33,28 +32,8 @@ public class McpServer
         _intake = intake;
         _repoId = repoId;
         _autoIntake = autoIntake;
-        _dispatcher = BuildDispatcher(svc, consolidation, intake, maintenance, export, layers, usage);
+        _dispatcher = ToolDispatcherFactory.Create(svc, intake, consolidation, maintenance, export, layers, usage);
     }
-
-    private static ToolDispatcher BuildDispatcher(
-        MemoryService svc, ConsolidationEngine consolidation, IntakeService intake,
-        IMaintenanceRunner maintenance, ExportService? export, LayerService? layers,
-        UsageTracker? usage) =>
-        new([
-            new StoreToolHandler(svc),
-            new RecallToolHandler(svc),
-            new ForgetToolHandler(svc),
-            new FeedbackToolHandler(svc),
-            new HistoryToolHandler(svc),
-            new ContextToolHandler(svc),
-            new LinkToolHandler(svc),
-            new ConsolidateToolHandler(consolidation),
-            new MaintenanceToolHandler(maintenance, svc),
-            new EditToolHandler(svc),
-            new IntakeToolHandler(intake),
-            new PackExportToolHandler(export),
-            new PackImportToolHandler(export, layers),
-        ], usage);
 
     public async Task RunStdioAsync(CancellationToken ct)
     {
