@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Eidet.Core;
 using Eidet.Core.Domain;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
@@ -21,11 +20,6 @@ public class McpServer
 
     private readonly MemoryService _svc;
     private readonly IntakeService _intake;
-    private readonly ConsolidationEngine _consolidation;
-    private readonly IMaintenanceRunner _maintenance;
-    private readonly UsageTracker? _usage;
-    private readonly ExportService? _export;
-    private readonly LayerService? _layers;
     private readonly string _repoId;
     private readonly bool _autoIntake;
     private readonly ToolDispatcher _dispatcher;
@@ -37,17 +31,15 @@ public class McpServer
     {
         _svc = svc;
         _intake = intake;
-        _consolidation = consolidation;
-        _maintenance = maintenance;
         _repoId = repoId;
         _autoIntake = autoIntake;
-        _usage = usage;
-        _export = export;
-        _layers = layers;
-        _dispatcher = BuildDispatcher(svc, usage);
+        _dispatcher = BuildDispatcher(svc, consolidation, intake, maintenance, export, layers, usage);
     }
 
-    private static ToolDispatcher BuildDispatcher(MemoryService svc, UsageTracker? usage) =>
+    private static ToolDispatcher BuildDispatcher(
+        MemoryService svc, ConsolidationEngine consolidation, IntakeService intake,
+        IMaintenanceRunner maintenance, ExportService? export, LayerService? layers,
+        UsageTracker? usage) =>
         new([
             new StoreToolHandler(svc),
             new RecallToolHandler(svc),
@@ -55,6 +47,13 @@ public class McpServer
             new FeedbackToolHandler(svc),
             new HistoryToolHandler(svc),
             new ContextToolHandler(svc),
+            new LinkToolHandler(svc),
+            new ConsolidateToolHandler(consolidation),
+            new MaintenanceToolHandler(maintenance, svc),
+            new EditToolHandler(svc),
+            new IntakeToolHandler(intake),
+            new PackExportToolHandler(export),
+            new PackImportToolHandler(export, layers),
         ], usage);
 
     public async Task RunStdioAsync(CancellationToken ct)
@@ -123,11 +122,11 @@ public class McpServer
         });
     }
 
-    private static JsonRpcResponse HandleToolsList(JsonRpcRequest request)
+    private JsonRpcResponse HandleToolsList(JsonRpcRequest request)
     {
         return JsonRpcResponse.Success(request.Id, new McpToolsListResult
         {
-            Tools = McpToolDefinitions.GetAll(),
+            Tools = _dispatcher.Handlers.Select(h => h.Schema).ToList(),
         });
     }
 
@@ -152,61 +151,14 @@ public class McpServer
         return JsonRpcResponse.Success(request.Id, result);
     }
 
-    private static readonly Dictionary<string, string> ToolToOperation = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["eidet_store"] = "Store",
-        ["eidet_recall"] = "Recall",
-        ["eidet_context"] = "Context",
-        ["eidet_forget"] = "Forget",
-        ["eidet_feedback"] = "Feedback",
-        ["eidet_history"] = "History",
-        ["eidet_intake"] = "Intake",
-        ["eidet_link"] = "Store",
-        ["eidet_consolidate"] = "Consolidate",
-        ["eidet_maintenance"] = "Maintenance",
-        ["eidet_edit"] = "Store",
-        ["eidet_pack_export"] = "PackExport",
-        ["eidet_pack_import"] = "PackImport",
-    };
-
     private async Task<McpCallToolResult> ExecuteToolAsync(string name, JsonElement args, CancellationToken ct)
     {
         // MCP-only side effect: first eidet_context call auto-ingests this repo if it has no memories.
         if (name == "eidet_context")
             await TryAutoIntakeAsync(ct);
 
-        if (_dispatcher.IsRegistered(name))
-        {
-            var dispatched = await _dispatcher.InvokeAsync(new ToolRequest(name, _repoId, args, "mcp", ct));
-            return McpFormatter.Format(dispatched);
-        }
-
-        var opName = ToolToOperation.GetValueOrDefault(name);
-        using var scope = opName != null ? _usage?.StartScope(_repoId, opName) : null;
-        try
-        {
-            var result = name switch
-            {
-                "eidet_intake" => await ExecuteIntake(args, ct),
-                "eidet_link" => await ExecuteLink(args, ct),
-                "eidet_consolidate" => await ExecuteConsolidate(args, ct),
-                "eidet_maintenance" => await ExecuteMaintenance(args, ct),
-                "eidet_edit" => await ExecuteEdit(args, ct),
-                "eidet_pack_export" => await ExecutePackExport(args, ct),
-                "eidet_pack_import" => await ExecutePackImport(args, ct),
-                _ => McpCallToolResult.Error($"Unknown tool: {name}"),
-            };
-            return result;
-        }
-        catch (MissingMcpArgumentException ex)
-        {
-            return McpCallToolResult.Error($"Tool '{name}': {ex.Message}");
-        }
-        catch (Exception ex)
-        {
-            EidetLog.Error($"MCP tool '{name}' failed for repo '{_repoId}'", ex);
-            return McpCallToolResult.Error($"Internal error ({ex.GetType().Name}): {ex.Message}");
-        }
+        var dispatched = await _dispatcher.InvokeAsync(new ToolRequest(name, _repoId, args, "mcp", ct));
+        return McpFormatter.Format(dispatched);
     }
 
     private async Task TryAutoIntakeAsync(CancellationToken ct)
@@ -224,247 +176,4 @@ public class McpServer
         catch { /* Non-critical — don't fail context for auto-intake issues */ }
     }
 
-    private async Task<McpCallToolResult> ExecuteIntake(JsonElement args, CancellationToken ct)
-    {
-        var dryRun = GetBool(args, "dry_run");
-        var path = GetString(args, "path");
-
-        IntakeResult result;
-        if (!string.IsNullOrEmpty(path))
-        {
-            var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(_repoId, path);
-            if (!Directory.Exists(resolvedPath))
-                return McpCallToolResult.Error($"Directory not found: {resolvedPath}");
-
-            var pattern = GetString(args, "pattern") ?? "*.md";
-            var recursive = GetBool(args, "recursive", true);
-            var importance = GetFloat(args, "importance", 0.6f);
-            var extraTags = GetStringArray(args, "tags");
-
-            result = await _intake.IngestDocsAsync(resolvedPath, resolvedPath, recursive, pattern, importance,
-                extraTags.Count > 0 ? extraTags : null, dryRun, ct);
-        }
-        else
-        {
-            var projectPath = Path.IsPathRooted(_repoId) ? _repoId : Directory.GetCurrentDirectory();
-            result = await _intake.IngestAsync(_repoId, projectPath, dryRun, ct);
-        }
-
-        var mode = dryRun ? "Would ingest" : "Ingested";
-        var lines = new List<string> { $"{mode}: {result.NewCount} new, {result.SkippedCount} skipped" };
-
-        if (result.ProducedPackages.Count > 0)
-            lines.Add($"Produces: {string.Join(", ", result.ProducedPackages)}");
-        if (result.DetectedLinks.Count > 0)
-            lines.Add($"Dependencies: {string.Join(", ", result.DetectedLinks.Select(l => l.TargetRepoId))}");
-
-        foreach (var item in result.Items.Take(20))
-        {
-            var status = item.WasSkipped ? $"[SKIP: {item.SkipReason}]" : "[NEW]";
-            lines.Add($"  {status} {item.Source} -> {item.Type}: {Truncate(item.Content, 80)}");
-        }
-        if (result.Items.Count > 20)
-            lines.Add($"  ... and {result.Items.Count - 20} more");
-
-        return McpCallToolResult.Text(string.Join("\n", lines));
-    }
-
-    private async Task<McpCallToolResult> ExecuteLink(JsonElement args, CancellationToken ct)
-    {
-        var targetRepo = GetString(args, "target_repo");
-        if (string.IsNullOrEmpty(targetRepo)) return McpCallToolResult.Error("Missing: target_repo");
-        var relation = GetString(args, "relation");
-        if (string.IsNullOrEmpty(relation)) return McpCallToolResult.Error("Missing: relation");
-
-        var targetRepoId = RepoIdNormalizer.Normalize(targetRepo);
-        var targetMemoryId = GetString(args, "target_memory_id");
-        var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
-
-        var content = targetMemoryId != null
-            ? $"Memory link: {relation} -> {targetMemoryId}"
-            : $"Cross-repo link: {relation} -> {targetRepoId}";
-
-        var now = DateTime.UtcNow;
-        var result = await _svc.StoreAsync(normalizedRepoId, content, MemoryType.Insight,
-            tags: targetMemoryId != null ? ["memory-link", relation] : ["cross-repo-link", relation],
-            importance: 0.7f, source: "claude-session", ct: ct);
-
-        return result.Success
-            ? McpCallToolResult.Text($"Link created: {normalizedRepoId} --[{relation}]--> {targetRepoId} (ID: {result.Id})")
-            : McpCallToolResult.Error(result.Reason!);
-    }
-
-    private async Task<McpCallToolResult> ExecuteConsolidate(JsonElement args, CancellationToken ct)
-    {
-        var dryRun = GetBool(args, "dry_run");
-        var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
-        var result = await _consolidation.ConsolidateAsync(normalizedRepoId, dryRun, ct);
-
-        if (result.Candidates.Count == 0)
-            return McpCallToolResult.Text("No consolidation candidates found. Need 3+ related observations.");
-
-        var lines = new List<string>();
-        if (dryRun)
-            lines.Add($"Consolidation preview: {result.Candidates.Count} candidate(s)");
-        else
-        {
-            var parts = new List<string>();
-            if (result.InsightsCreated > 0) parts.Add($"{result.InsightsCreated} created");
-            if (result.InsightsBoosted > 0) parts.Add($"{result.InsightsBoosted} boosted");
-            lines.Add($"Consolidated: {string.Join(", ", parts)} from {result.Candidates.Count} group(s)");
-        }
-
-        foreach (var c in result.Candidates)
-        {
-            lines.Add($"\n  Group ({c.ObservationIds.Count} observations):");
-            lines.Add($"  -> {Truncate(c.ProposedContent, 100)}");
-            lines.Add($"  Tags: {string.Join(", ", c.Tags)} | Importance: {c.ProposedImportance:F2}");
-        }
-
-        return McpCallToolResult.Text(string.Join("\n", lines));
-    }
-
-    private async Task<McpCallToolResult> ExecuteMaintenance(JsonElement args, CancellationToken ct)
-    {
-        var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
-        var isActive = _svc.IsRepoActive(normalizedRepoId);
-        var result = await _maintenance.RunAsync(
-            new MaintenanceRequest { RepoId = normalizedRepoId, IsRepoActive = isActive }, ct);
-        return McpCallToolResult.Text(result.ToString());
-    }
-
-    private async Task<McpCallToolResult> ExecuteEdit(JsonElement args, CancellationToken ct)
-    {
-        var id = RequireString(args, "id");
-        var content = GetString(args, "content");
-        var tags = GetStringArray(args, "tags");
-        var importance = args.TryGetProperty("importance", out var imp) && imp.ValueKind == JsonValueKind.Number ? (float?)imp.GetSingle() : null;
-        var confidence = args.TryGetProperty("confidence", out var conf) && conf.ValueKind == JsonValueKind.Number ? (float?)conf.GetSingle() : null;
-        var typeStr = GetString(args, "type");
-        MemoryType? type = typeStr != null && Enum.TryParse<MemoryType>(typeStr, true, out var t) ? t : null;
-
-        var ok = await _svc.UpdateMemoryAsync(id,
-            content: content,
-            tags: tags.Count > 0 ? tags : null,
-            importance: importance,
-            confidence: confidence,
-            type: type,
-            ct: ct);
-
-        return ok
-            ? McpCallToolResult.Text($"Memory {id} updated successfully.")
-            : McpCallToolResult.Error($"Memory not found or update rejected: {id}");
-    }
-
-    private async Task<McpCallToolResult> ExecutePackExport(JsonElement args, CancellationToken ct)
-    {
-        if (_export == null)
-            return McpCallToolResult.Error("Pack export not available in this context.");
-
-        var packId = GetString(args, "pack_id") ?? GetString(args, "bundle_id")
-            ?? throw new MissingMcpArgumentException("pack_id");
-        var name = GetString(args, "name") ?? packId;
-        var version = GetString(args, "version") ?? "1.0.0";
-        var author = GetString(args, "author") ?? "";
-        var description = GetString(args, "description");
-        var output = GetString(args, "output") ?? $"{packId}.md";
-        var packages = GetStringArray(args, "packages");
-        var tags = GetStringArray(args, "tags");
-
-        var typeStrs = GetStringArray(args, "types");
-        List<MemoryType>? types = typeStrs.Count > 0
-            ? typeStrs.Where(t => Enum.TryParse<MemoryType>(t, true, out _))
-                .Select(t => Enum.Parse<MemoryType>(t, true)).ToList()
-            : null;
-
-        var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
-        var pack = await _export.ExportPackAsync(normalizedRepoId, packId, name, version, author,
-            types: types, tags: tags.Count > 0 ? tags : null,
-            applicablePackages: packages.Count > 0 ? packages : null, ct: ct);
-        pack.Description = description;
-
-        // Resolve output path relative to repo dir
-        var outputPath = Path.IsPathRooted(output) ? output : Path.Combine(_repoId, output);
-        await _export.ExportPackToFileAsync(pack, outputPath, ct);
-
-        var format = outputPath.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ? "markdown" : "JSON";
-        return McpCallToolResult.Text($"Exported {pack.Entries.Count} memories as {format} pack to {outputPath}");
-    }
-
-    private async Task<McpCallToolResult> ExecutePackImport(JsonElement args, CancellationToken ct)
-    {
-        if (_export == null)
-            return McpCallToolResult.Error("Pack import not available in this context.");
-
-        var path = RequireString(args, "path");
-        var resolvedPath = Path.IsPathRooted(path) ? path : Path.Combine(_repoId, path);
-
-        if (!File.Exists(resolvedPath))
-            return McpCallToolResult.Error($"File not found: {resolvedPath}");
-
-        var pack = await _export.ImportPackFromFileAsync(resolvedPath, ct);
-
-        if (_layers != null)
-        {
-            var (imported, layer) = await _export.ImportPackWithLayerAsync(pack, _layers, ct);
-            return McpCallToolResult.Text($"Imported {imported} memories from \"{pack.Name}\" v{pack.Version}. Mounted as layer: {layer.Name}");
-        }
-        else
-        {
-            var imported = await _export.ImportPackAsync(pack, ct);
-            return McpCallToolResult.Text($"Imported {imported} memories from \"{pack.Name}\" v{pack.Version}.");
-        }
-    }
-
-    // ─── Helpers ─────────────────────────────────────────────────────────
-
-    private static string? GetString(JsonElement args, string name) =>
-        args.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-
-    private static int GetInt(JsonElement args, string name, int defaultValue = 0) =>
-        args.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : defaultValue;
-
-    private static float GetFloat(JsonElement args, string name, float defaultValue = 0f) =>
-        args.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetSingle() : defaultValue;
-
-    private static bool GetBool(JsonElement args, string name, bool defaultValue = false) =>
-        args.TryGetProperty(name, out var v) && (v.ValueKind == JsonValueKind.True || v.ValueKind == JsonValueKind.False) ? v.GetBoolean() : defaultValue;
-
-    private static string RequireString(JsonElement args, string name)
-    {
-        if (!args.TryGetProperty(name, out var v) || v.ValueKind != JsonValueKind.String)
-            throw new MissingMcpArgumentException(name);
-        var s = v.GetString();
-        if (string.IsNullOrEmpty(s))
-            throw new MissingMcpArgumentException(name);
-        return s;
-    }
-
-    private static bool RequireBool(JsonElement args, string name)
-    {
-        if (!args.TryGetProperty(name, out var v) || (v.ValueKind != JsonValueKind.True && v.ValueKind != JsonValueKind.False))
-            throw new MissingMcpArgumentException(name);
-        return v.GetBoolean();
-    }
-
-    private sealed class MissingMcpArgumentException(string field)
-        : Exception($"missing required argument '{field}'")
-    {
-        public string Field { get; } = field;
-    }
-
-    private static List<string> GetStringArray(JsonElement args, string name)
-    {
-        if (!args.TryGetProperty(name, out var v) || v.ValueKind != JsonValueKind.Array) return [];
-        return v.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()!).ToList();
-    }
-
-    private static T? GetEnum<T>(JsonElement args, string name) where T : struct, Enum
-    {
-        var s = GetString(args, name);
-        return s != null && Enum.TryParse<T>(s, true, out var v) ? v : null;
-    }
-
-    private static string Truncate(string s, int maxLen) =>
-        Core.StringUtils.Truncate(s, maxLen);
 }

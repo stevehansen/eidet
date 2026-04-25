@@ -75,6 +75,13 @@ public class EidetApiServer
             new FeedbackToolHandler(svc),
             new HistoryToolHandler(svc),
             new ContextToolHandler(svc),
+            new LinkToolHandler(svc),
+            new ConsolidateToolHandler(consolidation),
+            new MaintenanceToolHandler(maintenance, svc),
+            new EditToolHandler(svc),
+            new IntakeToolHandler(intake),
+            new PackExportToolHandler(export),
+            new PackImportToolHandler(export, layers),
         ], usage);
         _baseUrl = $"http://{bindAddress}:{port}/";
         _listener = new HttpListener();
@@ -426,10 +433,10 @@ public class EidetApiServer
             return;
         }
 
-        using var scope = _usage?.StartScope(repo, "Intake");
-        var result = await _intake.IngestAsync(repo, path, ct: ct);
-        scope?.SetResultCount(result.NewCount);
-        await WriteJson(ctx, new { newCount = result.NewCount, skippedCount = result.SkippedCount, dependencies = result.DetectedLinks.Count });
+        // Repo-wide intake (no path arg): handler treats request.RepoId as the project path.
+        var args = JsonSerializer.SerializeToElement(new { }, JsonOptions);
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_intake", path, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
     }
 
     private async Task HandleConsolidate(HttpListenerContext ctx, CancellationToken ct)
@@ -440,10 +447,10 @@ public class EidetApiServer
             await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
             return;
         }
-        using var scope = _usage?.StartScope(repo, "Consolidate");
-        var result = await _consolidation.ConsolidateAsync(RepoIdNormalizer.Normalize(repo), ct: ct);
-        scope?.SetResultCount(result.InsightsCreated + result.InsightsBoosted);
-        await WriteJson(ctx, new { candidates = result.Candidates.Count, insightsCreated = result.InsightsCreated, insightsBoosted = result.InsightsBoosted });
+
+        var args = JsonDocument.Parse("{}").RootElement;
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_consolidate", repo, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
     }
 
     private async Task HandleMaintenance(HttpListenerContext ctx, CancellationToken ct)
@@ -454,10 +461,10 @@ public class EidetApiServer
             await WriteJson(ctx, new { error = "Missing 'repo' parameter" }, 400);
             return;
         }
-        using var scope = _usage?.StartScope(repo, "Maintenance");
-        var result = await _maintenance.RunAsync(
-            new MaintenanceRequest { RepoId = RepoIdNormalizer.Normalize(repo) }, ct);
-        await WriteJson(ctx, result);
+
+        var args = JsonDocument.Parse("{}").RootElement;
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_maintenance", repo, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
     }
 
     private async Task HandleStatus(HttpListenerContext ctx, CancellationToken ct)
@@ -504,19 +511,17 @@ public class EidetApiServer
             return;
         }
 
-        var pack = await _export.ExportPackAsync(
-            RepoIdNormalizer.Normalize(req.Repo), packId, req.Name, req.Version, "user",
-            ct: ct);
+        var args = JsonSerializer.SerializeToElement(new
+        {
+            pack_id = packId,
+            name = req.Name,
+            version = req.Version,
+            author = "user",
+            output = req.OutputPath,
+        }, JsonOptions);
 
-        if (!string.IsNullOrEmpty(req.OutputPath))
-        {
-            await _export.ExportPackToFileAsync(pack, req.OutputPath, ct);
-            await WriteJson(ctx, new { entries = pack.Entries.Count, path = req.OutputPath });
-        }
-        else
-        {
-            await WriteJson(ctx, pack);
-        }
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_pack_export", req.Repo, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
     }
 
     private async Task HandlePackImport(HttpListenerContext ctx, CancellationToken ct)
@@ -528,9 +533,9 @@ public class EidetApiServer
             return;
         }
 
-        var pack = await _export.ImportPackFromFileAsync(req.Path, ct);
-        var count = await _export.ImportPackAsync(pack, ct);
-        await WriteJson(ctx, new { imported = count, bundle = pack.Name, version = pack.Version });
+        var args = JsonSerializer.SerializeToElement(new { path = req.Path }, JsonOptions);
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_pack_import", "", args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
     }
 
     private async Task HandleCreateLink(HttpListenerContext ctx, CancellationToken ct)
@@ -543,17 +548,15 @@ public class EidetApiServer
             return;
         }
 
-        var normalizedRepoId = RepoIdNormalizer.Normalize(req.Repo);
-        var targetRepoId = RepoIdNormalizer.Normalize(req.TargetRepo);
-        var content = $"Cross-repo link: {req.Relation} -> {targetRepoId}";
+        var args = JsonSerializer.SerializeToElement(new
+        {
+            target_repo = req.TargetRepo,
+            relation = req.Relation,
+            source = "user",
+        }, JsonOptions);
 
-        var result = await _svc.StoreAsync(normalizedRepoId, content, Eidet.Core.Domain.MemoryType.Insight,
-            tags: ["cross-repo-link", req.Relation], importance: 0.7f, source: "user", ct: ct);
-
-        if (result.Success)
-            await WriteJson(ctx, new { id = result.Id, from = normalizedRepoId, to = targetRepoId, relation = req.Relation }, 201);
-        else
-            await WriteJson(ctx, new { error = result.Reason }, 422);
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_link", req.Repo, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result, successStatus: 201);
     }
 
     private async Task HandleGetLinks(HttpListenerContext ctx, CancellationToken ct)
@@ -894,24 +897,22 @@ public class EidetApiServer
             return;
         }
 
-        MemoryType? type = null;
-        if (!string.IsNullOrEmpty(req.Type) && Enum.TryParse<MemoryType>(req.Type, true, out var t))
-            type = t;
+        var args = JsonSerializer.SerializeToElement(new
+        {
+            id = decoded,
+            content = req.Content,
+            tags = req.Tags,
+            importance = req.Importance,
+            confidence = req.Confidence,
+            type = req.Type,
+            oneLiner = req.OneLiner,
+            summary = req.Summary,
+            foresightHint = req.ForesightHint,
+        }, JsonOptions);
 
-        var ok = await _svc.UpdateMemoryAsync(
-            decoded,
-            content: req.Content,
-            tags: req.Tags,
-            importance: req.Importance,
-            confidence: req.Confidence,
-            type: type,
-            oneLiner: req.OneLiner,
-            summary: req.Summary,
-            foresightHint: req.ForesightHint,
-            ct: ct);
-
-        if (ok) await WriteJson(ctx, new { updated = true, id = decoded });
-        else await WriteJson(ctx, new { error = "Memory not found or update rejected" }, 404);
+        var repo = ExtractRepoFromMemoryId(decoded) ?? "";
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_edit", repo, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
     }
 
     private async Task HandleAddMemoryLink(HttpListenerContext ctx, string memoryId, CancellationToken ct)
