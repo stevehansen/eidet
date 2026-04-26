@@ -1,11 +1,7 @@
 using System.Net;
 using Eidet.Core;
 using Eidet.Core.Configuration;
-using Eidet.Core.Enrichment;
-using Eidet.Core.Maintenance;
-using Eidet.Core.Services;
 using Eidet.Service.Api.Endpoints;
-using Eidet.Service.Mcp;
 using Eidet.Service.Tools;
 
 namespace Eidet.Service.Api;
@@ -36,31 +32,29 @@ public class EidetApiServer
     private readonly MetaEndpoints _meta;
     private readonly McpEndpoint _mcp;
 
-    public EidetApiServer(MemoryService svc, IntakeService intake, ConsolidationEngine consolidation,
-        IMaintenanceRunner maintenance, ExportService export, string bindAddress, int port,
-        LayerService? layers = null, LayerSyncService? layerSync = null,
-        McpServer? mcpServer = null, AuthConfig? auth = null,
-        QualityService? quality = null, EnrichmentService? enrichment = null, EidetConfig? config = null,
-        UsageTracker? usage = null, ScheduledTaskService? scheduledTasks = null)
+    public EidetApiServer(EidetApiServerOptions options)
     {
-        _auth = new ApiAuthGate(auth ?? new AuthConfig());
-        _baseUrl = $"http://{bindAddress}:{port}/";
+        _auth = new ApiAuthGate(options.Auth ?? new AuthConfig());
+        _baseUrl = $"http://{options.BindAddress}:{options.Port}/";
         _listener = new HttpListener();
         _listener.Prefixes.Add(_baseUrl);
 
-        var dispatcher = ToolDispatcherFactory.Create(svc, intake, consolidation, maintenance, export, layers, usage);
+        var svc = options.Memory;
+        var intake = options.Intake;
+        var dispatcher = ToolDispatcherFactory.Create(svc, intake, options.Consolidation, options.Maintenance,
+            options.Export, options.Layers, options.Usage);
 
-        _memoryRead = new MemoryReadEndpoints(svc, dispatcher, usage, layers);
+        _memoryRead = new MemoryReadEndpoints(svc, dispatcher, options.Usage, options.Layers);
         _memoryWrite = new MemoryWriteEndpoints(svc, dispatcher);
-        _memoryBulk = new MemoryBulkEndpoints(dispatcher, export, usage);
-        _layerEndpoints = new LayerEndpoints(layers, layerSync);
+        _memoryBulk = new MemoryBulkEndpoints(dispatcher, options.Export, options.Usage);
+        _layerEndpoints = new LayerEndpoints(options.Layers, options.LayerSync);
         _maintenanceEndpoints = new MaintenanceEndpoints(dispatcher);
-        _qualityEndpoint = new QualityEndpoint(quality, usage);
-        _scheduledTasksEndpoint = new ScheduledTasksEndpoint(scheduledTasks);
-        _usageEndpoints = new UsageEndpoints(usage);
-        _enrichEndpoint = new EnrichEndpoint(enrichment);
-        _meta = new MetaEndpoints(svc, enrichment, config, _baseUrl, _startedAt);
-        _mcp = new McpEndpoint(mcpServer, svc, intake, consolidation, maintenance);
+        _qualityEndpoint = new QualityEndpoint(options.Quality, options.Usage);
+        _scheduledTasksEndpoint = new ScheduledTasksEndpoint(options.ScheduledTasks);
+        _usageEndpoints = new UsageEndpoints(options.Usage);
+        _enrichEndpoint = new EnrichEndpoint(options.Enrichment);
+        _meta = new MetaEndpoints(svc, options.Enrichment, options.Config, _baseUrl, _startedAt);
+        _mcp = new McpEndpoint(options.Mcp, svc, intake, options.Consolidation, options.Maintenance);
 
         _router = BuildRouter();
     }

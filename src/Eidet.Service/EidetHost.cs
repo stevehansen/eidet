@@ -103,8 +103,25 @@ public sealed class EidetHost : IDisposable
             Directory.GetCurrentDirectory(), autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker,
             export: exportSvc, layers: layerSvc);
         var scheduler = new ScheduledTaskService(store, eidetStore, memorySvc, maintenanceRunner, consolidationEngine, config.Maintenance);
-        var apiServer = new EidetApiServer(memorySvc, intakeSvc, consolidationEngine, maintenanceRunner, exportSvc,
-            actualBind, actualPort, layerSvc, layerSyncSvc, mcpServer, config.Auth, qualitySvc, enrichment, config, usageTracker, scheduler);
+        var apiServer = new EidetApiServer(new EidetApiServerOptions
+        {
+            Memory = memorySvc,
+            Intake = intakeSvc,
+            Consolidation = consolidationEngine,
+            Maintenance = maintenanceRunner,
+            Export = exportSvc,
+            BindAddress = actualBind,
+            Port = actualPort,
+            Layers = layerSvc,
+            LayerSync = layerSyncSvc,
+            Mcp = mcpServer,
+            Auth = config.Auth,
+            Quality = qualitySvc,
+            Enrichment = enrichment,
+            Config = config,
+            Usage = usageTracker,
+            ScheduledTasks = scheduler,
+        });
         var enrichmentWorker = new EnrichmentWorker(store, enrichment);
 
         return new EidetHost(store, eidetStore, enrichment, scheduler, enrichmentWorker, apiServer, config, actualBind, actualPort);

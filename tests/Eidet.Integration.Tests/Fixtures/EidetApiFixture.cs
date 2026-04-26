@@ -51,9 +51,19 @@ public class EidetApiFixture : IAsyncLifetime
 
             var layerSyncSvc = new LayerSyncService(eidetStore, layerSvc);
 
-            var server = new EidetApiServer(memorySvc, intakeSvc, consolidationEngine,
-                maintenanceRunner, exportSvc, "127.0.0.1", port,
-                layerSvc, layerSyncSvc, quality: qualitySvc);
+            var server = new EidetApiServer(new EidetApiServerOptions
+            {
+                Memory = memorySvc,
+                Intake = intakeSvc,
+                Consolidation = consolidationEngine,
+                Maintenance = maintenanceRunner,
+                Export = exportSvc,
+                BindAddress = "127.0.0.1",
+                Port = port,
+                Layers = layerSvc,
+                LayerSync = layerSyncSvc,
+                Quality = qualitySvc,
+            });
 
             _serverTask = server.RunAsync(_cts.Token);
             Client = new HttpClient { BaseAddress = new Uri(BaseUrl) };
