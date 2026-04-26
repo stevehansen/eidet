@@ -20,6 +20,32 @@ internal sealed class ApiRouter
     public ApiRouter Map(string method, Func<string, bool> predicate, RouteHandler h) => Add(method, predicate, h);
     public ApiRouter MapAny(Func<string, bool> predicate, RouteHandler h) => Add(null, predicate, h);
 
+    /// <summary>
+    /// Match paths starting with <paramref name="prefix"/> (any HTTP method) and
+    /// pass the suffix-after-prefix to the handler instead of the full path.
+    /// </summary>
+    public ApiRouter MapAnyPrefix(string prefix, RouteHandler h) => MapPrefixCore(null, prefix, null, h);
+
+    /// <summary>
+    /// Match paths starting with <paramref name="prefix"/> for the given HTTP
+    /// <paramref name="method"/> and pass the suffix-after-prefix to the handler.
+    /// </summary>
+    public ApiRouter MapPrefix(string method, string prefix, RouteHandler h) => MapPrefixCore(method, prefix, null, h);
+
+    /// <summary>
+    /// Match paths starting with <paramref name="prefix"/> for the given HTTP
+    /// <paramref name="method"/> only when the suffix passes
+    /// <paramref name="suffixPredicate"/>. The handler receives the suffix.
+    /// </summary>
+    public ApiRouter MapPrefix(string method, string prefix, Func<string, bool> suffixPredicate, RouteHandler h) =>
+        MapPrefixCore(method, prefix, suffixPredicate, h);
+
+    private ApiRouter MapPrefixCore(string? method, string prefix, Func<string, bool>? suffixPredicate, RouteHandler h)
+    {
+        bool Match(string p) => p.StartsWith(prefix) && (suffixPredicate is null || suffixPredicate(p[prefix.Length..]));
+        return Add(method, Match, (ctx, path, ct) => h(ctx, path[prefix.Length..], ct));
+    }
+
     private ApiRouter Add(string? method, Func<string, bool> predicate, RouteHandler handler)
     {
         _routes.Add(new Route(method, predicate, handler));

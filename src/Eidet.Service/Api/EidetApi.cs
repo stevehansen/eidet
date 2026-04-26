@@ -131,8 +131,7 @@ public class EidetApiServer
         r.MapGet("/api/eidet/context", (ctx, _, ct) => _memoryRead.GetContext(ctx, ct));
         r.Map("GET", p => p == "/api/eidet/recall" || p == "/api/eidet/search",
             (ctx, _, ct) => _memoryRead.Search(ctx, ct));
-        r.MapGetPrefix("/api/eidet/history/",
-            (ctx, path, ct) => _memoryRead.History(ctx, path["/api/eidet/history/".Length..], ct));
+        r.MapPrefix("GET", "/api/eidet/history/", _memoryRead.History);
         r.MapGetPrefix("/api/eidet/stats", (ctx, _, ct) => _memoryRead.Stats(ctx, ct));
         r.MapPost("/api/eidet", (ctx, _, ct) => _memoryWrite.Store(ctx, ct));
         r.MapPost("/api/eidet/feedback", (ctx, _, ct) => _memoryWrite.Feedback(ctx, ct));
@@ -151,16 +150,13 @@ public class EidetApiServer
         r.MapPost("/api/eidet/layers/sync", (ctx, _, ct) => _layerEndpoints.LayerSync(ctx, ct));
 
         // Memory by id (must come after the more specific /api/eidet/* exact routes above)
-        r.Map("PUT", p => p.StartsWith("/api/eidet/") && !p.Contains("/links"),
-            (ctx, path, ct) => _memoryWrite.UpdateMemory(ctx, path["/api/eidet/".Length..], ct));
+        r.MapPrefix("PUT", "/api/eidet/", id => !id.Contains("/links"), _memoryWrite.UpdateMemory);
         r.Map("POST", p => p.EndsWith("/links") && p.StartsWith("/api/eidet/") && p != "/api/eidet/links",
             (ctx, path, ct) => _memoryWrite.AddMemoryLink(ctx, MemoryWriteEndpoints.ExtractMemoryIdFromLinkPath(path), ct));
         r.Map("DELETE", p => p.EndsWith("/links") && p.StartsWith("/api/eidet/") && p != "/api/eidet/links",
             (ctx, path, ct) => _memoryWrite.RemoveMemoryLink(ctx, MemoryWriteEndpoints.ExtractMemoryIdFromLinkPath(path), ct));
-        r.Map("DELETE", p => p.StartsWith("/api/eidet/layers/"),
-            (ctx, path, ct) => _layerEndpoints.UnmountLayer(ctx, path["/api/eidet/layers/".Length..], ct));
-        r.Map("DELETE", p => p.StartsWith("/api/eidet/"),
-            (ctx, path, ct) => _memoryWrite.Forget(ctx, path["/api/eidet/".Length..], ct));
+        r.MapPrefix("DELETE", "/api/eidet/layers/", _layerEndpoints.UnmountLayer);
+        r.MapPrefix("DELETE", "/api/eidet/", _memoryWrite.Forget);
 
         // Quality / context preview / usage / enrich / scheduler / repos / browse / graph
         r.MapGet("/api/eidet/quality", (ctx, _, ct) => _qualityEndpoint.Quality(ctx, ct));
@@ -175,11 +171,11 @@ public class EidetApiServer
         r.MapGet("/api/eidet/graph", (ctx, _, ct) => _memoryRead.Graph(ctx, ct));
 
         // Catch-all GET memory by id (last GET under /api/eidet/)
-        r.MapGetPrefix("/api/eidet/", (ctx, path, ct) => _memoryRead.GetMemory(ctx, path["/api/eidet/".Length..], ct));
+        r.MapPrefix("GET", "/api/eidet/", _memoryRead.GetMemory);
 
         // Embedded Web UI + root
         r.MapAny(p => p == "/ui" || p == "/ui/", (ctx, _, _) => EmbeddedAssets.ServeAsync(ctx, "index.html"));
-        r.MapAny(p => p.StartsWith("/ui/"), (ctx, path, _) => EmbeddedAssets.ServeAsync(ctx, path["/ui/".Length..]));
+        r.MapAnyPrefix("/ui/", (ctx, asset, _) => EmbeddedAssets.ServeAsync(ctx, asset));
         r.MapAny(p => p == "/" || p == "", (ctx, _, _) => _meta.Root(ctx));
 
         return r;
