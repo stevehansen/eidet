@@ -21,6 +21,19 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
 
         [CommandOption("--force")]
         public bool Force { get; set; }
+
+        // Hidden flag invoked by the freshly-installed binary (direct path or trampoline
+        // script) to record version history *after* dotnet tool update has actually
+        // replaced the on-disk binary. The running process reports its own
+        // EidetVersion.Current as the installed version — so this only records truth.
+        [CommandOption("--record-installed-from <PREVIOUS>")]
+        public string? RecordInstalledFrom { get; set; }
+
+        // Optional sanity check paired with --record-installed-from: if the freshly
+        // launched binary's EidetVersion.Current does not match this value, refuse to
+        // record (catches the "dotnet tool update exited 0 but installed nothing" case).
+        [CommandOption("--expected-version <VERSION>")]
+        public string? ExpectedVersion { get; set; }
     }
 
     private const string NuGetPackageId = "eidet";
@@ -29,6 +42,12 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var currentVersion = EidetVersion.Current;
+
+        // Post-install callback: record version history from the freshly-installed binary.
+        // This is invoked by the trampoline script (Windows) or by UpdateDirectAsync after
+        // a successful dotnet tool update. It deliberately bypasses the NuGet check.
+        if (settings.RecordInstalledFrom is not null)
+            return RecordInstalledVersion(currentVersion, settings);
 
         if (!settings.Json)
             AnsiConsole.MarkupLine($"Current version: [bold]{currentVersion}[/]");
@@ -125,8 +144,9 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         // Always restart after update if a service is registered
         var restartService = await IsServiceRegisteredAsync(cancellation);
 
-        // Step 3: Run dotnet tool update
-        var updateResult = await RunDotnetToolUpdateAsync(settings, cancellation);
+        // Step 3: Run dotnet tool update (pinned to the resolved latest version so we
+        // bypass the NuGet search-index lag that can otherwise silently no-op).
+        var updateResult = await RunDotnetToolUpdateAsync(latestVersion, settings, cancellation);
 
         if (!updateResult.Success)
         {
@@ -150,8 +170,32 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             return 1;
         }
 
-        // Step 4: Record in version history
-        VersionHistory.Record(latestVersion, currentVersion, "dotnet-tool-update");
+        // Step 4: Verify the install actually advanced the version, and record history
+        // from the freshly-installed binary. Spawning `eidet` invokes the global shim
+        // which now points at the new binary; if it reports a different version than
+        // expected, the install silently no-op'd and we treat it as a failure.
+        var verify = await VerifyAndRecordAsync(currentVersion, latestVersion, cancellation);
+        if (!verify.Success)
+        {
+            if (restartService)
+                await StartServiceAsync(settings, cancellation);
+
+            if (settings.Json)
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    current = currentVersion,
+                    latest = latestVersion,
+                    updated = false,
+                    error = verify.Error,
+                }, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            else
+            {
+                AnsiConsole.MarkupLine($"[red]Update failed:[/] {Markup.Escape(verify.Error ?? "Version did not advance")}");
+            }
+            return 1;
+        }
 
         // Step 5: Restart service
         if (restartService)
@@ -197,11 +241,10 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         // Always restart after update — the service should be running
         var restartService = await IsServiceRegisteredAsync(cancellation);
 
-        // Step 3: Record version history now (before we exit — the new binary may have
-        // a different version constant, but the history file is just JSON on disk)
-        VersionHistory.Record(latestVersion, currentVersion, "dotnet-tool-update");
-
-        // Step 4: Generate and launch the trampoline script
+        // Step 3: Generate and launch the trampoline script. The script now records
+        // version history *after* a successful install by invoking the freshly-installed
+        // `eidet update --record-installed-from ...`, so a failed/no-op update can no
+        // longer leave a bogus history entry.
         var scriptPath = GenerateWindowsTrampolineScript(currentVersion, latestVersion, restartService);
 
         if (!settings.Json)
@@ -463,13 +506,26 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             taskkill /f /im eidet.exe 2>nul
             timeout /t 2 /nobreak >nul
 
-            REM Run the actual update
+            REM Run the actual update — pin the version so dotnet falls back to the
+            REM NuGet flat container instead of the search index (which lags publish).
             echo Running dotnet tool update...
-            dotnet tool update -g eidet
+            dotnet tool update -g eidet --version {latestVersion}
             if errorlevel 1 (
                 echo UPDATE FAILED >> "{logPath}"
                 echo %date% %time% - Update from v{currentVersion} to v{latestVersion} FAILED >> "{logPath}"
-                echo dotnet tool update -g eidet returned error >> "{logPath}"
+                echo dotnet tool update -g eidet --version {latestVersion} returned error >> "{logPath}"
+                goto CLEANUP
+            )
+
+            REM Verify the install actually advanced the version and record history from
+            REM the freshly-installed binary. If the binary reports a different version,
+            REM eidet update --record-installed-from exits non-zero and we log the failure.
+            echo Verifying installed version and recording history...
+            eidet update --record-installed-from {currentVersion} --expected-version {latestVersion}
+            if errorlevel 1 (
+                echo VERIFY FAILED >> "{logPath}"
+                echo %date% %time% - Update from v{currentVersion} to v{latestVersion} could not be verified >> "{logPath}"
+                echo Installed binary did not report v{latestVersion} — dotnet tool update may have silently re-resolved. >> "{logPath}"
                 goto CLEANUP
             )
 
@@ -518,14 +574,18 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         proc?.Dispose();
     }
 
-    private static async Task<(bool Success, string? Error)> RunDotnetToolUpdateAsync(Settings settings, CancellationToken ct)
+    private static async Task<(bool Success, string? Error)> RunDotnetToolUpdateAsync(string latestVersion, Settings settings, CancellationToken ct)
     {
         try
         {
             if (!settings.Json)
                 AnsiConsole.MarkupLine("  Running dotnet tool update...");
 
-            var (exitCode, output) = await RunProcessAsync("dotnet", "tool update -g eidet", ct);
+            // Pin the version explicitly: `dotnet tool` falls back to the NuGet flat
+            // container when an exact version is requested, sidestepping the search-index
+            // lag (10–30 min after publish) that otherwise causes a silent re-resolve to
+            // the previously installed version.
+            var (exitCode, output) = await RunProcessAsync("dotnet", $"tool update -g eidet --version {latestVersion}", ct);
 
             if (exitCode == 0)
                 return (true, null);
@@ -536,6 +596,79 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         {
             return (false, ex.Message);
         }
+    }
+
+    /// <summary>
+    /// After a successful `dotnet tool update`, spawns the freshly-installed `eidet`
+    /// shim with `--record-installed-from` so the new binary writes its own version
+    /// history entry. The new binary refuses to record if its EidetVersion.Current does
+    /// not match <paramref name="latestVersion"/>, which catches the "exit 0 but same
+    /// version installed" case.
+    /// </summary>
+    private static async Task<(bool Success, string? Error)> VerifyAndRecordAsync(
+        string currentVersion, string latestVersion, CancellationToken ct)
+    {
+        var args = $"update --record-installed-from {currentVersion} --expected-version {latestVersion}";
+        var (exitCode, output) = await RunProcessAsync("eidet", args, ct);
+
+        if (exitCode == 0)
+            return (true, null);
+
+        var trimmed = output.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+            trimmed = $"freshly-installed eidet did not report v{latestVersion} (dotnet tool update may have silently re-resolved to the previous version)";
+        return (false, trimmed);
+    }
+
+    /// <summary>
+    /// Implementation of the hidden `--record-installed-from` callback. Verifies that
+    /// the running binary's EidetVersion.Current matches <c>--expected-version</c> (when
+    /// supplied) and records a version history entry. Returns non-zero on mismatch so
+    /// callers can surface the silent-no-op failure mode.
+    /// </summary>
+    private static int RecordInstalledVersion(string currentVersion, Settings settings)
+    {
+        var previous = settings.RecordInstalledFrom!;
+        var expected = settings.ExpectedVersion;
+
+        if (expected is not null && !string.Equals(currentVersion, expected, StringComparison.OrdinalIgnoreCase))
+        {
+            var msg = $"Installed binary reports v{currentVersion} but expected v{expected}. " +
+                      "dotnet tool update likely no-op'd (NuGet search-index lag). Not recording version history.";
+            if (settings.Json)
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    current = currentVersion,
+                    expected,
+                    previous,
+                    recorded = false,
+                    error = msg,
+                }));
+            }
+            else
+            {
+                AnsiConsole.MarkupLine($"[red]{Markup.Escape(msg)}[/]");
+            }
+            return 1;
+        }
+
+        VersionHistory.Record(currentVersion, previous, "dotnet-tool-update");
+
+        if (settings.Json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                current = currentVersion,
+                previous,
+                recorded = true,
+            }));
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"[green]Recorded v{currentVersion} in version history[/] (from v{previous}).");
+        }
+        return 0;
     }
 
     internal static async Task<(int ExitCode, string Output)> RunProcessAsync(string fileName, string arguments, CancellationToken ct)

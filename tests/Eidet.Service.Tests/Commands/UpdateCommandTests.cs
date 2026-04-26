@@ -40,6 +40,48 @@ public class UpdateCommandTests
     }
 
     [Fact]
+    public void GenerateWindowsTrampolineScript_PinsTargetVersion()
+    {
+        // Regression: without --version the script hits the NuGet search index, which
+        // can lag publish by 10–30 min and silently re-resolve to the old version.
+        var scriptPath = UpdateCommand.GenerateWindowsTrampolineScript("0.4.1", "0.4.2", restartService: false);
+
+        try
+        {
+            var content = File.ReadAllText(scriptPath);
+            Assert.Contains("dotnet tool update -g eidet --version 0.4.2", content);
+        }
+        finally
+        {
+            File.Delete(scriptPath);
+        }
+    }
+
+    [Fact]
+    public void GenerateWindowsTrampolineScript_RecordsHistoryAfterInstall()
+    {
+        // Regression: history must be recorded by the freshly-installed binary, not by
+        // the running process before the install runs (which previously left bogus
+        // entries when dotnet tool update silently no-op'd).
+        var scriptPath = UpdateCommand.GenerateWindowsTrampolineScript("0.4.1", "0.4.2", restartService: false);
+
+        try
+        {
+            var content = File.ReadAllText(scriptPath);
+            Assert.Contains("eidet update --record-installed-from 0.4.1 --expected-version 0.4.2", content);
+            // The verify step must come after the install and gate the success log line.
+            var installIdx = content.IndexOf("dotnet tool update -g eidet --version 0.4.2", StringComparison.Ordinal);
+            var recordIdx = content.IndexOf("eidet update --record-installed-from", StringComparison.Ordinal);
+            Assert.True(installIdx >= 0 && recordIdx > installIdx,
+                "record-installed-from must be invoked after dotnet tool update");
+        }
+        finally
+        {
+            File.Delete(scriptPath);
+        }
+    }
+
+    [Fact]
     public void GenerateWindowsTrampolineScript_IncludesServiceRestart_WhenRunning()
     {
         var scriptPath = UpdateCommand.GenerateWindowsTrampolineScript("0.1.0", "0.3.0", restartService: true);
