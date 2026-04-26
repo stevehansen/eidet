@@ -29,6 +29,8 @@ public class EidetApiServer
     private readonly MemoryBulkEndpoints _memoryBulk;
     private readonly LayerEndpoints _layerEndpoints;
     private readonly MaintenanceEndpoints _maintenanceEndpoints;
+    private readonly QualityEndpoint _qualityEndpoint;
+    private readonly ScheduledTasksEndpoint _scheduledTasksEndpoint;
     private readonly UsageEndpoints _usageEndpoints;
     private readonly EnrichEndpoint _enrichEndpoint;
     private readonly MetaEndpoints _meta;
@@ -52,7 +54,9 @@ public class EidetApiServer
         _memoryWrite = new MemoryWriteEndpoints(svc, dispatcher);
         _memoryBulk = new MemoryBulkEndpoints(dispatcher, export, usage);
         _layerEndpoints = new LayerEndpoints(layers, layerSync);
-        _maintenanceEndpoints = new MaintenanceEndpoints(dispatcher, quality, scheduledTasks, usage);
+        _maintenanceEndpoints = new MaintenanceEndpoints(dispatcher);
+        _qualityEndpoint = new QualityEndpoint(quality, usage);
+        _scheduledTasksEndpoint = new ScheduledTasksEndpoint(scheduledTasks);
         _usageEndpoints = new UsageEndpoints(usage);
         _enrichEndpoint = new EnrichEndpoint(enrichment);
         _meta = new MetaEndpoints(svc, enrichment, config, _baseUrl, _startedAt);
@@ -159,13 +163,13 @@ public class EidetApiServer
             (ctx, path, ct) => _memoryWrite.Forget(ctx, path["/api/eidet/".Length..], ct));
 
         // Quality / context preview / usage / enrich / scheduler / repos / browse / graph
-        r.MapGet("/api/eidet/quality", (ctx, _, ct) => _maintenanceEndpoints.Quality(ctx, ct));
+        r.MapGet("/api/eidet/quality", (ctx, _, ct) => _qualityEndpoint.Quality(ctx, ct));
         r.MapGet("/api/eidet/context/preview", (ctx, _, ct) => _memoryRead.ContextPreview(ctx, ct));
         r.MapGet("/api/eidet/usage", (ctx, _, ct) => _usageEndpoints.Usage(ctx, ct));
         r.MapGet("/api/eidet/usage/timeseries", (ctx, _, ct) => _usageEndpoints.TimeSeries(ctx, ct));
         r.MapGet("/api/eidet/usage/hourly", (ctx, _, ct) => _usageEndpoints.Hourly(ctx, ct));
         r.MapPost("/api/eidet/enrich", (ctx, _, ct) => _enrichEndpoint.Enrich(ctx, ct));
-        r.MapGet("/api/eidet/scheduled-tasks", (ctx, _, ct) => _maintenanceEndpoints.ScheduledTasks(ctx, ct));
+        r.MapGet("/api/eidet/scheduled-tasks", (ctx, _, ct) => _scheduledTasksEndpoint.List(ctx, ct));
         r.MapGet("/api/eidet/repos", (ctx, _, ct) => _memoryRead.GetRepos(ctx, ct));
         r.MapGet("/api/eidet/browse", (ctx, _, ct) => _memoryRead.Browse(ctx, ct));
         r.MapGet("/api/eidet/graph", (ctx, _, ct) => _memoryRead.Graph(ctx, ct));
