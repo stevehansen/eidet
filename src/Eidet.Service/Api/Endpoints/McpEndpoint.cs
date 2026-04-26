@@ -61,7 +61,7 @@ internal sealed class McpEndpoint
 
         ctx.Response.StatusCode = 200;
         ctx.Response.ContentType = "application/json";
-        await JsonSerializer.SerializeAsync(ctx.Response.OutputStream, response, McpServer.SerializerOptions, ct);
+        await JsonSerializer.SerializeAsync(ctx.Response.OutputStream, response, JsonRpcDispatcher.SerializerOptions, ct);
         ctx.Response.Close();
     }
 }

@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Eidet.Core.Domain;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
@@ -10,18 +9,12 @@ namespace Eidet.Service.Mcp;
 
 public class McpServer
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
-    };
-
     private readonly MemoryService _svc;
     private readonly IntakeService _intake;
     private readonly string _repoId;
     private readonly bool _autoIntake;
     private readonly ToolDispatcher _dispatcher;
+    private readonly JsonRpcDispatcher _rpc;
     private bool _autoIntakeDone;
 
     public McpServer(MemoryService svc, IntakeService intake, ConsolidationEngine consolidation,
@@ -33,6 +26,14 @@ public class McpServer
         _repoId = repoId;
         _autoIntake = autoIntake;
         _dispatcher = ToolDispatcherFactory.Create(svc, intake, consolidation, maintenance, export, layers, usage);
+
+        _rpc = new JsonRpcDispatcher(new Dictionary<string, JsonRpcDispatcher.Handler>
+        {
+            ["initialize"] = (req, _) => Task.FromResult<JsonRpcResponse?>(HandleInitialize(req)),
+            ["notifications/initialized"] = (_, _) => Task.FromResult<JsonRpcResponse?>(null),
+            ["tools/list"] = (req, _) => Task.FromResult<JsonRpcResponse?>(HandleToolsList(req)),
+            ["tools/call"] = async (req, ct) => await HandleToolsCallAsync(req, ct),
+        });
     }
 
     public async Task RunStdioAsync(CancellationToken ct)
@@ -47,10 +48,10 @@ public class McpServer
 
             if (string.IsNullOrWhiteSpace(line)) continue;
 
-            var response = await HandleJsonRpcAsync(line, ct);
+            var response = await _rpc.DispatchAsync(line, ct);
             if (response != null)
             {
-                var json = JsonSerializer.Serialize(response, JsonOptions);
+                var json = JsonSerializer.Serialize(response, JsonRpcDispatcher.SerializerOptions);
                 Console.WriteLine(json);
                 Console.Out.Flush();
             }
@@ -58,40 +59,10 @@ public class McpServer
     }
 
     /// <summary>
-    /// Handle a single JSON-RPC request string. Used by both stdio and HTTP transports.
+    /// Handle a single JSON-RPC request string. Used by the HTTP transport.
     /// </summary>
-    public async Task<JsonRpcResponse?> ProcessRequestAsync(string json, CancellationToken ct) =>
-        await HandleJsonRpcAsync(json, ct);
-
-    /// <summary>
-    /// JSON serializer options (shared with HTTP transport).
-    /// </summary>
-    public static JsonSerializerOptions SerializerOptions => JsonOptions;
-
-    private async Task<JsonRpcResponse?> HandleJsonRpcAsync(string json, CancellationToken ct)
-    {
-        JsonRpcRequest? request;
-        try
-        {
-            request = JsonSerializer.Deserialize<JsonRpcRequest>(json, JsonOptions);
-        }
-        catch
-        {
-            return JsonRpcResponse.ErrorResponse(null, -32700, "Parse error");
-        }
-
-        if (request == null || string.IsNullOrEmpty(request.Method))
-            return JsonRpcResponse.ErrorResponse(null, -32600, "Invalid request");
-
-        return request.Method switch
-        {
-            "initialize" => HandleInitialize(request),
-            "notifications/initialized" => null, // No response for notifications
-            "tools/list" => HandleToolsList(request),
-            "tools/call" => await HandleToolsCallAsync(request, ct),
-            _ => JsonRpcResponse.ErrorResponse(request.Id, -32601, $"Method not found: {request.Method}"),
-        };
-    }
+    public Task<JsonRpcResponse?> ProcessRequestAsync(string json, CancellationToken ct) =>
+        _rpc.DispatchAsync(json, ct);
 
     private static JsonRpcResponse HandleInitialize(JsonRpcRequest request)
     {
@@ -154,5 +125,4 @@ public class McpServer
         }
         catch { /* Non-critical — don't fail context for auto-intake issues */ }
     }
-
 }
