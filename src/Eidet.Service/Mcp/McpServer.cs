@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Eidet.Core.Domain;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Service.Tools;
@@ -9,23 +8,18 @@ namespace Eidet.Service.Mcp;
 
 public class McpServer
 {
-    private readonly MemoryService _svc;
-    private readonly IntakeService _intake;
     private readonly string _repoId;
-    private readonly bool _autoIntake;
     private readonly ToolDispatcher _dispatcher;
     private readonly JsonRpcDispatcher _rpc;
-    private bool _autoIntakeDone;
+    private readonly AutoIntakeOnContext? _autoIntake;
 
     public McpServer(MemoryService svc, IntakeService intake, ConsolidationEngine consolidation,
         IMaintenanceRunner maintenance, string repoId, bool autoIntake = true,
         UsageTracker? usage = null, ExportService? export = null, LayerService? layers = null)
     {
-        _svc = svc;
-        _intake = intake;
         _repoId = repoId;
-        _autoIntake = autoIntake;
         _dispatcher = ToolDispatcherFactory.Create(svc, intake, consolidation, maintenance, export, layers, usage);
+        _autoIntake = autoIntake ? new AutoIntakeOnContext(svc, intake, repoId) : null;
 
         _rpc = new JsonRpcDispatcher(new Dictionary<string, JsonRpcDispatcher.Handler>
         {
@@ -97,32 +91,10 @@ public class McpServer
             return JsonRpcResponse.ErrorResponse(request.Id, -32602, "Invalid params: expected name and arguments");
         }
 
-        var result = await ExecuteToolAsync(toolName, args, ct);
-        return JsonRpcResponse.Success(request.Id, result);
-    }
+        if (_autoIntake is not null)
+            await _autoIntake.OnToolCalledAsync(toolName, ct);
 
-    private async Task<McpCallToolResult> ExecuteToolAsync(string name, JsonElement args, CancellationToken ct)
-    {
-        // MCP-only side effect: first eidet_context call auto-ingests this repo if it has no memories.
-        if (name == "eidet_context")
-            await TryAutoIntakeAsync(ct);
-
-        var dispatched = await _dispatcher.InvokeAsync(new ToolRequest(name, _repoId, args, "mcp", ct));
-        return McpFormatter.Format(dispatched);
-    }
-
-    private async Task TryAutoIntakeAsync(CancellationToken ct)
-    {
-        if (!_autoIntake || _autoIntakeDone) return;
-        _autoIntakeDone = true;
-        try
-        {
-            var normalizedRepoId = RepoIdNormalizer.Normalize(_repoId);
-            var counts = await _svc.GetCountsByTypeAsync(normalizedRepoId, ct);
-            var totalForRepo = counts.Values.Sum();
-            if (totalForRepo == 0)
-                await _intake.IngestAsync(_repoId, _repoId, dryRun: false, ct: ct);
-        }
-        catch { /* Non-critical — don't fail context for auto-intake issues */ }
+        var dispatched = await _dispatcher.InvokeAsync(new ToolRequest(toolName, _repoId, args, "mcp", ct));
+        return JsonRpcResponse.Success(request.Id, McpFormatter.Format(dispatched));
     }
 }
