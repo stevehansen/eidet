@@ -1,3 +1,4 @@
+using Eidet.Core;
 using Eidet.Core.Configuration;
 using Eidet.Core.Enrichment;
 using Eidet.Core.Maintenance;
@@ -21,42 +22,59 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
-        var config = ConfigManager.Load();
-
-        var store = DocumentStoreFactory.CreateFromConfig(config);
-        DatabaseProvisioner.DeployIndexes(store);
-        var eidetStore = new RavenEidetStore(store);
-        using var enrichment = config.Enrichment.OllamaEnabled
-            ? EnrichmentService.CreateOllama(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
-            : EnrichmentService.CreateNull();
-        IHookRunner hookRunner = config.Hooks.PreStore.Count > 0 || config.Hooks.PostStore.Count > 0
-            || config.Hooks.PreRecall.Count > 0 || config.Hooks.PostRecall.Count > 0
-            || config.Hooks.PreForget.Count > 0 || config.Hooks.PostForget.Count > 0
-            ? new HookRunner(config.Hooks)
-            : NullHookRunner.Instance;
-        var memorySvc = new MemoryService(eidetStore, hooks: hookRunner);
-        var intakeSvc = new IntakeService(eidetStore);
-        var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment);
-        IMaintenanceRunner maintenanceRunner = new MaintenanceRunner(
-            new MaintenanceOrchestrator(eidetStore, enrichment, consolidationEngine));
-
-        var exportSvc = new ExportService(eidetStore);
-        var layerSvc = new LayerService(eidetStore);
-        var usageTracker = new UsageTracker(store);
-        var workDir = settings.Repo ?? settings.WorkDir ?? Directory.GetCurrentDirectory();
-        var server = new McpServer(memorySvc, intakeSvc, consolidationEngine, maintenanceRunner, workDir,
-            autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker,
-            export: exportSvc, layers: layerSvc);
+        EidetLog.InstallCrashHandlers("mcp");
+        EidetLog.Info($"[mcp] Starting (PID {Environment.ProcessId}, workdir={settings.Repo ?? settings.WorkDir ?? Directory.GetCurrentDirectory()})");
 
         try
         {
-            await server.RunStdioAsync(cancellation);
-        }
-        finally
-        {
-            store.Dispose();
-        }
+            var config = ConfigManager.Load();
 
-        return 0;
+            var store = DocumentStoreFactory.CreateFromConfig(config);
+            DatabaseProvisioner.DeployIndexes(store);
+            var eidetStore = new RavenEidetStore(store);
+            using var enrichment = config.Enrichment.OllamaEnabled
+                ? EnrichmentService.CreateOllama(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
+                : EnrichmentService.CreateNull();
+            IHookRunner hookRunner = config.Hooks.PreStore.Count > 0 || config.Hooks.PostStore.Count > 0
+                || config.Hooks.PreRecall.Count > 0 || config.Hooks.PostRecall.Count > 0
+                || config.Hooks.PreForget.Count > 0 || config.Hooks.PostForget.Count > 0
+                ? new HookRunner(config.Hooks)
+                : NullHookRunner.Instance;
+            var memorySvc = new MemoryService(eidetStore, hooks: hookRunner);
+            var intakeSvc = new IntakeService(eidetStore);
+            var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment);
+            IMaintenanceRunner maintenanceRunner = new MaintenanceRunner(
+                new MaintenanceOrchestrator(eidetStore, enrichment, consolidationEngine));
+
+            var exportSvc = new ExportService(eidetStore);
+            var layerSvc = new LayerService(eidetStore);
+            var usageTracker = new UsageTracker(store);
+            var workDir = settings.Repo ?? settings.WorkDir ?? Directory.GetCurrentDirectory();
+            var server = new McpServer(memorySvc, intakeSvc, consolidationEngine, maintenanceRunner, workDir,
+                autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker,
+                export: exportSvc, layers: layerSvc);
+
+            try
+            {
+                await server.RunStdioAsync(cancellation);
+            }
+            finally
+            {
+                store.Dispose();
+            }
+
+            EidetLog.Info("[mcp] Stopped cleanly");
+            return 0;
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            EidetLog.Info("[mcp] Cancelled");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            EidetLog.Error("[mcp] Crashed", ex);
+            throw;
+        }
     }
 }

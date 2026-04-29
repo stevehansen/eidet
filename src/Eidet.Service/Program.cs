@@ -41,6 +41,9 @@ app.Configure(config =>
     config.AddCommand<StatusCommand>("status")
         .WithDescription("Show service status and stats");
 
+    config.AddCommand<LogsCommand>("logs")
+        .WithDescription("Print or follow the eidet.log file");
+
     config.AddCommand<RecallCommand>("recall")
         .WithDescription("Search memories");
 

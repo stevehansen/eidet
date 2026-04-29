@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Eidet.Core;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Service.Tools;
@@ -37,17 +38,52 @@ public class McpServer
 
         while (!ct.IsCancellationRequested)
         {
-            var line = await reader.ReadLineAsync(ct);
-            if (line == null) break; // EOF
+            string? line;
+            try
+            {
+                line = await reader.ReadLineAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                EidetLog.Error("[mcp] stdin read failed", ex);
+                break;
+            }
 
+            if (line == null) break; // EOF
             if (string.IsNullOrWhiteSpace(line)) continue;
 
-            var response = await _rpc.DispatchAsync(line, ct);
+            JsonRpcResponse? response;
+            try
+            {
+                response = await _rpc.DispatchAsync(line, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                EidetLog.Error($"[mcp] Dispatch failed (line len={line.Length})", ex);
+                response = JsonRpcResponse.ErrorResponse(null, -32603, $"Internal error: {ex.Message}");
+            }
+
             if (response != null)
             {
-                var json = JsonSerializer.Serialize(response, JsonRpcDispatcher.SerializerOptions);
-                Console.WriteLine(json);
-                Console.Out.Flush();
+                try
+                {
+                    var json = JsonSerializer.Serialize(response, JsonRpcDispatcher.SerializerOptions);
+                    Console.WriteLine(json);
+                    Console.Out.Flush();
+                }
+                catch (Exception ex)
+                {
+                    EidetLog.Error("[mcp] Failed to write response to stdout", ex);
+                    break;
+                }
             }
         }
     }
@@ -92,7 +128,16 @@ public class McpServer
         }
 
         if (_autoIntake is not null)
-            await _autoIntake.OnToolCalledAsync(toolName, ct);
+        {
+            try
+            {
+                await _autoIntake.OnToolCalledAsync(toolName, ct);
+            }
+            catch (Exception ex)
+            {
+                EidetLog.Error($"[mcp] AutoIntake failed for tool '{toolName}'", ex);
+            }
+        }
 
         var dispatched = await _dispatcher.InvokeAsync(new ToolRequest(toolName, _repoId, args, "mcp", ct));
         return JsonRpcResponse.Success(request.Id, McpFormatter.Format(dispatched));

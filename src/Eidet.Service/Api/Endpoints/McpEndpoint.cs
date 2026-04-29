@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
+using Eidet.Core;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Service.Mcp;
@@ -49,7 +50,20 @@ internal sealed class McpEndpoint
         using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
         var body = await reader.ReadToEndAsync(ct);
 
-        var response = await server.ProcessRequestAsync(body, ct);
+        JsonRpcResponse? response;
+        try
+        {
+            response = await server.ProcessRequestAsync(body, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            EidetLog.Error($"[mcp-http] Dispatch failed (repo={repoOverride ?? "default"}, body len={body.Length})", ex);
+            response = JsonRpcResponse.ErrorResponse(null, -32603, $"Internal error: {ex.Message}");
+        }
 
         if (response is null)
         {

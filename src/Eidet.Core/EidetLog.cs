@@ -27,6 +27,43 @@ public static class EidetLog
     public static void Error(string message) => Write("ERR", message);
     public static void Error(string message, Exception ex) => Write("ERR", $"{message}: {ex}");
 
+    public static string LogPath => GetLogPath();
+
+    private static int _crashHandlersInstalled;
+
+    /// <summary>
+    /// Hooks AppDomain.UnhandledException, TaskScheduler.UnobservedTaskException
+    /// and ProcessExit to ensure crashes leave a trace in eidet.log. Idempotent.
+    /// </summary>
+    public static void InstallCrashHandlers(string processLabel)
+    {
+        if (Interlocked.Exchange(ref _crashHandlersInstalled, 1) == 1)
+            return;
+
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            var ex = e.ExceptionObject as Exception;
+            var prefix = e.IsTerminating
+                ? $"[{processLabel}] Unhandled exception (terminating)"
+                : $"[{processLabel}] Unhandled exception";
+            if (ex != null)
+                Error(prefix, ex);
+            else
+                Error($"{prefix}: {e.ExceptionObject}");
+        };
+
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            Error($"[{processLabel}] Unobserved task exception", e.Exception);
+            e.SetObserved();
+        };
+
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            Info($"[{processLabel}] Process exiting (PID {Environment.ProcessId})");
+        };
+    }
+
     private static void Write(string level, string message)
     {
         try

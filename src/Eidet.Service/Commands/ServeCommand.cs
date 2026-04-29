@@ -26,41 +26,12 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
-        InstallCrashHandlers();
+        EidetLog.InstallCrashHandlers("serve");
 
         if (settings.RunAsService)
             return await RunAsWindowsServiceAsync(cancellation);
 
         return await RunAsConsoleAsync(settings, cancellation);
-    }
-
-    private static int _crashHandlersInstalled;
-
-    private static void InstallCrashHandlers()
-    {
-        if (Interlocked.Exchange(ref _crashHandlersInstalled, 1) == 1)
-            return;
-
-        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
-        {
-            var ex = e.ExceptionObject as Exception;
-            var prefix = e.IsTerminating ? "Unhandled exception (terminating)" : "Unhandled exception";
-            if (ex != null)
-                EidetLog.Error(prefix, ex);
-            else
-                EidetLog.Error($"{prefix}: {e.ExceptionObject}");
-        };
-
-        TaskScheduler.UnobservedTaskException += (_, e) =>
-        {
-            EidetLog.Error("Unobserved task exception", e.Exception);
-            e.SetObserved();
-        };
-
-        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
-        {
-            EidetLog.Info($"Process exiting (PID {Environment.ProcessId})");
-        };
     }
 
     private static async Task<int> RunAsWindowsServiceAsync(CancellationToken cancellation)
