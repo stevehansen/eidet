@@ -1,279 +1,191 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
-using System.Text.RegularExpressions;
 using Eidet.Core.Domain;
+using Eidet.Core.Intake;
+using Eidet.Core.Intake.Extractors;
 using Eidet.Core.Storage;
 
 namespace Eidet.Core.Services;
 
-public partial class IntakeService
+/// <summary>
+/// Orchestrates the intake pipeline. Owns dedup-by-content-hash, store plumbing,
+/// dry-run semantics, and result aggregation; delegates all per-ecosystem parsing
+/// to <see cref="IIntakeExtractor"/>s.
+/// </summary>
+/// <remarks>
+/// The default extractor list covers CLAUDE/MEMORY/README markdown, .editorconfig,
+/// NuGet, and npm. <see cref="DocsFolderExtractor"/> is included but inactive by
+/// default — it only runs when <see cref="IntakeOptions.DocsPattern"/> is set, which
+/// is how <see cref="IngestDocsAsync"/> activates it.
+/// </remarks>
+public class IntakeService
 {
     private readonly IEidetStore _store;
+    private readonly IReadOnlyList<IIntakeExtractor> _extractors;
 
+    /// <summary>
+    /// Constructs a service with the default extractor list. Tests and SDK consumers
+    /// that want a custom registry should use the <see cref="IntakeService(IEidetStore, IEnumerable{IIntakeExtractor})"/>
+    /// overload.
+    /// </summary>
     public IntakeService(IEidetStore store)
+        : this(store, DefaultExtractors())
+    {
+    }
+
+    public IntakeService(IEidetStore store, IEnumerable<IIntakeExtractor> extractors)
     {
         _store = store;
+        _extractors = extractors.ToList();
     }
 
-    public async Task<IntakeResult> IngestAsync(string repoId, string projectPath, bool dryRun = false, CancellationToken ct = default)
+    /// <summary>The built-in extractor list — markdown, editorconfig, NuGet, npm, plus the inactive docs-folder.</summary>
+    public static IIntakeExtractor[] DefaultExtractors() =>
+    [
+        new ClaudeMdExtractor(),
+        new ReadmeExtractor(),
+        new EditorConfigExtractor(),
+        new DocsFolderExtractor(),
+        new NuGetDependencyExtractor(),
+        new NpmDependencyExtractor(),
+    ];
+
+    /// <summary>Whole-repo intake: runs every extractor whose <see cref="IIntakeExtractor.AppliesTo"/> returns true.</summary>
+    public Task<IntakeResult> IngestAsync(string repoId, string projectPath, bool dryRun = false, CancellationToken ct = default)
     {
-        var result = new IntakeResult();
-        var normalizedRepoId = RepoIdNormalizer.Normalize(repoId);
-
-        // CLAUDE.md
-        var claudeMd = Path.Combine(projectPath, "CLAUDE.md");
-        if (File.Exists(claudeMd))
-            await IngestMarkdownFile(normalizedRepoId, claudeMd, "CLAUDE.md", MemoryType.Insight, 0.8f, result, dryRun, ct);
-
-        // MEMORY.md (legacy Claude Code memory format)
-        var memoryMd = Path.Combine(projectPath, "MEMORY.md");
-        if (File.Exists(memoryMd))
-            await IngestMarkdownFile(normalizedRepoId, memoryMd, "MEMORY.md", MemoryType.Insight, 0.8f, result, dryRun, ct);
-
-        // README.md
-        var readme = Path.Combine(projectPath, "README.md");
-        if (File.Exists(readme))
-            await IngestMarkdownFile(normalizedRepoId, readme, "README.md", MemoryType.Insight, 0.6f, result, dryRun, ct);
-
-        // .editorconfig
-        var editorConfig = Path.Combine(projectPath, ".editorconfig");
-        if (File.Exists(editorConfig))
+        var ctx = new IntakeContext
         {
-            var content = await File.ReadAllTextAsync(editorConfig, ct);
-            var summary = ParseEditorConfig(content);
-            if (!string.IsNullOrWhiteSpace(summary))
-                await AddIntakeItem(normalizedRepoId, ".editorconfig", MemoryType.Insight, summary, ["editorconfig", "formatting"], 0.7f, result, dryRun, ct);
-        }
-
-        // Dependency detection
-        result.DetectedLinks = await DetectDependencies(projectPath, ct);
-        result.ProducedPackages = DetectProducedPackages(projectPath);
-
-        return result;
+            RepoId = RepoIdNormalizer.Normalize(repoId),
+            ProjectPath = projectPath,
+            DryRun = dryRun,
+        };
+        return RunPipelineAsync(ctx, ct);
     }
 
-    public async Task<IntakeResult> IngestDocsAsync(
+    /// <summary>
+    /// Path-scoped intake: walks <paramref name="docsPath"/> with the given pattern and
+    /// activates only the docs-folder extractor.
+    /// </summary>
+    public Task<IntakeResult> IngestDocsAsync(
         string repoId, string docsPath, bool recursive = true, string pattern = "*.md",
         float importance = 0.6f, List<string>? extraTags = null, bool dryRun = false, CancellationToken ct = default)
     {
-        var result = new IntakeResult();
-        var normalizedRepoId = RepoIdNormalizer.Normalize(repoId);
-        var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-
-        foreach (var file in Directory.GetFiles(docsPath, pattern, searchOption))
+        var ctx = new IntakeContext
         {
-            var relativePath = Path.GetRelativePath(docsPath, file);
-            var tags = ExtractTagsFromFileName(relativePath);
-            if (extraTags != null) tags.AddRange(extraTags);
-
-            await IngestMarkdownFile(normalizedRepoId, file, relativePath, MemoryType.Insight, importance, result, dryRun, ct, tags);
-        }
-
-        return result;
-    }
-
-    private async Task IngestMarkdownFile(
-        string repoId, string filePath, string source, MemoryType type, float importance,
-        IntakeResult result, bool dryRun, CancellationToken ct, List<string>? extraTags = null)
-    {
-        var content = await File.ReadAllTextAsync(filePath, ct);
-        var sections = SplitByHeadings(content);
-
-        foreach (var (sectionContent, sectionTags) in sections)
-        {
-            var tags = new List<string>(sectionTags);
-            if (extraTags != null) tags.AddRange(extraTags);
-            tags = tags.Distinct().ToList();
-
-            await AddIntakeItem(repoId, source, type, sectionContent.Trim(), tags, importance, result, dryRun, ct);
-        }
-    }
-
-    private async Task AddIntakeItem(
-        string repoId, string source, MemoryType type, string content, List<string> tags,
-        float importance, IntakeResult result, bool dryRun, CancellationToken ct)
-    {
-        var item = new IntakeItem { Source = source, Type = type, Content = content, Tags = tags };
-
-        if (content.Length < 20)
-        {
-            item.WasSkipped = true;
-            item.SkipReason = "too short";
-            result.Items.Add(item);
-            result.SkippedCount++;
-            return;
-        }
-
-        // Dedup check via content hash
-        var hash = ComputeContentHash(content);
-        var id = $"memories/{repoId}/{type.ToString().ToLowerInvariant()}/{hash}";
-        var existing = await _store.GetAsync(id, ct);
-        if (existing != null)
-        {
-            item.WasSkipped = true;
-            item.SkipReason = "duplicate";
-            result.Items.Add(item);
-            result.SkippedCount++;
-            return;
-        }
-
-        if (!dryRun)
-        {
-            var now = DateTime.UtcNow;
-            var entry = new MemoryEntry
+            RepoId = RepoIdNormalizer.Normalize(repoId),
+            ProjectPath = docsPath,
+            DryRun = dryRun,
+            Options = new IntakeOptions
             {
-                Id = id,
-                RepoId = repoId,
-                Type = type,
-                Content = content,
-                Tags = tags,
-                Importance = importance,
-                Source = "intake",
-                Provenance = MemoryProvenance.Intake,
-                Confidence = 0.7f,
-                CreatedAt = now,
-                Validity = new Validity { ValidFrom = now },
-                Entities = EntityExtractor.Extract(content),
-                OneLiner = EntityExtractor.GenerateHeuristicOneLiner(content),
+                DocsPattern = pattern,
+                DocsRecursive = recursive,
+                DocsImportance = importance,
+                DocsExtraTags = extraTags,
+            },
+        };
+        return RunPipelineAsync(ctx, ct);
+    }
+
+    private async Task<IntakeResult> RunPipelineAsync(IntakeContext ctx, CancellationToken ct)
+    {
+        var sink = new OrchestratorSink(_store, ctx);
+        foreach (var extractor in _extractors)
+        {
+            if (!extractor.AppliesTo(ctx)) continue;
+            await extractor.ExtractAsync(ctx, sink, ct);
+        }
+        return sink.Build();
+    }
+
+    private sealed class OrchestratorSink : IIntakeSink
+    {
+        private readonly IEidetStore _store;
+        private readonly IntakeContext _ctx;
+        private readonly IntakeResult _result = new();
+
+        public OrchestratorSink(IEidetStore store, IntakeContext ctx)
+        {
+            _store = store;
+            _ctx = ctx;
+        }
+
+        public IntakeResult Build() => _result;
+
+        public async ValueTask AddMemoryAsync(IntakeMemory candidate, CancellationToken ct)
+        {
+            var item = new IntakeItem
+            {
+                Source = candidate.Source,
+                Type = candidate.Type,
+                Content = candidate.Content,
+                Tags = candidate.Tags.ToList(),
             };
-            await _store.StoreAsync(entry, ct);
-        }
 
-        result.Items.Add(item);
-        result.NewCount++;
-    }
-
-    internal static List<(string Content, List<string> Tags)> SplitByHeadings(string content)
-    {
-        var sections = new List<(string Content, List<string> Tags)>();
-        var matches = HeadingRegex().Matches(content);
-
-        if (matches.Count == 0)
-        {
-            if (!string.IsNullOrWhiteSpace(content))
-                sections.Add((content, []));
-            return sections;
-        }
-
-        for (var i = 0; i < matches.Count; i++)
-        {
-            var start = matches[i].Index;
-            var end = i + 1 < matches.Count ? matches[i + 1].Index : content.Length;
-            var sectionContent = content[start..end].Trim();
-            var heading = matches[i].Groups[1].Value;
-            var tags = TagsFromHeading(heading);
-
-            if (sectionContent.Length >= 20)
-                sections.Add((sectionContent, tags));
-        }
-
-        return sections;
-    }
-
-    private static List<string> TagsFromHeading(string heading)
-    {
-        return heading
-            .Split([' ', '-', '_', '/', '\\', '(', ')', '[', ']', '{', '}', '.', ',', ':', ';'],
-                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(t => t.Length >= 2)
-            .Select(t => t.ToLowerInvariant())
-            .Distinct()
-            .ToList();
-    }
-
-    private static List<string> ExtractTagsFromFileName(string fileName)
-    {
-        var name = Path.GetFileNameWithoutExtension(fileName);
-        return name.Split(['-', '_', ' '], StringSplitOptions.RemoveEmptyEntries)
-            .Select(t => t.ToLowerInvariant())
-            .Where(t => t.Length >= 2)
-            .ToList();
-    }
-
-    private static string ParseEditorConfig(string content)
-    {
-        var lines = content.Split('\n')
-            .Select(l => l.Trim())
-            .Where(l => !l.StartsWith('#') && !l.StartsWith(';') && l.Contains('='))
-            .Take(20);
-        return $"EditorConfig settings:\n{string.Join("\n", lines)}";
-    }
-
-    private static string ComputeContentHash(string content)
-    {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(content));
-        return Convert.ToHexString(bytes)[..12].ToLowerInvariant();
-    }
-
-    private static async Task<List<MemoryLink>> DetectDependencies(string projectPath, CancellationToken ct)
-    {
-        var links = new List<MemoryLink>();
-
-        // NuGet (.csproj)
-        foreach (var csproj in Directory.GetFiles(projectPath, "*.csproj", SearchOption.AllDirectories))
-        {
-            var content = await File.ReadAllTextAsync(csproj, ct);
-            foreach (Match m in PackageReferenceRegex().Matches(content))
+            if (candidate.Content.Length < MarkdownIntake.MinSectionLength)
             {
-                links.Add(new MemoryLink
+                Skip(item, "too short");
+                return;
+            }
+
+            var hash = ComputeContentHash(candidate.Content);
+            var id = $"memories/{_ctx.RepoId}/{candidate.Type.ToString().ToLowerInvariant()}/{hash}";
+            var existing = await _store.GetAsync(id, ct);
+            if (existing != null)
+            {
+                Skip(item, "duplicate");
+                return;
+            }
+
+            if (!_ctx.DryRun)
+            {
+                var now = DateTime.UtcNow;
+                var entry = new MemoryEntry
                 {
-                    TargetRepoId = $"nuget:{m.Groups[1].Value}",
-                    Relation = "depends-on",
-                });
+                    Id = id,
+                    RepoId = _ctx.RepoId,
+                    Type = candidate.Type,
+                    Content = candidate.Content,
+                    Tags = item.Tags,
+                    Importance = candidate.Importance,
+                    Source = "intake",
+                    Provenance = MemoryProvenance.Intake,
+                    Confidence = 0.7f,
+                    CreatedAt = now,
+                    Validity = new Validity { ValidFrom = now },
+                    Entities = EntityExtractor.Extract(candidate.Content),
+                    OneLiner = EntityExtractor.GenerateHeuristicOneLiner(candidate.Content),
+                };
+                await _store.StoreAsync(entry, ct);
             }
+
+            _result.Items.Add(item);
+            _result.NewCount++;
         }
 
-        // npm (package.json)
-        var packageJson = Path.Combine(projectPath, "package.json");
-        if (File.Exists(packageJson))
+        public void AddLink(MemoryLink link) => _result.DetectedLinks.Add(link);
+
+        public void AddProducedPackage(string packageId) => _result.ProducedPackages.Add(packageId);
+
+        public void RecordSkipped(string source, string reason)
         {
-            try
-            {
-                var json = await File.ReadAllTextAsync(packageJson, ct);
-                using var doc = JsonDocument.Parse(json);
-                ExtractNpmDeps(doc.RootElement, "dependencies", links);
-                ExtractNpmDeps(doc.RootElement, "devDependencies", links);
-            }
-            catch { }
+            var item = new IntakeItem { Source = source, Type = MemoryType.Observation, Content = "" };
+            Skip(item, reason);
         }
 
-        return links;
-    }
-
-    private static void ExtractNpmDeps(JsonElement root, string section, List<MemoryLink> links)
-    {
-        if (!root.TryGetProperty(section, out var deps) || deps.ValueKind != JsonValueKind.Object) return;
-        foreach (var prop in deps.EnumerateObject())
+        private void Skip(IntakeItem item, string reason)
         {
-            links.Add(new MemoryLink
-            {
-                TargetRepoId = $"npm:{prop.Name}",
-                Relation = "depends-on",
-            });
+            item.WasSkipped = true;
+            item.SkipReason = reason;
+            _result.Items.Add(item);
+            _result.SkippedCount++;
+        }
+
+        private static string ComputeContentHash(string content)
+        {
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(content));
+            return Convert.ToHexString(bytes)[..12].ToLowerInvariant();
         }
     }
-
-    private static List<string> DetectProducedPackages(string projectPath)
-    {
-        var packages = new List<string>();
-        foreach (var csproj in Directory.GetFiles(projectPath, "*.csproj", SearchOption.AllDirectories))
-        {
-            var content = File.ReadAllText(csproj);
-            var idMatch = PackageIdRegex().Match(content);
-            if (idMatch.Success) packages.Add(idMatch.Groups[1].Value);
-        }
-        return packages;
-    }
-
-    [GeneratedRegex(@"^#{1,3}\s+(.+)", RegexOptions.Multiline)]
-    private static partial Regex HeadingRegex();
-
-    [GeneratedRegex(@"<PackageReference\s+Include=""([^""]+)""", RegexOptions.IgnoreCase)]
-    private static partial Regex PackageReferenceRegex();
-
-    [GeneratedRegex(@"<PackageId>([^<]+)</PackageId>")]
-    private static partial Regex PackageIdRegex();
 }
 
 public class IntakeResult

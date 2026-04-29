@@ -1,13 +1,13 @@
-using Eidet.Core.Services;
+using Eidet.Core.Intake;
 
-namespace Eidet.Core.Tests.Services;
+namespace Eidet.Core.Tests.Intake;
 
-public class IntakeServiceTests
+public class MarkdownIntakeTests
 {
     [Fact]
     public void SplitByHeadings_SingleSection_ReturnsSingle()
     {
-        var result = IntakeService.SplitByHeadings("## Title\nSome content here that is long enough to pass the minimum length check.");
+        var result = MarkdownIntake.SplitByHeadings("## Title\nSome content here that is long enough to pass the minimum length check.");
         Assert.Single(result);
         Assert.Contains("Title", result[0].Content);
     }
@@ -23,7 +23,7 @@ public class IntakeServiceTests
                  Content for section two is here and it's long enough.
                  """;
 
-        var result = IntakeService.SplitByHeadings(md);
+        var result = MarkdownIntake.SplitByHeadings(md);
         Assert.Equal(2, result.Count);
         Assert.Contains("section", result[0].Tags, StringComparer.OrdinalIgnoreCase);
         Assert.Contains("one", result[0].Tags, StringComparer.OrdinalIgnoreCase);
@@ -32,7 +32,7 @@ public class IntakeServiceTests
     [Fact]
     public void SplitByHeadings_NoHeadings_ReturnsWholeContent()
     {
-        var result = IntakeService.SplitByHeadings("Just a paragraph of text without any markdown headings.");
+        var result = MarkdownIntake.SplitByHeadings("Just a paragraph of text without any markdown headings.");
         Assert.Single(result);
         Assert.Empty(result[0].Tags);
     }
@@ -48,7 +48,7 @@ public class IntakeServiceTests
                  This section has enough content to pass the minimum length threshold.
                  """;
 
-        var result = IntakeService.SplitByHeadings(md);
+        var result = MarkdownIntake.SplitByHeadings(md);
         Assert.Single(result);
         Assert.Contains("Real", result[0].Content);
     }
@@ -64,21 +64,21 @@ public class IntakeServiceTests
                  Sub heading content that is also long enough to be kept.
                  """;
 
-        var result = IntakeService.SplitByHeadings(md);
+        var result = MarkdownIntake.SplitByHeadings(md);
         Assert.Equal(2, result.Count);
     }
 
     [Fact]
     public void SplitByHeadings_Empty_ReturnsEmpty()
     {
-        var result = IntakeService.SplitByHeadings("");
+        var result = MarkdownIntake.SplitByHeadings("");
         Assert.Empty(result);
     }
 
     [Fact]
     public void SplitByHeadings_WhitespaceOnly_ReturnsEmpty()
     {
-        var result = IntakeService.SplitByHeadings("   \n\n  ");
+        var result = MarkdownIntake.SplitByHeadings("   \n\n  ");
         Assert.Empty(result);
     }
 
@@ -86,10 +86,21 @@ public class IntakeServiceTests
     public void SplitByHeadings_TagsExtractedFromHeading()
     {
         var md = "## RavenDB Configuration\nDetailed configuration steps for the RavenDB database connection.";
-        var result = IntakeService.SplitByHeadings(md);
+        var result = MarkdownIntake.SplitByHeadings(md);
 
         Assert.Single(result);
         Assert.Contains("ravendb", result[0].Tags, StringComparer.OrdinalIgnoreCase);
         Assert.Contains("configuration", result[0].Tags, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TagsFromFileName_StripsExtension_LowerCased()
+    {
+        var tags = MarkdownIntake.TagsFromFileName("ravendb_config-notes.md");
+
+        Assert.Contains("ravendb", tags);
+        Assert.Contains("config", tags);
+        Assert.Contains("notes", tags);
+        Assert.DoesNotContain("md", tags);
     }
 }
