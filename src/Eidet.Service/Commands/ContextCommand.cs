@@ -35,8 +35,9 @@ public sealed class ContextCommand : AsyncCommand<ContextCommand.Settings>
         {
             var normalizedRepoId = Eidet.Core.Domain.RepoIdNormalizer.Normalize(repoId);
             var contextText = await memorySvc.GetContextAsync(normalizedRepoId, maxTokens, cancellation);
-            var layers = await layerSvc.GetApplicableLayersAsync(normalizedRepoId, ct: cancellation);
-            var scope = await layerSvc.ResolveScopeAsync(normalizedRepoId, crossRepo: true, ct: cancellation);
+            var resolved = await layerSvc.ResolveScopeAsync(normalizedRepoId, crossRepo: true, ct: cancellation);
+            var layers = resolved.MountedLayers;
+            var scope = resolved.RepoIds;
 
             if (settings.Json)
             {

@@ -1,19 +1,27 @@
 using System.Text.Json.Nodes;
 using Eidet.Core.Domain;
+using Eidet.Core.Layers;
 using Eidet.Core.Services;
 using Eidet.Service.Mcp;
 
 namespace Eidet.Service.Tools.Handlers;
 
 /// <summary>
-/// Hybrid recall through <see cref="MemoryService.RecallAsync"/>. Returns the scored result list
-/// as the structured payload and a one-line-per-hit summary for MCP.
+/// Hybrid recall through <see cref="MemoryService.RecallAsync(LayerScope, MemoryQuery, CancellationToken)"/>.
+/// Resolves <see cref="LayerScope"/> once at the boundary so the read pipeline never has to
+/// branch on whether layers are mounted. Returns the scored result list as the structured
+/// payload and a one-line-per-hit summary for MCP.
 /// </summary>
 public sealed class RecallToolHandler : IToolHandler
 {
     private readonly MemoryService _svc;
+    private readonly LayerService? _layers;
 
-    public RecallToolHandler(MemoryService svc) => _svc = svc;
+    public RecallToolHandler(MemoryService svc, LayerService? layers = null)
+    {
+        _svc = svc;
+        _layers = layers;
+    }
 
     public string Name => "eidet_recall";
     public string UsageOp => "Recall";
@@ -39,7 +47,11 @@ public sealed class RecallToolHandler : IToolHandler
             CrossRepo = ToolArgs.GetBool(args, "cross_repo", defaultValue: true),
         };
 
-        var results = await _svc.RecallAsync(request.RepoId, query, request.Ct);
+        var normalizedRepoId = RepoIdNormalizer.Normalize(request.RepoId);
+        var scope = _layers != null && query.CrossRepo
+            ? await _layers.ResolveScopeAsync(normalizedRepoId, query.CrossRepo, request.Ct)
+            : LayerScope.Local(normalizedRepoId);
+        var results = await _svc.RecallAsync(scope, query, request.Ct);
 
         if (results.Count == 0)
             return ToolResult.Ok(

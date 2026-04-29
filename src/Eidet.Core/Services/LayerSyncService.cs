@@ -1,33 +1,38 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Eidet.Core.Domain;
+using Eidet.Core.Layers;
 using Eidet.Core.Storage;
 
 namespace Eidet.Core.Services;
 
 /// <summary>
-/// Synchronizes a .eidet pack file with a mounted layer.
+/// Synchronises a pack with a mounted layer.
 /// Diffs pack entries against stored layer entries, then adds/updates/removes as needed.
 /// Designed for the git-repo-as-layer workflow where packs are versioned externally.
 /// </summary>
+/// <remarks>
+/// Pack loading is delegated to an <see cref="ILayerSource"/> resolved by
+/// <see cref="LayerSourceRef.Scheme"/>; the default registry maps <c>file</c> to
+/// <see cref="FilesystemLayerSource"/>. Plug a new transport in by registering an
+/// extra source with the constructor.
+/// </remarks>
 public class LayerSyncService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        WriteIndented = true,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
-    };
-
     private readonly IEidetStore _store;
     private readonly LayerService _layers;
+    private readonly Dictionary<string, ILayerSource> _sources;
 
-    public LayerSyncService(IEidetStore store, LayerService layers)
+    public LayerSyncService(IEidetStore store, LayerService layers, IEnumerable<ILayerSource>? sources = null)
     {
         _store = store;
         _layers = layers;
+        _sources = (sources ?? [new FilesystemLayerSource()])
+            .ToDictionary(s => s.Scheme, StringComparer.OrdinalIgnoreCase);
     }
+
+    private ILayerSource ResolveSource(LayerSourceRef r) =>
+        _sources.TryGetValue(r.Scheme, out var src)
+            ? src
+            : throw new InvalidOperationException($"No ILayerSource registered for scheme '{r.Scheme}'");
 
     // Prefer the canonical "pack:" layer ID for new mounts, but reuse a legacy
     // "bundle:" mount if one already exists (pre-Pack-rename imports).
@@ -38,23 +43,40 @@ public class LayerSyncService
     }
 
     /// <summary>
-    /// Load a pack from disk and preview what a sync would do, without applying changes.
+    /// Load a pack via the matching <see cref="ILayerSource"/> and preview what a sync would do.
     /// </summary>
-    public async Task<LayerSyncPreview> PreviewAsync(string packPath, string? layerId = null, CancellationToken ct = default)
+    public async Task<LayerSyncPreview> PreviewAsync(LayerSourceRef source, string? layerId = null, CancellationToken ct = default)
     {
-        var pack = await LoadPackAsync(packPath, ct);
+        var pack = await ResolveSource(source).LoadAsync(source, ct);
         layerId ??= await ResolveDefaultLayerIdAsync(pack.Id, ct);
         return await DiffAsync(pack, layerId, ct);
     }
 
     /// <summary>
-    /// Load a pack from disk and sync it into the layer, applying all changes.
+    /// Convenience wrapper for filesystem packs — equivalent to
+    /// <see cref="PreviewAsync(LayerSourceRef, string?, CancellationToken)"/> with
+    /// <see cref="LayerSourceRef.File"/>.
+    /// </summary>
+    public Task<LayerSyncPreview> PreviewAsync(string packPath, string? layerId = null, CancellationToken ct = default) =>
+        PreviewAsync(LayerSourceRef.File(packPath), layerId, ct);
+
+    /// <summary>
+    /// Convenience wrapper for filesystem packs — equivalent to
+    /// <see cref="SyncAsync(LayerSourceRef, string?, bool, CancellationToken)"/> with
+    /// <see cref="LayerSourceRef.File"/>.
+    /// </summary>
+    public Task<LayerSyncResult> SyncAsync(
+        string packPath, string? layerId = null, bool removeStale = true, CancellationToken ct = default) =>
+        SyncAsync(LayerSourceRef.File(packPath), layerId, removeStale, ct);
+
+    /// <summary>
+    /// Load a pack via the matching <see cref="ILayerSource"/> and sync it into the layer.
     /// Creates the layer if it doesn't exist. Updates version on completion.
     /// </summary>
     public async Task<LayerSyncResult> SyncAsync(
-        string packPath, string? layerId = null, bool removeStale = true, CancellationToken ct = default)
+        LayerSourceRef source, string? layerId = null, bool removeStale = true, CancellationToken ct = default)
     {
-        var pack = await LoadPackAsync(packPath, ct);
+        var pack = await ResolveSource(source).LoadAsync(source, ct);
         layerId ??= await ResolveDefaultLayerIdAsync(pack.Id, ct);
 
         var preview = await DiffAsync(pack, layerId, ct);
@@ -89,7 +111,7 @@ public class LayerSyncService
         {
             await _layers.MountAsync(layerId, pack.Name, LayerType.Base,
                 applicablePackages: pack.ApplicablePackages,
-                sourcePath: packPath,
+                sourcePath: source.Location,
                 version: pack.Version,
                 ct: ct);
         }
@@ -97,7 +119,7 @@ public class LayerSyncService
         {
             layer.Version = pack.Version;
             layer.LastSyncedAt = DateTime.UtcNow;
-            layer.SourcePath = packPath;
+            layer.SourcePath = source.Location;
             await _store.StoreMountedLayerAsync(layer, ct);
         }
 
@@ -203,16 +225,6 @@ public class LayerSyncService
     private static bool TagsEqual(List<string> a, List<string> b) =>
         a.Count == b.Count && a.OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
             .SequenceEqual(b.OrderBy(t => t, StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
-
-    private static async Task<EidetPack> LoadPackAsync(string path, CancellationToken ct)
-    {
-        if (!File.Exists(path))
-            throw new FileNotFoundException("Pack file not found", path);
-
-        var json = await File.ReadAllTextAsync(path, ct);
-        return JsonSerializer.Deserialize<EidetPack>(json, JsonOptions)
-            ?? throw new InvalidOperationException($"Failed to parse pack file: {path}");
-    }
 }
 
 // ─── Domain types for sync ──────────────────────────────────────────

@@ -1,5 +1,6 @@
 using System.Text;
 using Eidet.Core.Domain;
+using Eidet.Core.Layers;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 
@@ -15,7 +16,6 @@ namespace Eidet.Core.Memory;
 internal sealed class MemoryRecall
 {
     private readonly IEidetStore _store;
-    private readonly LayerService? _layers;
     private readonly IHookRunner _hooks;
     private readonly RecallCache _cache;
     private readonly RepoActivityTracker _activity;
@@ -23,42 +23,36 @@ internal sealed class MemoryRecall
 
     public MemoryRecall(
         IEidetStore store,
-        LayerService? layers,
         IHookRunner hooks,
         RecallCache cache,
         RepoActivityTracker activity,
         Func<int> stalenessWarningDays)
     {
         _store = store;
-        _layers = layers;
         _hooks = hooks;
         _cache = cache;
         _activity = activity;
         _stalenessWarningDays = stalenessWarningDays;
     }
 
-    public async Task<List<MemorySearchResult>> RecallAsync(string repoId, MemoryQuery query, CancellationToken ct)
+    public async Task<List<MemorySearchResult>> RecallAsync(LayerScope scope, MemoryQuery query, CancellationToken ct)
     {
-        var normalizedRepoId = RepoIdNormalizer.Normalize(repoId);
-        _activity.Track(normalizedRepoId);
+        _activity.Track(scope.PrimaryRepoId);
 
         var preHook = await _hooks.RunPreHooksAsync(HookEvent.PreRecall, new HookContext
         {
             Event = "pre-recall",
-            Repo = normalizedRepoId,
+            Repo = scope.PrimaryRepoId,
             Data = new { query = query.Text, limit = query.Limit, type = query.Type?.ToString().ToLowerInvariant(), tags = query.Tags },
         }, ct);
         if (!preHook.Allowed)
             return [];
 
-        var cacheKey = RecallCache.ComputeKey(normalizedRepoId, query);
+        var cacheKey = RecallCache.ComputeKey(scope.PrimaryRepoId, query);
         if (_cache.TryGet(cacheKey, out var cached))
             return cached;
 
-        var repoIds = _layers != null && query.CrossRepo
-            ? await _layers.ResolveScopeAsync(normalizedRepoId, query.CrossRepo, ct)
-            : new List<string> { normalizedRepoId };
-
+        var repoIds = scope.RepoIds.ToList();
         var textTask = _store.FullTextSearchAsync(repoIds, query, ct);
         var vectorTask = _store.VectorSearchAsync(repoIds, query, ct);
         await Task.WhenAll(textTask, vectorTask);
@@ -82,8 +76,8 @@ internal sealed class MemoryRecall
         var staleAfter = _stalenessWarningDays();
         foreach (var result in merged)
         {
-            if (!string.Equals(result.RepoId, normalizedRepoId, StringComparison.OrdinalIgnoreCase))
-                result.Score *= 0.8f;
+            if (!scope.IsLocalRepo(result.RepoId))
+                result.Score *= LayerScope.NonLocalDeBoost;
 
             result.AgeDays = (int)(now - result.CreatedAt).TotalDays;
             if (result.AgeDays >= staleAfter)
@@ -92,12 +86,12 @@ internal sealed class MemoryRecall
 
         var budgeted = RecallScoring.ApplyTypeBudgets(merged, query.Limit);
 
-        _ = BumpAccessCountsAsync(budgeted, normalizedRepoId, ct);
+        _ = BumpAccessCountsAsync(budgeted, scope.PrimaryRepoId, ct);
 
         _ = _hooks.RunPostHooksAsync(HookEvent.PostRecall, new HookContext
         {
             Event = "post-recall",
-            Repo = normalizedRepoId,
+            Repo = scope.PrimaryRepoId,
             Data = new { query = query.Text, resultCount = budgeted.Count },
         }, ct);
 

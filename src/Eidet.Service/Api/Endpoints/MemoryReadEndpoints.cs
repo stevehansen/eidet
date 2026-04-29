@@ -129,13 +129,13 @@ internal sealed class MemoryReadEndpoints
         var contextText = await _svc.GetContextAsync(repo, maxTokens, ct);
 
         List<object>? layerInfo = null;
-        List<string>? scope = null;
+        IReadOnlyList<string>? scope = null;
         if (_layers is not null)
         {
             var normalizedRepoId = RepoIdNormalizer.Normalize(repo);
-            var layers = await _layers.GetApplicableLayersAsync(normalizedRepoId, ct: ct);
-            layerInfo = layers.Select(l => (object)new { l.Id, l.Name, type = l.Type.ToString() }).ToList();
-            scope = await _layers.ResolveScopeAsync(normalizedRepoId, crossRepo: true, ct: ct);
+            var resolved = await _layers.ResolveScopeAsync(normalizedRepoId, crossRepo: true, ct: ct);
+            layerInfo = resolved.MountedLayers.Select(l => (object)new { l.Id, l.Name, type = l.Type.ToString() }).ToList();
+            scope = resolved.RepoIds;
         }
 
         await HttpJson.WriteAsync(ctx, new

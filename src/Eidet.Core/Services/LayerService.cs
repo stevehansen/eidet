@@ -1,4 +1,5 @@
 using Eidet.Core.Domain;
+using Eidet.Core.Layers;
 using Eidet.Core.Storage;
 
 namespace Eidet.Core.Services;
@@ -102,21 +103,19 @@ public class LayerService
     }
 
     /// <summary>
-    /// Resolve the full scope of repoIds for recall, including all mounted layers.
-    /// Returns the set of repoIds to search across.
+    /// Resolve a <see cref="LayerScope"/> snapshot — the value transports pass into
+    /// <see cref="MemoryService.RecallAsync(LayerScope, MemoryQuery, CancellationToken)"/>.
     /// </summary>
-    public async Task<List<string>> ResolveScopeAsync(
+    public async Task<LayerScope> ResolveScopeAsync(
         string repoId, bool crossRepo = true, CancellationToken ct = default)
     {
-        var repoIds = new List<string> { repoId };
-
-        if (!crossRepo) return repoIds;
+        if (!crossRepo)
+            return new LayerScope(repoId, [repoId], [], CrossRepo: false);
 
         var layers = await GetApplicableLayersAsync(repoId, ct: ct);
+        var repoIds = new List<string> { repoId };
         foreach (var layer in layers)
         {
-            // Each layer may have memories stored under different repoIds
-            // For base/shared layers, their memories use the layer's source repo
             foreach (var applicableRepo in layer.ApplicableRepos)
             {
                 if (!repoIds.Contains(applicableRepo, StringComparer.OrdinalIgnoreCase))
@@ -124,7 +123,7 @@ public class LayerService
             }
         }
 
-        return repoIds;
+        return new LayerScope(repoId, repoIds, layers, CrossRepo: true);
     }
 
     /// <summary>
@@ -160,15 +159,4 @@ public class LayerService
         return mounted;
     }
 
-    /// <summary>
-    /// Check if a result is from a non-local layer (should be de-boosted).
-    /// </summary>
-    public static bool IsNonLocal(MemoryEntry entry, string localRepoId) =>
-        !string.IsNullOrEmpty(entry.LayerId) ||
-        !string.Equals(entry.RepoId, localRepoId, StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// De-boost factor for non-local layer results (0.8× per spec).
-    /// </summary>
-    public const float NonLocalDeBoost = 0.8f;
 }

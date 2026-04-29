@@ -1,4 +1,5 @@
 using Eidet.Core.Domain;
+using Eidet.Core.Layers;
 using Eidet.Core.Memory;
 using Eidet.Core.Storage;
 
@@ -16,6 +17,7 @@ public class MemoryService
 {
     private readonly RecallCache _cache = new();
     private readonly RepoActivityTracker _activity = new();
+    private readonly LayerService? _layers;
     private readonly MemoryWriter _writer;
     private readonly MemoryRecall _recall;
     private readonly MemoryQueries _queries;
@@ -24,9 +26,10 @@ public class MemoryService
 
     public MemoryService(IEidetStore store, LayerService? layers = null, IHookRunner? hooks = null)
     {
+        _layers = layers;
         var hookRunner = hooks ?? NullHookRunner.Instance;
         _writer = new MemoryWriter(store, hookRunner, _cache, _activity);
-        _recall = new MemoryRecall(store, layers, hookRunner, _cache, _activity, () => StalenessWarningDays);
+        _recall = new MemoryRecall(store, hookRunner, _cache, _activity, () => StalenessWarningDays);
         _queries = new MemoryQueries(store);
     }
 
@@ -43,8 +46,26 @@ public class MemoryService
         CancellationToken ct = default) =>
         _writer.StoreAsync(repoId, content, type, tags, importance, source, sessionId, supersedes, provenance, ct);
 
-    public Task<List<MemorySearchResult>> RecallAsync(string repoId, MemoryQuery query, CancellationToken ct = default) =>
-        _recall.RecallAsync(repoId, query, ct);
+    /// <summary>
+    /// Layer-agnostic recall — caller has already resolved the scope. Preferred entry point
+    /// for transports (REST, MCP, CLI) which build the scope once at the boundary.
+    /// </summary>
+    public Task<List<MemorySearchResult>> RecallAsync(LayerScope scope, MemoryQuery query, CancellationToken ct = default) =>
+        _recall.RecallAsync(scope, query, ct);
+
+    /// <summary>
+    /// Convenience overload that resolves <see cref="LayerScope"/> internally via the
+    /// optional <see cref="LayerService"/> dependency. Used by SDK/CLI callers; transports
+    /// should prefer the <see cref="LayerScope"/> overload to avoid double-resolution.
+    /// </summary>
+    public async Task<List<MemorySearchResult>> RecallAsync(string repoId, MemoryQuery query, CancellationToken ct = default)
+    {
+        var normalized = RepoIdNormalizer.Normalize(repoId);
+        var scope = _layers != null && query.CrossRepo
+            ? await _layers.ResolveScopeAsync(normalized, query.CrossRepo, ct)
+            : LayerScope.Local(normalized);
+        return await _recall.RecallAsync(scope, query, ct);
+    }
 
     public Task<string> GetContextAsync(string repoId, int maxTokens = 600, CancellationToken ct = default) =>
         _recall.GetContextAsync(repoId, maxTokens, ct);

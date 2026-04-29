@@ -22,7 +22,7 @@ internal static class ToolDispatcherFactory
         UsageTracker? usage = null) =>
         new([
             new StoreToolHandler(svc),
-            new RecallToolHandler(svc),
+            new RecallToolHandler(svc, layers),
             new ForgetToolHandler(svc),
             new FeedbackToolHandler(svc),
             new HistoryToolHandler(svc),
