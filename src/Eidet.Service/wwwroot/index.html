@@ -21,6 +21,9 @@
         <a href="#dashboard" class="nav-link active" data-page="dashboard">
           <span class="icon">&#9632;</span> Dashboard
         </a>
+        <a href="#portal" class="nav-link" data-page="portal">
+          <span class="icon">&#9788;</span> Portal
+        </a>
         <a href="#browser" class="nav-link" data-page="browser">
           <span class="icon">&#128269;</span> Browser
         </a>
@@ -63,6 +66,25 @@
             <div id="recentMemories" class="memory-list"></div>
           </div>
         </div>
+      </section>
+
+      <!-- Portal -->
+      <section id="page-portal" class="page">
+        <div class="portal-header">
+          <h2>Portal</h2>
+          <div class="portal-controls">
+            <label class="portal-toggle">
+              <input type="checkbox" id="portalProvenanceToggle"> Show provenance
+            </label>
+          </div>
+        </div>
+        <div class="portal-layout">
+          <aside class="portal-toc" id="portalToc"></aside>
+          <article class="portal-body" id="portalBody">
+            <div class="loading">Loading...</div>
+          </article>
+        </div>
+        <div class="portal-tooltip" id="portalTooltip" hidden></div>
       </section>
 
       <!-- Browser -->

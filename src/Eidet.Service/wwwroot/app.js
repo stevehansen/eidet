@@ -18,6 +18,7 @@
     setupNavigation();
     setupEventListeners();
     setupCurationListeners();
+    setupPortalControls();
     await loadServiceInfo();
     await loadRepos();
     checkEnrichmentAvailable();
@@ -31,23 +32,39 @@
   }
 
   function navigateToHash() {
-    var hash = location.hash.slice(1) || 'dashboard';
-    showPage(hash);
+    var raw = location.hash.slice(1) || 'dashboard';
+    // Slash-split routing: portal/<repo> and memory/<id>; everything else is a flat page name.
+    var slash = raw.indexOf('/');
+    if (slash > 0) {
+      var head = raw.slice(0, slash);
+      var tail = raw.slice(slash + 1);
+      if (head === 'portal') { showPage('portal', decodeURIComponent(tail)); return; }
+      if (head === 'memory') { showPage('memory', decodeURIComponent(tail)); return; }
+    }
+    showPage(raw);
   }
 
-  function showPage(name) {
+  function showPage(name, arg) {
+    // Map sub-routes onto their host page id.
+    var pageId = name === 'memory' ? 'browser' : name;
+    var navKey = name === 'memory' ? 'browser' : name;
+
     document.querySelectorAll('.page').forEach(function (p) { p.classList.remove('active'); });
     document.querySelectorAll('.nav-link').forEach(function (l) { l.classList.remove('active'); });
-    var page = document.getElementById('page-' + name);
-    var link = document.querySelector('[data-page="' + name + '"]');
+    var page = document.getElementById('page-' + pageId);
+    var link = document.querySelector('[data-page="' + navKey + '"]');
     if (page) page.classList.add('active');
     if (link) link.classList.add('active');
-    if (name === 'dashboard') loadDashboard();
-    else if (name === 'browser') loadBrowser();
-    else if (name === 'graph') loadGraph();
-    else if (name === 'timeline') loadTimeline();
-    else if (name === 'usage') loadUsage();
-    else if (name === 'settings') loadSettings();
+    if (pageId === 'dashboard') loadDashboard();
+    else if (pageId === 'browser') {
+      loadBrowser();
+      if (name === 'memory' && arg) showDetail(arg);
+    }
+    else if (pageId === 'portal') loadPortal();
+    else if (pageId === 'graph') loadGraph();
+    else if (pageId === 'timeline') loadTimeline();
+    else if (pageId === 'usage') loadUsage();
+    else if (pageId === 'settings') loadSettings();
   }
 
   // ─── Event listeners ────────────────────────────────────────────
@@ -1437,6 +1454,112 @@
       var now = new Date();
       return Math.floor((now - d) / (1000 * 60 * 60 * 24));
     } catch (_) { return 0; }
+  }
+
+  // ─── Portal ──────────────────────────────────────────────────────
+
+  var portalTooltipCache = {};
+
+  async function loadPortal() {
+    if (!currentRepo) return;
+    var body = document.getElementById('portalBody');
+    var toc = document.getElementById('portalToc');
+    body.innerHTML = '<div class="loading">Loading...</div>';
+    toc.innerHTML = '';
+
+    try {
+      var doc = await api('/api/eidet/portal?repo=' + encRepo());
+      renderPortal(doc);
+      applyProvenanceState();
+    } catch (e) {
+      body.innerHTML = '<div class="detail-placeholder">Could not load Portal: ' + escHtml(e.message || '') + '</div>';
+    }
+  }
+
+  function renderPortal(doc) {
+    var body = document.getElementById('portalBody');
+    var toc = document.getElementById('portalToc');
+
+    var bodyHtml = '';
+    var tocHtml = '<h4>On this page</h4><ul>';
+    doc.sections.forEach(function (s) {
+      tocHtml += '<li><a href="#portal/' + encodeURIComponent(currentRepo) + '" data-portal-anchor="' +
+        escHtml(s.id) + '">' + escHtml(s.title) + '</a></li>';
+      bodyHtml += '<section class="portal-section" id="portal-section-' + escHtml(s.id) + '">';
+      bodyHtml += '<h3>' + escHtml(s.title) + '</h3>';
+      bodyHtml += s.html; // server-rendered, server-escaped
+      bodyHtml += '</section>';
+    });
+    tocHtml += '</ul>';
+    body.innerHTML = bodyHtml;
+    toc.innerHTML = tocHtml;
+
+    // TOC scroll-to behaviour without leaving the route.
+    toc.querySelectorAll('[data-portal-anchor]').forEach(function (a) {
+      a.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        var target = document.getElementById('portal-section-' + this.dataset.portalAnchor);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+
+    // Citation hover tooltips fetched fresh per spec.
+    body.querySelectorAll('a.portal-cite').forEach(function (a) {
+      a.addEventListener('mouseenter', function () { showPortalTooltip(a); });
+      a.addEventListener('mouseleave', hidePortalTooltip);
+      a.addEventListener('focus', function () { showPortalTooltip(a); });
+      a.addEventListener('blur', hidePortalTooltip);
+    });
+  }
+
+  async function showPortalTooltip(anchor) {
+    var id = anchor.dataset.mid;
+    if (!id) return;
+    var tip = document.getElementById('portalTooltip');
+    if (!tip) return;
+    var rect = anchor.getBoundingClientRect();
+    tip.style.left = (window.scrollX + rect.left) + 'px';
+    tip.style.top = (window.scrollY + rect.bottom + 4) + 'px';
+    tip.hidden = false;
+    tip.innerHTML = '<div class="loading">Loading...</div>';
+
+    try {
+      var entry = portalTooltipCache[id];
+      if (!entry) {
+        entry = await api('/api/eidet/' + encodeURIComponent(id));
+        portalTooltipCache[id] = entry;
+      }
+      tip.innerHTML =
+        '<div class="tip-type ' + escHtml(entry.type || '') + '">' + escHtml(entry.type || '') + '</div>' +
+        '<div class="tip-line">' + escHtml(entry.oneLiner || entry.summary || entry.content || '') + '</div>' +
+        '<div class="tip-meta">importance ' + (entry.importance || 0).toFixed(2) +
+        ' · created ' + escHtml((entry.createdAt || '').split('T')[0]) + '</div>';
+    } catch (_) {
+      tip.innerHTML = '<div class="tip-meta">Memory not available</div>';
+    }
+  }
+
+  function hidePortalTooltip() {
+    var tip = document.getElementById('portalTooltip');
+    if (tip) tip.hidden = true;
+  }
+
+  function applyProvenanceState() {
+    var stored = localStorage.getItem('eidet.portal.provenance');
+    var on = stored === '1';
+    var cb = document.getElementById('portalProvenanceToggle');
+    if (cb) cb.checked = on;
+    document.getElementById('page-portal').classList.toggle('show-provenance', on);
+  }
+
+  function setupPortalControls() {
+    var cb = document.getElementById('portalProvenanceToggle');
+    if (!cb) return;
+    cb.addEventListener('change', function () {
+      var on = this.checked;
+      localStorage.setItem('eidet.portal.provenance', on ? '1' : '0');
+      document.getElementById('page-portal').classList.toggle('show-provenance', on);
+    });
   }
 
   // ─── Timeline ────────────────────────────────────────────────────

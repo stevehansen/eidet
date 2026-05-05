@@ -29,6 +29,7 @@ public class EidetApiServer
     private readonly ScheduledTasksEndpoint _scheduledTasksEndpoint;
     private readonly UsageEndpoints _usageEndpoints;
     private readonly EnrichEndpoint _enrichEndpoint;
+    private readonly PortalEndpoint _portal;
     private readonly MetaEndpoints _meta;
     private readonly McpEndpoint _mcp;
 
@@ -53,6 +54,7 @@ public class EidetApiServer
         _scheduledTasksEndpoint = new ScheduledTasksEndpoint(options.ScheduledTasks);
         _usageEndpoints = new UsageEndpoints(options.Usage);
         _enrichEndpoint = new EnrichEndpoint(options.Enrichment);
+        _portal = new PortalEndpoint(svc, options.Usage);
         _meta = new MetaEndpoints(svc, options.Enrichment, options.Config, _baseUrl, _startedAt);
         _mcp = new McpEndpoint(options.Mcp, svc, intake, options.Consolidation, options.Maintenance);
 
@@ -163,6 +165,7 @@ public class EidetApiServer
         r.MapGet("/api/eidet/repos", (ctx, _, ct) => _memoryRead.GetRepos(ctx, ct));
         r.MapGet("/api/eidet/browse", (ctx, _, ct) => _memoryRead.Browse(ctx, ct));
         r.MapGet("/api/eidet/graph", (ctx, _, ct) => _memoryRead.Graph(ctx, ct));
+        r.MapGet("/api/eidet/portal", (ctx, _, ct) => _portal.Get(ctx, ct));
 
         // Catch-all GET memory by id (last GET under /api/eidet/)
         r.MapPrefix("GET", "/api/eidet/", _memoryRead.GetMemory);
