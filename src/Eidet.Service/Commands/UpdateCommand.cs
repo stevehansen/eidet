@@ -316,17 +316,17 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
 
         try
         {
-            // Find processes by name. The dotnet tool shim creates processes named "eidet"
-            // but the actual runtime process may also appear as "dotnet" running eidet.dll.
-            // We handle both: eidet.exe shim processes and the serve/mcp lock file.
-            foreach (var proc in Process.GetProcessesByName("eidet"))
-            {
-                if (proc.Id == currentPid)
-                    continue;
+            // The dotnet tool shim creates processes named "eidet"; the actual runtime
+            // process may also appear as "dotnet" running eidet.dll. We handle the eidet.exe
+            // shim here and the serve/mcp lock file separately.
+            var all = Process.GetProcessesByName("eidet");
+            var killable = SelectProcessesToKill(all.Select(p => p.Id), currentPid).ToHashSet();
 
+            foreach (var proc in all)
+            {
                 try
                 {
-                    if (!proc.HasExited)
+                    if (killable.Contains(proc.Id) && !proc.HasExited)
                     {
                         proc.Kill(entireProcessTree: true);
                         proc.WaitForExit(5000);
@@ -347,6 +347,14 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
 
         return killed;
     }
+
+    /// <summary>
+    /// Pure filter: from a set of candidate PIDs, return the ones we'd kill —
+    /// everything except the caller's own PID. Extracted so the selection logic
+    /// can be unit-tested without touching real OS processes.
+    /// </summary>
+    internal static IEnumerable<int> SelectProcessesToKill(IEnumerable<int> candidatePids, int currentPid)
+        => candidatePids.Where(pid => pid != currentPid);
 
     /// <summary>
     /// Check whether a Windows scheduled task named "Eidet" is registered.

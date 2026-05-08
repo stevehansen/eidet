@@ -152,11 +152,32 @@ public class UpdateCommandTests
     }
 
     [Fact]
-    public void KillOtherEidetProcesses_DoesNotKillSelf()
+    public void SelectProcessesToKill_ExcludesCurrentPid()
     {
-        // This should not throw and should not kill the test runner
-        var killed = UpdateCommand.KillOtherEidetProcesses();
-        // We can't assert the exact count, but the test process should survive
-        Assert.True(true);
+        var pids = new[] { 100, 200, 300, 999 };
+        var result = UpdateCommand.SelectProcessesToKill(pids, currentPid: 200).ToArray();
+        Assert.Equal(new[] { 100, 300, 999 }, result);
+    }
+
+    [Fact]
+    public void SelectProcessesToKill_OnlyCurrent_ReturnsEmpty()
+    {
+        var result = UpdateCommand.SelectProcessesToKill(new[] { 42 }, currentPid: 42);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void SelectProcessesToKill_NoCandidates_ReturnsEmpty()
+    {
+        var result = UpdateCommand.SelectProcessesToKill([], currentPid: 42);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void SelectProcessesToKill_CurrentNotPresent_ReturnsAll()
+    {
+        var pids = new[] { 1, 2, 3 };
+        var result = UpdateCommand.SelectProcessesToKill(pids, currentPid: 999).ToArray();
+        Assert.Equal(pids, result);
     }
 }
