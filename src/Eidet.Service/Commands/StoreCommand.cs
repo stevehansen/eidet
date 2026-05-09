@@ -50,8 +50,12 @@ public sealed class StoreCommand : AsyncCommand<StoreCommand.Settings>
 
         try
         {
-            var result = await svc.StoreAsync(repoId, settings.Content, type,
-                tags: tags, importance: settings.Importance ?? 0.5f, source: "user", ct: cancellation);
+            var result = await svc.StoreAsync(new StoreOptions(repoId, settings.Content, type)
+            {
+                Tags = tags,
+                Importance = settings.Importance ?? 0.5f,
+                Source = "user",
+            }, cancellation);
 
             if (settings.Json)
             {

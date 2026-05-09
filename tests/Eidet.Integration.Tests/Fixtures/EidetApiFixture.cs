@@ -39,17 +39,17 @@ public class EidetApiFixture : IAsyncLifetime
             var eidetStore = new RavenEidetStore(_store);
             var layerSvc = new LayerService(eidetStore);
             var memorySvc = new MemoryService(eidetStore, layerSvc);
-            var intakeSvc = new IntakeService(eidetStore);
-            var consolidationEngine = new ConsolidationEngine(eidetStore);
+            var intakeSvc = new IntakeService(eidetStore, memory: memorySvc);
+            var consolidationEngine = new ConsolidationEngine(eidetStore, memory: memorySvc);
             IMaintenanceRunner maintenanceRunner = new MaintenanceRunner(
                 new MaintenanceOrchestrator(eidetStore, consolidation: consolidationEngine));
-            var exportSvc = new ExportService(eidetStore);
+            var exportSvc = new ExportService(eidetStore, memory: memorySvc);
             var qualitySvc = new QualityService(eidetStore);
 
             var port = GetFreePort();
             BaseUrl = $"http://127.0.0.1:{port}";
 
-            var layerSyncSvc = new LayerSyncService(eidetStore, layerSvc);
+            var layerSyncSvc = new LayerSyncService(eidetStore, layerSvc, memory: memorySvc);
 
             var server = new EidetApiServer(new EidetApiServerOptions
             {

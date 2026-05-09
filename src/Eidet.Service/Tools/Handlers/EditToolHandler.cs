@@ -42,16 +42,17 @@ public sealed class EditToolHandler : IToolHandler
         var typeStr = ToolArgs.GetString(args, "type");
         MemoryType? type = typeStr != null && Enum.TryParse<MemoryType>(typeStr, true, out var t) ? t : null;
 
-        var ok = await _svc.UpdateMemoryAsync(id,
-            content: content,
-            tags: tags.Count > 0 ? tags : null,
-            importance: importance,
-            confidence: confidence,
-            type: type,
-            oneLiner: oneLiner,
-            summary: summary,
-            foresightHint: foresightHint,
-            ct: request.Ct);
+        var ok = await _svc.EditAsync(id, new EditOptions
+        {
+            Content = content,
+            Tags = tags.Count > 0 ? tags : null,
+            Importance = importance,
+            Confidence = confidence,
+            Type = type,
+            OneLiner = oneLiner,
+            Summary = summary,
+            ForesightHint = foresightHint,
+        }, request.Ct);
 
         if (!ok)
             return ToolResult.NotFound($"Memory not found or update rejected: {id}");

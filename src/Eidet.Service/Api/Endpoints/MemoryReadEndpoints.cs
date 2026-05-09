@@ -106,13 +106,11 @@ internal sealed class MemoryReadEndpoints
             return;
         }
 
-        var query = new MemoryQuery
+        var results = await _svc.RecallAsync(repo, new RecallOptions("cross-repo link")
         {
-            Text = "cross-repo link",
             Tags = ["cross-repo-link"],
             Limit = 50,
-        };
-        var results = await _svc.RecallAsync(repo, query, ct);
+        }, ct);
         await HttpJson.WriteAsync(ctx, new { repo, links = results });
     }
 

@@ -19,12 +19,16 @@ public class LayerSyncService
 {
     private readonly IEidetStore _store;
     private readonly LayerService _layers;
+    private readonly MemoryService? _memory;
     private readonly Dictionary<string, ILayerSource> _sources;
 
-    public LayerSyncService(IEidetStore store, LayerService layers, IEnumerable<ILayerSource>? sources = null)
+    public LayerSyncService(
+        IEidetStore store, LayerService layers,
+        IEnumerable<ILayerSource>? sources = null, MemoryService? memory = null)
     {
         _store = store;
         _layers = layers;
+        _memory = memory;
         _sources = (sources ?? [new FilesystemLayerSource()])
             .ToDictionary(s => s.Scheme, StringComparer.OrdinalIgnoreCase);
     }
@@ -81,6 +85,7 @@ public class LayerSyncService
 
         var preview = await DiffAsync(pack, layerId, ct);
         var packEntryMap = pack.Entries.ToDictionary(e => e.Id, StringComparer.OrdinalIgnoreCase);
+        var touchedScopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Apply additions
         foreach (var entry in preview.Entries.Where(e => e.Action == SyncAction.Add))
@@ -88,6 +93,7 @@ public class LayerSyncService
             var packEntry = packEntryMap[entry.Id];
             packEntry.LayerId = layerId;
             await _store.StoreAsync(packEntry, ct);
+            touchedScopes.Add(packEntry.RepoId);
         }
 
         // Apply updates (overwrite stored entry with pack version)
@@ -96,14 +102,26 @@ public class LayerSyncService
             var packEntry = packEntryMap[entry.Id];
             packEntry.LayerId = layerId;
             await _store.UpdateAsync(packEntry, ct);
+            touchedScopes.Add(packEntry.RepoId);
         }
 
         // Apply removals
         if (removeStale)
         {
             foreach (var entry in preview.Entries.Where(e => e.Action == SyncAction.Remove))
+            {
                 await _store.HardDeleteAsync(entry.Id, ct);
+                // The entry's RepoId is captured by its layer membership; invalidating the
+                // layerId-as-scope is sufficient because recall scopes that include this layer
+                // resolve via LayerService and will track the layer's bumped generation.
+                touchedScopes.Add(layerId);
+            }
         }
+
+        // PHASE-2: migrate onto MemoryService gate — see #10. Layer sync touches many entries
+        // across potentially many repos; one invalidation per affected scope keeps the recall
+        // cache coherent without firing per-entry hooks.
+        _memory?.InvalidateRecallCache(touchedScopes);
 
         // Ensure layer is mounted, update its version
         var layer = await _store.GetLayerAsync(layerId, ct);

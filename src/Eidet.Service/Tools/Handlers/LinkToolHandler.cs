@@ -44,9 +44,12 @@ public sealed class LinkToolHandler : IToolHandler
             ? new List<string> { "memory-link", relation }
             : new List<string> { "cross-repo-link", relation };
 
-        var result = await _svc.StoreAsync(
-            sourceRepoId, content, MemoryType.Insight,
-            tags: tags, importance: 0.7f, source: source, ct: request.Ct);
+        var result = await _svc.StoreAsync(new StoreOptions(sourceRepoId, content, MemoryType.Insight)
+        {
+            Tags = tags,
+            Importance = 0.7f,
+            Source = source,
+        }, request.Ct);
 
         if (!result.Success)
             return ToolResult.Rejected(result.Reason!);

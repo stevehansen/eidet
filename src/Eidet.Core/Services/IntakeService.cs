@@ -21,21 +21,23 @@ namespace Eidet.Core.Services;
 public class IntakeService
 {
     private readonly IEidetStore _store;
+    private readonly MemoryService? _memory;
     private readonly IReadOnlyList<IIntakeExtractor> _extractors;
 
     /// <summary>
     /// Constructs a service with the default extractor list. Tests and SDK consumers
-    /// that want a custom registry should use the <see cref="IntakeService(IEidetStore, IEnumerable{IIntakeExtractor})"/>
+    /// that want a custom registry should use the <see cref="IntakeService(IEidetStore, IEnumerable{IIntakeExtractor}, MemoryService?)"/>
     /// overload.
     /// </summary>
-    public IntakeService(IEidetStore store)
-        : this(store, DefaultExtractors())
+    public IntakeService(IEidetStore store, MemoryService? memory = null)
+        : this(store, DefaultExtractors(), memory)
     {
     }
 
-    public IntakeService(IEidetStore store, IEnumerable<IIntakeExtractor> extractors)
+    public IntakeService(IEidetStore store, IEnumerable<IIntakeExtractor> extractors, MemoryService? memory = null)
     {
         _store = store;
+        _memory = memory;
         _extractors = extractors.ToList();
     }
 
@@ -94,7 +96,12 @@ public class IntakeService
             if (!extractor.AppliesTo(ctx)) continue;
             await extractor.ExtractAsync(ctx, sink, ct);
         }
-        return sink.Build();
+        var result = sink.Build();
+        // PHASE-2: migrate onto MemoryService gate — see #10. Bulk intake bypasses MutationCtx,
+        // so we invalidate the affected repo's recall cache once after all extractors run.
+        if (!ctx.DryRun && result.NewCount > 0)
+            _memory?.InvalidateRecallCache(ctx.RepoId);
+        return result;
     }
 
     private sealed class OrchestratorSink : IIntakeSink

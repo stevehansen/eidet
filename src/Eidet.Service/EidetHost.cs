@@ -91,14 +91,14 @@ public sealed class EidetHost : IDisposable
             ? new HookRunner(config.Hooks) : NullHookRunner.Instance;
 
         var memorySvc = new MemoryService(eidetStore, layerSvc, hookRunner);
-        var intakeSvc = new IntakeService(eidetStore);
-        var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment);
+        var intakeSvc = new IntakeService(eidetStore, memory: memorySvc);
+        var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memory: memorySvc);
         IMaintenanceRunner maintenanceRunner = new MaintenanceRunner(
             new MaintenanceOrchestrator(eidetStore, enrichment, consolidationEngine));
-        var exportSvc = new ExportService(eidetStore);
+        var exportSvc = new ExportService(eidetStore, memory: memorySvc);
         var qualitySvc = new QualityService(eidetStore);
         var usageTracker = new UsageTracker(store);
-        var layerSyncSvc = new LayerSyncService(eidetStore, layerSvc);
+        var layerSyncSvc = new LayerSyncService(eidetStore, layerSvc, memory: memorySvc);
         var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationEngine, maintenanceRunner,
             Directory.GetCurrentDirectory(), autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker,
             export: exportSvc, layers: layerSvc);

@@ -50,17 +50,15 @@ public sealed class StoreToolHandler : IToolHandler
             _ => null,
         };
 
-        var result = await _svc.StoreAsync(
-            repoId: request.RepoId,
-            content: content,
-            type: type,
-            tags: tags.Count > 0 ? tags : null,
-            importance: importance,
-            source: source,
-            sessionId: sessionId,
-            supersedes: supersedes,
-            provenance: provenance,
-            ct: request.Ct);
+        var result = await _svc.StoreAsync(new StoreOptions(request.RepoId, content, type)
+        {
+            Tags = tags.Count > 0 ? tags : null,
+            Importance = importance,
+            Source = source,
+            SessionId = sessionId,
+            Supersedes = supersedes,
+            Provenance = provenance,
+        }, request.Ct);
 
         if (result.DuplicateId != null)
             return ToolResult.Conflict(

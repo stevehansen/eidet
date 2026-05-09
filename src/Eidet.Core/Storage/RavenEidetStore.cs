@@ -54,6 +54,22 @@ public class RavenEidetStore : IEidetStore
         return true;
     }
 
+    public async Task PatchAccessAsync(string entryId, DateTime lastAccessedAt, CancellationToken ct = default)
+    {
+        // Patch only AccessCount + LastAccessedAt — never load or replace the full entry.
+        // Keeps this path narrow so it cannot accidentally clobber other fields on a race.
+        var patchOp = new Raven.Client.Documents.Operations.PatchOperation(
+            entryId,
+            changeVector: null,
+            new Raven.Client.Documents.Operations.PatchRequest
+            {
+                Script = "this.AccessCount = (this.AccessCount || 0) + 1; this.LastAccessedAt = args.At;",
+                Values = { { "At", lastAccessedAt } },
+            });
+        try { await _store.Operations.SendAsync(patchOp, token: ct); }
+        catch { /* Non-critical — access tracking is best-effort */ }
+    }
+
     public async Task<List<MemoryEntry>> FullTextSearchAsync(
         IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
     {

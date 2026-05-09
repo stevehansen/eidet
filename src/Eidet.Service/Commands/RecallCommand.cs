@@ -43,9 +43,8 @@ public sealed class RecallCommand : AsyncCommand<RecallCommand.Settings>
 
         var repoId = settings.Repo ?? Directory.GetCurrentDirectory();
 
-        var query = new MemoryQuery
+        var opts = new RecallOptions(settings.Query)
         {
-            Text = settings.Query,
             Limit = settings.Limit ?? 10,
             Type = !string.IsNullOrEmpty(settings.Type) && Enum.TryParse<MemoryType>(settings.Type, true, out var t) ? t : null,
             CrossRepo = settings.CrossRepo,
@@ -53,7 +52,7 @@ public sealed class RecallCommand : AsyncCommand<RecallCommand.Settings>
 
         try
         {
-            var results = await svc.RecallAsync(repoId, query, cancellation);
+            var results = await svc.RecallAsync(repoId, opts, cancellation);
 
             if (settings.Json)
             {

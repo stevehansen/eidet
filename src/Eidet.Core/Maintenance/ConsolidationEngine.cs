@@ -15,11 +15,13 @@ public sealed class ConsolidationEngine
 {
     private readonly IEidetStore _store;
     private readonly EnrichmentService _enrichment;
+    private readonly MemoryService? _memory;
 
-    public ConsolidationEngine(IEidetStore store, EnrichmentService? enrichment = null)
+    public ConsolidationEngine(IEidetStore store, EnrichmentService? enrichment = null, MemoryService? memory = null)
     {
         _store = store;
         _enrichment = enrichment ?? EnrichmentService.CreateNull();
+        _memory = memory;
     }
 
     public async Task<ConsolidationResult> ConsolidateAsync(string repoId, bool dryRun = false, CancellationToken ct = default)
@@ -98,6 +100,12 @@ public sealed class ConsolidationEngine
             }
         }
 
+        // PHASE-2: migrate onto MemoryService gate — see #10. Consolidation creates / boosts
+        // insights and updates importance scores; both affect recall scoring, so the cache
+        // for this repo must be invalidated.
+        if (!dryRun && (result.InsightsCreated > 0 || result.InsightsBoosted > 0))
+            _memory?.InvalidateRecallCache(repoId);
+
         return result;
     }
 
@@ -128,6 +136,11 @@ public sealed class ConsolidationEngine
                 updated++;
             }
         }
+
+        // PHASE-2: migrate onto MemoryService gate — see #10. Importance changes affect
+        // recall scoring; bulk decay invalidates this repo's recall cache once at the end.
+        if (updated > 0)
+            _memory?.InvalidateRecallCache(repoId);
 
         return updated;
     }

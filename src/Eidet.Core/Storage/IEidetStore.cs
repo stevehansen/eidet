@@ -8,6 +8,16 @@ public interface IEidetStore
     Task<string> StoreAsync(MemoryEntry entry, CancellationToken ct = default);
     Task UpdateAsync(MemoryEntry entry, CancellationToken ct = default);
     Task<bool> ForgetAsync(string id, CancellationToken ct = default);
+
+    /// <summary>
+    /// Patch the access-tracking fields (<c>AccessCount</c>, <c>LastAccessedAt</c>) without
+    /// touching any other field. Cache-invariant safe: these fields are not in the recall
+    /// cache key and do not affect recall scoring, so writes through this path do not
+    /// invalidate the recall cache. The default implementation is a no-op so test fakes
+    /// don't have to opt in unless they care about access tracking.
+    /// </summary>
+    Task PatchAccessAsync(string entryId, DateTime lastAccessedAt, CancellationToken ct = default) =>
+        Task.CompletedTask;
     Task<List<MemoryEntry>> FullTextSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default);
     Task<List<MemoryEntry>> VectorSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default);
     Task<MemoryEntry?> FindDuplicateAsync(string repoId, string content, float threshold, CancellationToken ct = default);
