@@ -93,8 +93,12 @@ internal sealed class MemoryReadEndpoints
             await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
             return;
         }
+        var normalizedRepoId = RepoIdNormalizer.Normalize(repo);
         var context = await _svc.GetContextAsync(repo, maxTokens: 50, ct: ct);
-        await HttpJson.WriteAsync(ctx, new { repo, summary = context.Trim() });
+        var rawCounts = await _svc.GetCountsByTypeAsync(normalizedRepoId, ct);
+        var counts = rawCounts.ToDictionary(kv => kv.Key.ToString().ToLowerInvariant(), kv => kv.Value);
+        var total = rawCounts.Values.Sum();
+        await HttpJson.WriteAsync(ctx, new { repo, summary = context.Trim(), counts, total });
     }
 
     public async Task GetLinks(HttpListenerContext ctx, CancellationToken ct)

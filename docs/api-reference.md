@@ -19,6 +19,15 @@ Authorization: Bearer eidet_abc123...
 
 Health, status, and Web UI endpoints are always public.
 
+## Query Parameter Convention
+
+All repo-scoped endpoints accept the **filesystem path** (or normalized id) via the `repo` query parameter (not `repoId`). The service normalizes via `RepoIdNormalizer` internally. Search uses `q` (not `query`). Always URL-encode values.
+
+```
+GET /api/eidet/context?repo=P%3A%5CMyProject
+GET /api/eidet/recall?repo=P%3A%5CMyProject&q=authentication
+```
+
 ---
 
 ## Health & Status
@@ -159,6 +168,20 @@ curl "http://localhost:19380/api/eidet/memories%2FP--MyProject%2Finsight%2Fabc12
 
 Returns the full `MemoryEntry` object with all fields.
 
+### PUT /api/eidet/{id} — Update a Memory
+
+Content edits create a new version that supersedes the old one (the new ID is returned); metadata-only edits (tags, importance, etc.) update in place.
+
+```bash
+curl -X PUT "http://localhost:19380/api/eidet/memories%2FP--MyProject%2Finsight%2Fabc123" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Updated text", "tags": ["auth", "jwt", "verified"], "importance": 0.85}'
+```
+
+```json
+{ "id": "memories/P--MyProject/insight/new789", "superseded": "memories/P--MyProject/insight/abc123", "success": true }
+```
+
 ### DELETE /api/eidet/{id} — Forget a Memory
 
 ```bash
@@ -197,6 +220,25 @@ curl "http://localhost:19380/api/eidet/history/memories%2FP--MyProject%2Finsight
   ]
 }
 ```
+
+### GET /api/eidet/stats — Repo Summary + Counts
+
+Compact stats for status bars and UI badges: a one-paragraph text summary plus structured counts by memory type. Counts come from a precomputed map-reduce index — cheap to call frequently.
+
+```bash
+curl "http://localhost:19380/api/eidet/stats?repo=P%3A%5CMyProject"
+```
+
+```json
+{
+  "repo": "P:\\MyProject",
+  "summary": "[Memory: 42 entries, 15 observations, 18 insights, 5 procedures, 4 heuristics]\n[I] JWT RS256 auth in auth module",
+  "counts": { "observation": 15, "insight": 18, "procedure": 5, "heuristic": 4 },
+  "total": 42
+}
+```
+
+Keys in `counts` are lowercase type names. Missing keys mean zero entries of that type.
 
 ---
 
@@ -315,18 +357,147 @@ Returns plain markdown text with all memories organized by type.
 curl "http://localhost:19380/api/eidet/layers?repo=P%3A%5CMyProject"
 ```
 
-### POST /api/eidet/layers — Mount a Layer
+### POST /api/eidet/layers/mount — Mount a Layer
 
 ```bash
-curl -X POST http://localhost:19380/api/eidet/layers \
+curl -X POST http://localhost:19380/api/eidet/layers/mount \
   -H "Content-Type: application/json" \
   -d '{"repo": "P:\\MyProject", "layerId": "shared-knowledge", "type": "shared"}'
+```
+
+### POST /api/eidet/layers/sync — Pull/Push Layer Changes
+
+Syncs a mounted shared/base layer with its remote source (if configured).
+
+```bash
+curl -X POST http://localhost:19380/api/eidet/layers/sync \
+  -H "Content-Type: application/json" \
+  -d '{"repo": "P:\\MyProject", "layerId": "shared-knowledge"}'
 ```
 
 ### DELETE /api/eidet/layers/{layerId} — Unmount a Layer
 
 ```bash
 curl -X DELETE "http://localhost:19380/api/eidet/layers/shared-knowledge?repo=P%3A%5CMyProject"
+```
+
+---
+
+## Links
+
+### GET /api/eidet/links — List Cross-Repo Links
+
+Returns memories tagged with `cross-repo-link` for this repo.
+
+```bash
+curl "http://localhost:19380/api/eidet/links?repo=P%3A%5CMyProject"
+```
+
+### POST /api/eidet/links — Create a Top-Level Link
+
+```bash
+curl -X POST http://localhost:19380/api/eidet/links \
+  -H "Content-Type: application/json" \
+  -d '{"repo": "P:\\MyProject", "targetRepo": "P:\\OtherProject", "note": "shares auth module"}'
+```
+
+### POST /api/eidet/{id}/links — Attach a Link to a Memory
+
+```bash
+curl -X POST "http://localhost:19380/api/eidet/memories%2FP--MyProject%2Finsight%2Fabc123/links" \
+  -H "Content-Type: application/json" \
+  -d '{"targetId": "memories/P--OtherProject/insight/xyz789", "relation": "derived"}'
+```
+
+### DELETE /api/eidet/{id}/links — Remove a Link from a Memory
+
+```bash
+curl -X DELETE "http://localhost:19380/api/eidet/memories%2FP--MyProject%2Finsight%2Fabc123/links" \
+  -H "Content-Type: application/json" \
+  -d '{"targetId": "memories/P--OtherProject/insight/xyz789"}'
+```
+
+---
+
+## Quality, Usage & Monitoring
+
+### GET /api/eidet/quality — Quality Report
+
+Recall-quality metrics: echo/fizzle ratios, stale memory counts, dead memories, etc.
+
+```bash
+curl "http://localhost:19380/api/eidet/quality?repo=P%3A%5CMyProject"
+```
+
+### GET /api/eidet/context/preview — Debug View of Context Assembly
+
+Returns the same text as `/api/eidet/context` plus layer scope and estimated tokens.
+
+```bash
+curl "http://localhost:19380/api/eidet/context/preview?repo=P%3A%5CMyProject&tokens=600"
+```
+
+```json
+{
+  "repo": "P:\\MyProject",
+  "maxTokens": 600,
+  "context": "[Memory: ...] ...",
+  "estimatedTokens": 540,
+  "layers": [{ "id": "shared-knowledge", "name": "Shared", "type": "Shared" }],
+  "crossRepoScope": ["P--MyProject", "shared-knowledge"]
+}
+```
+
+### GET /api/eidet/usage — Usage Stats
+
+```bash
+curl "http://localhost:19380/api/eidet/usage?repo=P%3A%5CMyProject&days=30"
+```
+
+### GET /api/eidet/usage/timeseries — Daily Buckets
+
+```bash
+curl "http://localhost:19380/api/eidet/usage/timeseries?repo=P%3A%5CMyProject&days=30"
+```
+
+### GET /api/eidet/usage/hourly — Hourly Buckets
+
+```bash
+curl "http://localhost:19380/api/eidet/usage/hourly?repo=P%3A%5CMyProject"
+```
+
+### GET /api/eidet/scheduled-tasks — Scheduler State
+
+Lists tasks queued in the RavenDB-backed scheduler (maintenance, enrichment, etc.).
+
+```bash
+curl http://localhost:19380/api/eidet/scheduled-tasks
+```
+
+### GET /api/eidet/portal — Web Portal Payload
+
+Aggregated dashboard data used by the embedded Web UI.
+
+```bash
+curl "http://localhost:19380/api/eidet/portal?repo=P%3A%5CMyProject"
+```
+
+---
+
+## Enrichment
+
+### POST /api/eidet/enrich — On-Demand Ollama Enrichment
+
+Generates one-liner, summary, foresight hint, and entity supplements for a specific memory.
+
+```bash
+curl -X POST http://localhost:19380/api/eidet/enrich \
+  -H "Content-Type: application/json" \
+  -d '{"id": "memories/P--MyProject/insight/abc123"}'
+```
+
+```json
+{ "id": "memories/P--MyProject/insight/abc123", "enriched": true, "oneLiner": "...", "summary": "..." }
 ```
 
 ---
