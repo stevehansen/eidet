@@ -81,13 +81,13 @@ Eidet v1.0.0
 
 ### Install as System Service
 
-To run Eidet on startup:
+To run Eidet on startup and register with your AI clients in one shot:
 
 ```bash
 eidet install
 ```
 
-This installs as a Windows Service / macOS launchd / Linux systemd unit and auto-configures detected MCP clients (Claude Code, Claude Desktop).
+This installs as a Windows scheduled task / macOS launchd agent / Linux systemd user unit, then walks the MCP client registry and registers eidet with every detected client (Claude Code, Claude Desktop, Codex, Gemini). Already-configured clients are left alone — re-running is safe.
 
 ## Store Your First Memory
 
@@ -131,29 +131,32 @@ The context endpoint returns a compact summary (under 600 tokens) that agents lo
 
 ## Connect to AI Agents
 
-### Claude Code
+The fastest path is `eidet install` — it registers eidet with every MCP-capable client it finds on your machine. To work one client at a time, use `eidet mcp install`:
 
-Add to `~/.claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "eidet": {
-      "command": "eidet",
-      "args": ["mcp"]
-    }
-  }
-}
+```bash
+eidet mcp install               # interactive picker over detected clients
+eidet mcp install claude-code   # specific client
+eidet mcp install --all         # everything detected
+eidet mcp list                  # see current registration status
 ```
 
-Or let `eidet install` do it automatically.
+Supported clients:
 
-### Any MCP Client
+| Client | How it's registered | Config file (fallback) |
+|--------|---------------------|------------------------|
+| `claude-code` | `claude mcp add --transport stdio -s user eidet -- eidet mcp` | `~/.claude.json` |
+| `claude-desktop` | direct file write (no CLI) | `claude_desktop_config.json` (platform-specific) |
+| `codex` | `codex mcp add eidet -- eidet mcp` | `~/.codex/config.toml` |
+| `gemini` | `gemini mcp add eidet "eidet mcp" -s user` | — (CLI only) |
+
+When the client's own CLI is on `PATH`, eidet rides on it so you get whatever schema upstream is using; otherwise it writes the config file directly.
+
+### Any other MCP client
 
 Eidet supports both stdio and HTTP MCP transports:
 
-- **stdio**: `eidet mcp` (for local AI clients)
-- **HTTP**: `POST http://localhost:19380/mcp` (for network clients)
+- **stdio**: point your client at the command `eidet mcp`
+- **HTTP**: `POST http://localhost:19380/mcp`
 
 ### REST API
 

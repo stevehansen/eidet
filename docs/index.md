@@ -46,17 +46,17 @@ dotnet tool install -g eidet
 # First-time setup (detects RavenDB, configures embeddings)
 eidet setup
 
-# Start the service
-eidet serve
+# Register as system service + auto-configure every detected MCP client
+# (Claude Code, Claude Desktop, Codex, Gemini)
+eidet install
 
 # Store a memory via CLI
 eidet store "Always run migrations before seeding" --type heuristic
-
-# Or use the MCP server with Claude Code
-eidet mcp
 ```
 
-Then open [http://localhost:19380/ui](http://localhost:19380/ui) to see the Web UI.
+Verify with `eidet status` (shows service state and which MCP clients picked up eidet), then open [http://localhost:19380/ui](http://localhost:19380/ui) for the Web UI.
+
+For one client at a time, use `eidet mcp install <client>`. To see registration status across clients, `eidet mcp list`.
 
 ## Architecture
 

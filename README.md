@@ -31,14 +31,15 @@ dotnet tool install -g eidet
 # Interactive setup — configure RavenDB (embedded or external), Ollama, embeddings
 eidet setup
 
-# Register as system service + auto-configure MCP for Claude Code & Desktop
+# Register as system service + auto-configure every detected MCP client
+# (Claude Code, Claude Desktop, Codex, Gemini)
 eidet install
 
-# Verify everything is running
+# Verify everything is running, including which MCP clients picked up eidet
 eidet status
 ```
 
-After `eidet install`, the service runs in the background and your MCP client (Claude Code, Claude Desktop) can use Eidet's memory tools immediately.
+After `eidet install`, the service autostarts at login and your AI clients can use Eidet's memory tools immediately. Need a specific client only? Use `eidet mcp install <client>` (claude-code, claude-desktop, codex, gemini) or `eidet mcp list` to see registration status.
 
 ## Key Properties
 
