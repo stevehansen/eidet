@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using Eidet.Core;
 using Eidet.Core.Services;
+using Eidet.Service.Mcp;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -51,8 +52,8 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         else
             serviceResult = await RegisterSystemdAsync(shimPath, cancellation);
 
-        // Auto-configure MCP for Claude Code / Claude Desktop
-        var mcpResult = ConfigureMcpClients(shimPath);
+        // Auto-configure MCP for every detected client (Claude Code / Desktop / Codex / Gemini).
+        var mcpResult = await ConfigureMcpClientsAsync(cancellation);
 
         // Record in version history
         VersionHistory.Record(EidetVersion.Current, null, "dotnet-tool-install");
@@ -220,129 +221,20 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
             : $"systemd unit written to {unitPath} (start manually with: systemctl --user start eidet)";
     }
 
-    internal static string? ConfigureMcpClients(string shimPath)
+    /// <summary>Walks <see cref="McpClientRegistry.All"/> and installs eidet
+    /// into every detected client that doesn't already have it. Returns a
+    /// human-readable summary, or null if nothing changed.</summary>
+    internal static async Task<string?> ConfigureMcpClientsAsync(CancellationToken ct)
     {
         var configured = new List<string>();
-
-        // Claude Code: ~/.claude/settings.json (mcpServers key)
-        var claudeCodeResult = ConfigureClaudeCodeMcp(shimPath);
-        if (claudeCodeResult) configured.Add("Claude Code");
-
-        // Claude Desktop: platform-specific config
-        var claudeDesktopConfig = GetClaudeDesktopConfigPath();
-        if (claudeDesktopConfig != null)
+        foreach (var client in McpClientRegistry.All)
         {
-            var result = ConfigureMcpJson(claudeDesktopConfig, shimPath);
-            if (result) configured.Add("Claude Desktop");
+            var status = await client.CheckAsync(ct);
+            if (status != McpInstallStatus.NotConfigured) continue;
+            var (ok, _) = await client.InstallAsync(ct);
+            if (ok) configured.Add(client.Name);
         }
-
         return configured.Count > 0 ? string.Join(", ", configured) : null;
-    }
-
-    private static bool ConfigureClaudeCodeMcp(string shimPath)
-    {
-        try
-        {
-            // Claude Code stores MCP servers in ~/.claude.json (user config)
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var claudeJsonPath = Path.Combine(home, ".claude.json");
-
-            if (!File.Exists(claudeJsonPath))
-                return false;
-
-            var existing = File.ReadAllText(claudeJsonPath);
-            var root = System.Text.Json.Nodes.JsonNode.Parse(existing)?.AsObject();
-            if (root is null)
-                return false;
-
-            if (!root.ContainsKey("mcpServers"))
-                root["mcpServers"] = new System.Text.Json.Nodes.JsonObject();
-
-            var servers = root["mcpServers"]!.AsObject();
-            if (servers.ContainsKey("eidet"))
-                return false;
-
-            // Use just "eidet" — the dotnet tool shim is on PATH
-            servers["eidet"] = new System.Text.Json.Nodes.JsonObject
-            {
-                ["command"] = "eidet",
-                ["args"] = new System.Text.Json.Nodes.JsonArray("mcp"),
-            };
-
-            var json = root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(claudeJsonPath, json);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static bool ConfigureMcpJson(string configPath, string shimPath)
-    {
-        try
-        {
-            var dir = Path.GetDirectoryName(configPath)!;
-            Directory.CreateDirectory(dir);
-
-            System.Text.Json.Nodes.JsonObject root;
-            if (File.Exists(configPath))
-            {
-                var existing = File.ReadAllText(configPath);
-                root = System.Text.Json.Nodes.JsonNode.Parse(existing)?.AsObject()
-                    ?? new System.Text.Json.Nodes.JsonObject();
-            }
-            else
-            {
-                root = new System.Text.Json.Nodes.JsonObject();
-            }
-
-            if (!root.ContainsKey("mcpServers"))
-                root["mcpServers"] = new System.Text.Json.Nodes.JsonObject();
-
-            var servers = root["mcpServers"]!.AsObject();
-            if (servers.ContainsKey("eidet"))
-                return false;
-
-            // Use just "eidet" — the dotnet tool shim is on PATH
-            servers["eidet"] = new System.Text.Json.Nodes.JsonObject
-            {
-                ["command"] = "eidet",
-                ["args"] = new System.Text.Json.Nodes.JsonArray("mcp"),
-            };
-
-            var json = root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(configPath, json);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static string? GetClaudeDesktopConfigPath()
-    {
-        string configDir;
-        if (OperatingSystem.IsWindows())
-        {
-            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            configDir = Path.Combine(appData, "Claude");
-        }
-        else if (OperatingSystem.IsMacOS())
-        {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            configDir = Path.Combine(home, "Library", "Application Support", "Claude");
-        }
-        else
-        {
-            return null;
-        }
-
-        return Directory.Exists(configDir)
-            ? Path.Combine(configDir, "claude_desktop_config.json")
-            : null;
     }
 
     internal static string GetLogDir()

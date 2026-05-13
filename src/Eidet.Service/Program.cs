@@ -19,6 +19,19 @@ if (args.Length >= 1 && string.Equals(args[0], "help", StringComparison.OrdinalI
     }
 }
 
+// "eidet mcp install [...]" / "eidet mcp list" — route to dedicated commands.
+// (The bare `eidet mcp` stays as the MCP server entry point, so we can't add
+// these as branch subcommands without breaking existing MCP client configs.)
+if (args.Length >= 2 && string.Equals(args[0], "mcp", StringComparison.OrdinalIgnoreCase)
+    && args[1] is "install" or "list" or "uninstall")
+{
+    var sub = args[1];
+    var rewritten = new string[args.Length - 1];
+    rewritten[0] = $"_mcp-{sub}";
+    Array.Copy(args, 2, rewritten, 1, args.Length - 2);
+    args = rewritten;
+}
+
 var app = new CommandApp();
 
 app.Configure(config =>
@@ -30,7 +43,17 @@ app.Configure(config =>
         .WithDescription("First-time configuration wizard");
 
     config.AddCommand<McpCommand>("mcp")
-        .WithDescription("Start MCP server (stdio transport for AI clients)");
+        .WithDescription("Start MCP server (stdio transport for AI clients). " +
+                         "Use `eidet mcp install <client>` to register with a client, " +
+                         "`eidet mcp list` to see registration status.");
+
+    config.AddCommand<McpInstallCommand>("_mcp-install")
+        .WithDescription("Register eidet as an MCP server in an AI client (`eidet mcp install [client]`)")
+        .IsHidden();
+
+    config.AddCommand<McpListCommand>("_mcp-list")
+        .WithDescription("Show MCP client registration status (`eidet mcp list`)")
+        .IsHidden();
 
     config.AddCommand<ServeCommand>("serve")
         .WithDescription("Start the Eidet REST API service");

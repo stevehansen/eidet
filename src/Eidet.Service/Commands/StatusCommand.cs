@@ -1,6 +1,7 @@
 using Eidet.Core.Configuration;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
+using Eidet.Service.Mcp;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -50,6 +51,14 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
         }
         catch { }
 
+        // MCP client registration (best-effort).
+        var mcpClients = new List<(string Name, McpInstallStatus Status)>();
+        foreach (var client in McpClientRegistry.All)
+        {
+            try { mcpClients.Add((client.Name, await client.CheckAsync(cancellation))); }
+            catch { mcpClients.Add((client.Name, McpInstallStatus.NotAvailable)); }
+        }
+
         var currentVersion = Eidet.Core.EidetVersion.Current;
         var updateAvailable = latestVersion != null
             && !string.Equals(currentVersion, latestVersion, StringComparison.OrdinalIgnoreCase);
@@ -91,6 +100,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
                     e.PreviousVersion,
                     e.Source,
                 }),
+                mcpClients = mcpClients.Select(c => new { name = c.Name, status = c.Status.ToString() }),
             }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
 
             Console.WriteLine(json);
@@ -133,6 +143,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
             AnsiConsole.MarkupLine($"  Ollama:     {(config.Enrichment.OllamaEnabled ? config.Enrichment.OllamaUrl : "[dim]Disabled[/]")}");
             AnsiConsole.MarkupLine($"  Config:     {ConfigManager.GetConfigPath()}");
             AnsiConsole.MarkupLine($"  Logs:       {Path.Combine(ConfigManager.GetConfigDir(), "logs", "eidet.log")}");
+            AnsiConsole.MarkupLine($"  MCP:        {FormatMcpClients(mcpClients)}");
 
             // Show recent version history
             if (versionHistory.Count > 1)
@@ -150,6 +161,29 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Compact MCP-client summary for status output: configured ones get
+    /// ✓, installed-but-not-configured get a yellow ✗, missing tools are
+    /// listed as dim "(not installed)" at the end (or hidden if all
+    /// detected clients are configured).
+    /// </summary>
+    private static string FormatMcpClients(IReadOnlyList<(string Name, McpInstallStatus Status)> clients)
+    {
+        var configured = clients.Where(c => c.Status == McpInstallStatus.Configured).ToList();
+        var pending = clients.Where(c => c.Status == McpInstallStatus.NotConfigured).ToList();
+        var missing = clients.Where(c => c.Status == McpInstallStatus.NotAvailable).ToList();
+
+        if (configured.Count == 0 && pending.Count == 0)
+            return "[dim]No supported MCP clients detected[/]";
+
+        var parts = new List<string>();
+        foreach (var (name, _) in configured) parts.Add($"[green]{name} ✓[/]");
+        foreach (var (name, _) in pending) parts.Add($"[yellow]{name} ✗ (run `eidet mcp install {name}`)[/]");
+        if (missing.Count > 0)
+            parts.Add($"[dim]not installed: {string.Join(", ", missing.Select(c => c.Name))}[/]");
+        return string.Join(", ", parts);
     }
 
     /// <summary>

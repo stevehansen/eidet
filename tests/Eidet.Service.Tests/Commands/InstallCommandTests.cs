@@ -43,10 +43,10 @@ public class InstallCommandTests
     }
 
     [Fact]
-    public void ConfigureMcpClients_DoesNotThrow()
+    public async Task ConfigureMcpClientsAsync_DoesNotThrow()
     {
-        // Should not throw even with a non-existent path
-        var result = InstallCommand.ConfigureMcpClients("/nonexistent/eidet");
-        // Result may be null if no Claude clients are detected — that's fine
+        // Should not throw on any machine state. Now walks every client in
+        // the registry — see InstallCommandMcpTests for the smoke test.
+        await InstallCommand.ConfigureMcpClientsAsync(CancellationToken.None);
     }
 }

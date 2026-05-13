@@ -103,6 +103,13 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         EidetLog.Info($"Eidet v{Eidet.Core.EidetVersion.Current} starting on {host.BindAddress}:{host.Port} (PID {Environment.ProcessId})");
         AnsiConsole.MarkupLine($"[bold]Eidet[/] v{Eidet.Core.EidetVersion.Current}");
 
+        // Hint when run manually (no autostart + no MCP client integration set up).
+        if (!await UpdateCommand.IsServiceRegisteredAsync(cancellation))
+        {
+            AnsiConsole.MarkupLine("  [yellow]Tip:[/] running manually. " +
+                "Run [dim]eidet install[/] to autostart at login and register with Claude Code / Desktop / Codex / Gemini.");
+        }
+
         if (host.StorageMode == StorageMode.Embedded)
             AnsiConsole.MarkupLine($"  RavenDB: [green]Embedded[/] ({Markup.Escape(host.RavenUrl)})");
         else

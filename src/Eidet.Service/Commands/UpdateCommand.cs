@@ -378,7 +378,7 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
     /// <summary>
     /// Check whether any service manager (scheduled task / launchd / systemd) is configured.
     /// </summary>
-    private static async Task<bool> IsServiceRegisteredAsync(CancellationToken ct)
+    internal static async Task<bool> IsServiceRegisteredAsync(CancellationToken ct)
     {
         if (OperatingSystem.IsWindows())
             return await IsScheduledTaskRegisteredAsync(ct);
