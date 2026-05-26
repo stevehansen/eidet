@@ -16,6 +16,8 @@
 
 *From "eidetic" — relating to extraordinarily vivid, detailed recall.*
 
+*Fun coincidence: in Antwerp dialect, "èdde 't?" ("hebt ge het?" / "do you have it?") sounds a lot like "eidet" — fitting, for a memory system.*
+
 ## What Is This?
 
 A persistent, semantic memory system that gives AI coding agents the ability to learn and remember across sessions. Built as a standalone local service that any MCP-compatible AI client can use.
