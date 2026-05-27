@@ -21,6 +21,16 @@ public interface IEidetStore
     Task<List<MemoryEntry>> FullTextSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default);
     Task<List<MemoryEntry>> VectorSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default);
     Task<MemoryEntry?> FindDuplicateAsync(string repoId, string content, float threshold, CancellationToken ct = default);
+
+    /// <summary>
+    /// Near-duplicate candidates of <paramref name="entry"/> within the same repo, ranked by
+    /// semantic similarity, filtered server-side to those at or above <paramref name="minSimilarity"/>.
+    /// Excludes the entry itself and anything not latest/valid. Returns [] when embeddings are
+    /// unavailable (caller falls back to lexical matching). Default no-op for fakes that don't index vectors.
+    /// </summary>
+    Task<IReadOnlyList<MemoryEntry>> FindNearDuplicatesAsync(
+        string repoId, MemoryEntry entry, float minSimilarity, int max, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
     Task<Dictionary<MemoryType, int>> GetCountsByTypeAsync(string repoId, CancellationToken ct = default);
     Task<List<MemoryEntry>> GetTopScoredAsync(string repoId, MemoryType[] types, int limit, CancellationToken ct = default);
     Task<bool> TestConnectionAsync(CancellationToken ct = default);

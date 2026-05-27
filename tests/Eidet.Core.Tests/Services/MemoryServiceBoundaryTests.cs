@@ -145,12 +145,12 @@ public class MemoryServiceBoundaryTests
 /// of the surface to exercise <see cref="MemoryService"/>'s public methods without
 /// depending on RavenDB. Search is naive substring matching on Content + Tags + RepoId.
 /// </summary>
-internal sealed class InMemoryEidetStore : IEidetStore
+internal class InMemoryEidetStore : IEidetStore
 {
     private readonly Dictionary<string, MemoryEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _lock = new();
 
-    public Task<MemoryEntry?> GetAsync(string id, CancellationToken ct = default)
+    public virtual Task<MemoryEntry?> GetAsync(string id, CancellationToken ct = default)
     {
         lock (_lock)
         {
@@ -165,7 +165,7 @@ internal sealed class InMemoryEidetStore : IEidetStore
         return Task.FromResult(entry.Id);
     }
 
-    public Task UpdateAsync(MemoryEntry entry, CancellationToken ct = default)
+    public virtual Task UpdateAsync(MemoryEntry entry, CancellationToken ct = default)
     {
         lock (_lock) _entries[entry.Id] = entry;
         return Task.CompletedTask;
@@ -201,6 +201,10 @@ internal sealed class InMemoryEidetStore : IEidetStore
 
     public Task<MemoryEntry?> FindDuplicateAsync(string repoId, string content, float threshold, CancellationToken ct = default) =>
         Task.FromResult<MemoryEntry?>(null);
+
+    public virtual Task<IReadOnlyList<MemoryEntry>> FindNearDuplicatesAsync(
+        string repoId, MemoryEntry entry, float minSimilarity, int max, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
 
     public Task<Dictionary<MemoryType, int>> GetCountsByTypeAsync(string repoId, CancellationToken ct = default)
     {

@@ -160,6 +160,36 @@ public class RavenEidetStore : IEidetStore
         }
     }
 
+    public async Task<IReadOnlyList<MemoryEntry>> FindNearDuplicatesAsync(
+        string repoId, MemoryEntry entry, float minSimilarity, int max, CancellationToken ct = default)
+    {
+        try
+        {
+            using var session = _store.OpenAsyncSession();
+            var results = await session.Advanced
+                .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
+                .WhereEquals("RepoId", repoId)
+                .AndAlso()
+                .WhereEquals("ValidUntil", (DateTime?)null)
+                .AndAlso()
+                .WhereEquals("Type", entry.Type)
+                .VectorSearch(
+                    field => field.WithField("SearchVector"),
+                    searchTerm => searchTerm.ByText(entry.Content, EmbeddingsTaskId),
+                    minimumSimilarity: minSimilarity,
+                    numberOfCandidates: 30)
+                .Take(max)
+                .ToListAsync(ct);
+
+            // Exclude the entry itself; IsLatest is not in the search index so filter client-side.
+            return results.Where(e => e.IsLatest && e.Id != entry.Id).ToList();
+        }
+        catch
+        {
+            return []; // Vector search may fail if embeddings not configured
+        }
+    }
+
     public async Task<Dictionary<MemoryType, int>> GetCountsByTypeAsync(
         string repoId, CancellationToken ct = default)
     {
