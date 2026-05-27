@@ -16,6 +16,24 @@ public class MemoryServiceTests
     }
 
     [Fact]
+    public void RecallCache_Invalidate_ignores_null_or_empty_scope()
+    {
+        // A malformed/legacy entry with no RepoId must not crash a bulk/background caller:
+        // Invalidate funnels into a ConcurrentDictionary that rejects null keys, so null/empty
+        // scopes are dropped rather than thrown on.
+        var cache = new RecallCache();
+
+        var ex = Record.Exception(() =>
+        {
+            cache.Invalidate(null!);
+            cache.Invalidate("");
+            cache.InvalidateAll([null!, "", "repo-a"]);
+        });
+
+        Assert.Null(ex);
+    }
+
+    [Fact]
     public void ComputeL1Score_RecentScoresHigher()
     {
         var now = DateTime.UtcNow;

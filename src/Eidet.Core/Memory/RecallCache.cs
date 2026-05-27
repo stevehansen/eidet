@@ -67,9 +67,17 @@ internal sealed class RecallCache
         _entries[key] = new Entry(results, observedGenerations);
     }
 
-    /// <summary>Bump the generation for <paramref name="scope"/>. Lock-free, fire-and-forget.</summary>
-    public void Invalidate(string scope) =>
+    /// <summary>
+    /// Bump the generation for <paramref name="scope"/>, dropping its cached recalls.
+    /// Null/empty scopes are ignored: the backing <see cref="ConcurrentDictionary{TKey,TValue}"/>
+    /// rejects null keys, and there is no such scope to invalidate — so a malformed entry with
+    /// no RepoId can't crash a bulk/background caller. Lock-free, fire-and-forget.
+    /// </summary>
+    public void Invalidate(string scope)
+    {
+        if (string.IsNullOrEmpty(scope)) return;
         _generations.AddOrUpdate(scope, 1, (_, g) => g + 1);
+    }
 
     /// <summary>Bump the generation for every scope in <paramref name="scopes"/>.</summary>
     public void InvalidateAll(IEnumerable<string> scopes)
