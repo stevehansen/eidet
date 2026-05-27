@@ -103,8 +103,9 @@ public class LayerService
     }
 
     /// <summary>
-    /// Resolve a <see cref="LayerScope"/> snapshot — the value transports pass into
-    /// <see cref="MemoryService.RecallAsync(LayerScope, MemoryQuery, CancellationToken)"/>.
+    /// Resolve a <see cref="LayerScope"/> snapshot — the set of repos a recall fans out
+    /// across, used internally by <see cref="MemoryService"/> when resolving scope for
+    /// <see cref="MemoryService.RecallAsync(string, RecallOptions, CancellationToken)"/>.
     /// </summary>
     public async Task<LayerScope> ResolveScopeAsync(
         string repoId, bool crossRepo = true, CancellationToken ct = default)
