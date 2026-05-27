@@ -332,21 +332,6 @@ public sealed class MemoryService
         return await RecallInternalAsync(scope, query, ct);
     }
 
-    /// <summary>
-    /// Recall with a caller-resolved <see cref="LayerScope"/>. Kept for backward compat;
-    /// new callers should use <see cref="RecallAsync(string, RecallOptions, CancellationToken)"/>
-    /// which resolves scope internally.
-    /// </summary>
-    public Task<List<MemorySearchResult>> RecallAsync(LayerScope scope, MemoryQuery query, CancellationToken ct = default) =>
-        RecallInternalAsync(scope, query, ct);
-
-    /// <summary>Backward-compatible recall that takes a <see cref="MemoryQuery"/>.</summary>
-    public async Task<List<MemorySearchResult>> RecallAsync(string repoId, MemoryQuery query, CancellationToken ct = default)
-    {
-        var scope = await ResolveScopeAsync(repoId, query.CrossRepo, ct);
-        return await RecallInternalAsync(scope, query, ct);
-    }
-
     private async Task<LayerScope> ResolveScopeAsync(string repoId, bool crossRepo, CancellationToken ct)
     {
         var normalized = RepoIdNormalizer.Normalize(repoId);

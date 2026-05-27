@@ -138,6 +138,67 @@ public class MemoryServiceBoundaryTests
         var after = await svc.RecallAsync("repo-a", "deployment");
         Assert.Contains(after, r => r.Id == entry.Id);
     }
+
+    [Fact]
+    public async Task Concurrent_StoreDuringRecall_NoStaleResult()
+    {
+        // The seam the friction doc named: a recall that snapshots an empty result, then a
+        // store lands (bumping the scope generation) before the recall writes its result to
+        // the cache. The recall must NOT poison the cache with the now-stale empty result.
+        var store = new GatedSearchStore();
+        var svc = new MemoryService(store);
+
+        // R1 enters the store query — having already snapshotted the scope generation — and
+        // blocks there, holding the pre-store (empty) result.
+        var recallTask = svc.RecallAsync("repo-a", "deployment");
+        await store.SearchEntered;
+
+        // A concurrent store completes fully (including the cache-generation bump in
+        // RunMutationAsync's finally) while R1 is still in flight.
+        var stored = await svc.StoreAsync("repo-a", "deployment uses kubernetes", MemoryType.Insight);
+        Assert.True(stored.Success);
+
+        // Release R1. It returns the empty snapshot it legitimately observed pre-store; its
+        // attempt to cache that result must be discarded because the generation moved.
+        store.ReleaseSearch();
+        var r1 = await recallTask;
+        Assert.Empty(r1);
+
+        // R2 must observe the concurrently-stored entry — proof that R1 did not serve a
+        // stale empty result from the cache for the TTL window.
+        var r2 = await svc.RecallAsync("repo-a", "deployment");
+        Assert.Single(r2);
+        Assert.Equal(stored.Id, r2[0].Id);
+    }
+}
+
+/// <summary>
+/// In-memory store that blocks the first full-text search after it has read the store,
+/// letting a test interleave a concurrent store between a recall's generation snapshot
+/// and its cache write. Later searches run unblocked.
+/// </summary>
+internal sealed class GatedSearchStore : InMemoryEidetStore
+{
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _calls;
+
+    public Task SearchEntered => _entered.Task;
+    public void ReleaseSearch() => _released.TrySetResult();
+
+    public override async Task<List<MemoryEntry>> FullTextSearchAsync(
+        IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
+    {
+        // Capture the result against the current store state, THEN gate — so the blocked
+        // recall returns the pre-store snapshot rather than data written while it waited.
+        var snapshot = await base.FullTextSearchAsync(repoIds, query, ct);
+        if (Interlocked.Increment(ref _calls) == 1)
+        {
+            _entered.TrySetResult();
+            await _released.Task;
+        }
+        return snapshot;
+    }
 }
 
 /// <summary>
@@ -181,7 +242,7 @@ internal class InMemoryEidetStore : IEidetStore
         }
     }
 
-    public Task<List<MemoryEntry>> FullTextSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
+    public virtual Task<List<MemoryEntry>> FullTextSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
     {
         lock (_lock)
         {
