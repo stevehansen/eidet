@@ -70,7 +70,7 @@ public class AutoIntakeOnContextTests
     {
         var store = new FakeStore();
         var svc = new MemoryService(store);
-        var intake = new IntakeService(store);
+        var intake = new IntakeService(store, svc);
         var auto = new AutoIntakeOnContext(svc, intake, "test-repo", triggerTool: "custom_trigger");
 
         await auto.OnToolCalledAsync("eidet_context", CancellationToken.None);
@@ -95,7 +95,7 @@ public class AutoIntakeOnContextTests
     private static AutoIntakeOnContext NewAutoIntake(FakeStore store, string repoId)
     {
         var svc = new MemoryService(store);
-        var intake = new IntakeService(store);
+        var intake = new IntakeService(store, svc);
         return new AutoIntakeOnContext(svc, intake, repoId);
     }
 

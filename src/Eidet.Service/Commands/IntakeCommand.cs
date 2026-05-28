@@ -25,7 +25,7 @@ public sealed class IntakeCommand : AsyncCommand<IntakeCommand.Settings>
         var config = ConfigManager.Load();
         var store = DocumentStoreFactory.CreateFromConfig(config);
         var eidetStore = new RavenEidetStore(store);
-        var intakeSvc = new IntakeService(eidetStore);
+        var intakeSvc = new IntakeService(eidetStore, new MemoryService(eidetStore));
 
         var projectPath = settings.Path ?? Directory.GetCurrentDirectory();
         var repoId = projectPath;

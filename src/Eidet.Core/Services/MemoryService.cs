@@ -580,17 +580,100 @@ public sealed class MemoryService
     public bool IsRepoActive(string repoId, int withinDays = 7) =>
         _activity.IsActive(repoId, withinDays);
 
-    // ─── Bulk-write coherence assist (PHASE-2: migrate onto BulkMutationCtx — see #10) ───
+    // ─── Bulk-write coherence assist ─────────────────────────────────
 
     /// <summary>
-    /// Bumps the recall-cache generation for <paramref name="scope"/>. Used by bulk-write
-    /// services (Export, Intake, LayerSync, Consolidation) until phase 2 routes them
-    /// through a structural <c>BulkMutationCtx</c>. See issue #10.
+    /// Bumps the recall-cache generation for <paramref name="scope"/>. Serves the bulk paths
+    /// that have not yet been migrated onto <see cref="RunBulkAsync"/> — the Enrichment worker,
+    /// the Dedup engine, and the Maintenance stages, which still write through <see cref="IEidetStore"/>
+    /// directly and invalidate by hand.
     /// </summary>
     internal void InvalidateRecallCache(string scope) => _cache.Invalidate(scope);
 
-    /// <summary>Bumps the recall-cache generation for every scope. Bulk-path helper.</summary>
+    /// <summary>
+    /// Bumps the recall-cache generation for every scope. Serves the not-yet-migrated bulk
+    /// paths (Enrichment / Dedup / Maintenance stages).
+    /// </summary>
     internal void InvalidateRecallCache(IEnumerable<string> scopes) => _cache.InvalidateAll(scopes);
+
+    // ─── Bulk mutations ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Bulk-stores a sequence of pre-built entries. Each entry's <see cref="MemoryEntry.RepoId"/>
+    /// is recorded as a touched scope and invalidated exactly once when the loop completes (even
+    /// on throw). With <see cref="BulkWriteOptions.SkipIfExists"/>, entries whose id already exists
+    /// are counted as skipped rather than overwritten.
+    /// </summary>
+    public Task<BulkWriteResult> WriteManyAsync(
+        IEnumerable<MemoryEntry> entries, BulkWriteOptions? options = null, CancellationToken ct = default)
+    {
+        options ??= new BulkWriteOptions();
+        var bulkOpts = new BulkOptions
+        {
+            OperationName = "write-many",
+            FireHooks = options.FireHooks,
+            Validate = options.Validate,
+        };
+        return RunBulkAsync(async ctx =>
+        {
+            var added = 0;
+            var skipped = 0;
+            foreach (var entry in entries)
+            {
+                if (options.SkipIfExists && await ctx.GetAsync(entry.Id, ct) is not null)
+                {
+                    skipped++;
+                    continue;
+                }
+                await ctx.StoreNewAsync(entry, ct);
+                added++;
+            }
+            return new BulkWriteResult(added, skipped);
+        }, bulkOpts, ct);
+    }
+
+    /// <summary>
+    /// Bulk-updates a sequence of existing entries in place. Each entry's scope is recorded and
+    /// invalidated once. Returns the number of entries written.
+    /// </summary>
+    public Task<int> UpdateManyAsync(IEnumerable<MemoryEntry> entries, CancellationToken ct = default) =>
+        RunBulkAsync(async ctx =>
+        {
+            var count = 0;
+            foreach (var entry in entries)
+            {
+                await ctx.WriteAsync(entry, ct);
+                count++;
+            }
+            return count;
+        }, new BulkOptions { OperationName = "update-many" }, ct);
+
+    /// <summary>
+    /// Escape hatch for mixed-op bulk bodies (store + update + delete). Hands the body a
+    /// <see cref="BulkMutationCtx"/> whose write methods each record the touched scope; the
+    /// surrounding pipeline invalidates each touched scope exactly once in a <c>finally</c>,
+    /// including when the body throws. This is the structural guarantee callers used to provide
+    /// by hand-calling <c>InvalidateRecallCache</c>.
+    /// </summary>
+    /// <remarks>
+    /// The touched-scope set is shared by reference and is not thread-safe; writes within a body
+    /// must run sequentially (no <c>Task.WhenAll</c> over <see cref="BulkMutationCtx"/> writes).
+    /// </remarks>
+    public async Task<T> RunBulkAsync<T>(
+        Func<BulkMutationCtx, Task<T>> body, BulkOptions? options = null, CancellationToken ct = default)
+    {
+        options ??= new BulkOptions();
+        var touched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ctx = new BulkMutationCtx(_store, touched, _hooks, options);
+        try
+        {
+            return await body(ctx);
+        }
+        finally
+        {
+            _cache.InvalidateAll(touched);
+        }
+    }
 
     // ─── Internal gate ────────────────────────────────────────────────
 
@@ -655,6 +738,80 @@ internal readonly struct MutationCtx
     public Task<string> StoreNewAsync(MemoryEntry entry, CancellationToken ct) => _store.StoreAsync(entry, ct);
     public Task WriteAsync(MemoryEntry entry, CancellationToken ct) => _store.UpdateAsync(entry, ct);
     public Task<bool> ForgetAsync(string id, CancellationToken ct) => _store.ForgetAsync(id, ct);
+}
+
+/// <summary>
+/// Bulk-mutation gate handed to a <see cref="MemoryService.RunBulkAsync{T}"/> body. Every write
+/// records its scope into a set shared with the surrounding pipeline, which invalidates each
+/// touched scope exactly once (including on throw). Public because it appears in the public
+/// <c>RunBulkAsync</c> signature; the constructor is internal so only <see cref="MemoryService"/>
+/// can hand one out. A <c>readonly struct</c> (not a <c>ref struct</c>): it lives inside the async
+/// state machine produced by <c>Func&lt;BulkMutationCtx, Task&lt;T&gt;&gt;</c>.
+/// </summary>
+public readonly struct BulkMutationCtx
+{
+    private readonly IEidetStore _store;
+    private readonly HashSet<string> _touched;
+    private readonly IHookRunner _hooks;
+    private readonly BulkOptions _options;
+
+    internal BulkMutationCtx(IEidetStore store, HashSet<string> touched, IHookRunner hooks, BulkOptions options)
+    {
+        _store = store;
+        _touched = touched;
+        _hooks = hooks;
+        _options = options;
+    }
+
+    public async Task<string> StoreNewAsync(MemoryEntry entry, CancellationToken ct)
+    {
+        if (_options.Validate)
+        {
+            var result = WriteValidator.Validate(entry.Content, entry.Type);
+            if (!result.Passed)
+                throw new InvalidOperationException($"Bulk write rejected: {result.Reason}");
+        }
+
+        var id = await _store.StoreAsync(entry, ct);
+        _touched.Add(entry.RepoId);
+
+        // Pre-store hook gating is intentionally unsupported in bulk; only the post-store
+        // notification fires (opt-in, fire-and-forget).
+        if (_options.FireHooks)
+            _ = _hooks.RunPostHooksAsync(HookEvent.PostStore, new HookContext
+            {
+                Event = "post-store",
+                Repo = entry.RepoId,
+                Data = new { id, type = entry.Type.ToString().ToLowerInvariant() },
+            }, default);
+
+        return id;
+    }
+
+    public async Task WriteAsync(MemoryEntry entry, CancellationToken ct)
+    {
+        await _store.UpdateAsync(entry, ct);
+        _touched.Add(entry.RepoId);
+    }
+
+    public async Task<bool> ForgetAsync(string id, CancellationToken ct)
+    {
+        var existing = await _store.GetAsync(id, ct);
+        var forgotten = await _store.ForgetAsync(id, ct);
+        if (forgotten && existing is not null)
+            _touched.Add(existing.RepoId);
+        return forgotten;
+    }
+
+    public async Task<bool> HardDeleteAsync(string id, string scope, CancellationToken ct)
+    {
+        var deleted = await _store.HardDeleteAsync(id, ct);
+        if (deleted)
+            _touched.Add(scope);
+        return deleted;
+    }
+
+    public Task<MemoryEntry?> GetAsync(string id, CancellationToken ct) => _store.GetAsync(id, ct);
 }
 
 /// <summary>

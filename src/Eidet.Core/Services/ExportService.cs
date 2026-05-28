@@ -17,9 +17,9 @@ public class ExportService
     };
 
     private readonly IEidetStore _store;
-    private readonly MemoryService? _memory;
+    private readonly MemoryService _memory;
 
-    public ExportService(IEidetStore store, MemoryService? memory = null)
+    public ExportService(IEidetStore store, MemoryService memory)
     {
         _store = store;
         _memory = memory;
@@ -135,21 +135,8 @@ public class ExportService
 
     public async Task<int> ImportPackAsync(EidetPack pack, CancellationToken ct = default)
     {
-        var imported = 0;
-        var touchedRepos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in pack.Entries)
-        {
-            var existing = await _store.GetAsync(entry.Id, ct);
-            if (existing != null) continue;
-
-            await _store.StoreAsync(entry, ct);
-            touchedRepos.Add(entry.RepoId);
-            imported++;
-        }
-        // PHASE-2: migrate onto MemoryService gate — see #10. Bulk-imports bypass MutationCtx,
-        // so we invalidate explicitly here to keep the recall cache coherent.
-        _memory?.InvalidateRecallCache(touchedRepos);
-        return imported;
+        var result = await _memory.WriteManyAsync(pack.Entries, new BulkWriteOptions { SkipIfExists = true }, ct);
+        return result.Added;
     }
 
     /// <summary>

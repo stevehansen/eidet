@@ -40,7 +40,7 @@ public class EidetApiFixture : IAsyncLifetime
             var layerSvc = new LayerService(eidetStore);
             var memorySvc = new MemoryService(eidetStore, layerSvc);
             var intakeSvc = new IntakeService(eidetStore, memory: memorySvc);
-            var consolidationEngine = new ConsolidationEngine(eidetStore, memory: memorySvc);
+            var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment: null, memory: memorySvc);
             IMaintenanceRunner maintenanceRunner = new MaintenanceRunner(
                 new MaintenanceOrchestrator(eidetStore, consolidation: consolidationEngine));
             var exportSvc = new ExportService(eidetStore, memory: memorySvc);

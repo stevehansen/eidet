@@ -41,12 +41,12 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
                 ? new HookRunner(config.Hooks)
                 : NullHookRunner.Instance;
             var memorySvc = new MemoryService(eidetStore, hooks: hookRunner);
-            var intakeSvc = new IntakeService(eidetStore);
-            var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment);
+            var intakeSvc = new IntakeService(eidetStore, memorySvc);
+            var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memorySvc);
             IMaintenanceRunner maintenanceRunner = new MaintenanceRunner(
                 new MaintenanceOrchestrator(eidetStore, enrichment, consolidationEngine, memory: memorySvc));
 
-            var exportSvc = new ExportService(eidetStore);
+            var exportSvc = new ExportService(eidetStore, memorySvc);
             var layerSvc = new LayerService(eidetStore);
             var usageTracker = new UsageTracker(store);
             var workDir = settings.Repo ?? settings.WorkDir ?? Directory.GetCurrentDirectory();

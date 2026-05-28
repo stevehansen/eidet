@@ -21,20 +21,20 @@ namespace Eidet.Core.Services;
 public class IntakeService
 {
     private readonly IEidetStore _store;
-    private readonly MemoryService? _memory;
+    private readonly MemoryService _memory;
     private readonly IReadOnlyList<IIntakeExtractor> _extractors;
 
     /// <summary>
     /// Constructs a service with the default extractor list. Tests and SDK consumers
-    /// that want a custom registry should use the <see cref="IntakeService(IEidetStore, IEnumerable{IIntakeExtractor}, MemoryService?)"/>
+    /// that want a custom registry should use the <see cref="IntakeService(IEidetStore, IEnumerable{IIntakeExtractor}, MemoryService)"/>
     /// overload.
     /// </summary>
-    public IntakeService(IEidetStore store, MemoryService? memory = null)
+    public IntakeService(IEidetStore store, MemoryService memory)
         : this(store, DefaultExtractors(), memory)
     {
     }
 
-    public IntakeService(IEidetStore store, IEnumerable<IIntakeExtractor> extractors, MemoryService? memory = null)
+    public IntakeService(IEidetStore store, IEnumerable<IIntakeExtractor> extractors, MemoryService memory)
     {
         _store = store;
         _memory = memory;
@@ -88,31 +88,29 @@ public class IntakeService
         return RunPipelineAsync(ctx, ct);
     }
 
-    private async Task<IntakeResult> RunPipelineAsync(IntakeContext ctx, CancellationToken ct)
-    {
-        var sink = new OrchestratorSink(_store, ctx);
-        foreach (var extractor in _extractors)
+    private Task<IntakeResult> RunPipelineAsync(IntakeContext ctx, CancellationToken ct) =>
+        _memory.RunBulkAsync(async bulk =>
         {
-            if (!extractor.AppliesTo(ctx)) continue;
-            await extractor.ExtractAsync(ctx, sink, ct);
-        }
-        var result = sink.Build();
-        // PHASE-2: migrate onto MemoryService gate — see #10. Bulk intake bypasses MutationCtx,
-        // so we invalidate the affected repo's recall cache once after all extractors run.
-        if (!ctx.DryRun && result.NewCount > 0)
-            _memory?.InvalidateRecallCache(ctx.RepoId);
-        return result;
-    }
+            var sink = new OrchestratorSink(_store, bulk, ctx);
+            foreach (var extractor in _extractors)
+            {
+                if (!extractor.AppliesTo(ctx)) continue;
+                await extractor.ExtractAsync(ctx, sink, ct);
+            }
+            return sink.Build();
+        }, new BulkOptions { OperationName = "intake" }, ct);
 
     private sealed class OrchestratorSink : IIntakeSink
     {
         private readonly IEidetStore _store;
+        private readonly BulkMutationCtx _bulk;
         private readonly IntakeContext _ctx;
         private readonly IntakeResult _result = new();
 
-        public OrchestratorSink(IEidetStore store, IntakeContext ctx)
+        public OrchestratorSink(IEidetStore store, BulkMutationCtx bulk, IntakeContext ctx)
         {
             _store = store;
+            _bulk = bulk;
             _ctx = ctx;
         }
 
@@ -162,7 +160,7 @@ public class IntakeService
                     Entities = EntityExtractor.Extract(candidate.Content),
                     OneLiner = EntityExtractor.GenerateHeuristicOneLiner(candidate.Content),
                 };
-                await _store.StoreAsync(entry, ct);
+                await _bulk.StoreNewAsync(entry, ct);
             }
 
             _result.Items.Add(item);

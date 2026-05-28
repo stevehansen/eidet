@@ -27,9 +27,10 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
         using var enrichment = config.Enrichment.OllamaEnabled
             ? EnrichmentService.CreateOllama(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
             : EnrichmentService.CreateNull();
-        var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment);
+        var memorySvc = new MemoryService(eidetStore);
+        var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memorySvc);
         IMaintenanceRunner runner = new MaintenanceRunner(
-            new MaintenanceOrchestrator(eidetStore, enrichment, consolidationEngine));
+            new MaintenanceOrchestrator(eidetStore, enrichment, consolidationEngine, memory: memorySvc));
 
         var repoId = Eidet.Core.Domain.RepoIdNormalizer.Normalize(settings.Repo ?? Directory.GetCurrentDirectory());
 

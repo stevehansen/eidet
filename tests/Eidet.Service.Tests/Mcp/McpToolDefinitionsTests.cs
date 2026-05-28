@@ -112,8 +112,8 @@ public class McpToolDefinitionsTests
     {
         var store = new StubStore();
         var svc = new MemoryService(store);
-        var consolidation = new ConsolidationEngine(store);
-        var intake = new IntakeService(store);
+        var consolidation = new ConsolidationEngine(store, enrichment: null, memory: svc);
+        var intake = new IntakeService(store, svc);
         var maintenance = new StubMaintenanceRunner();
 
         return
