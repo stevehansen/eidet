@@ -94,7 +94,7 @@ public sealed class EidetHost : IDisposable
         var intakeSvc = new IntakeService(eidetStore, memory: memorySvc);
         var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memory: memorySvc);
         IMaintenanceRunner maintenanceRunner = new MaintenanceRunner(
-            new MaintenanceOrchestrator(eidetStore, enrichment, consolidationEngine));
+            new MaintenanceOrchestrator(eidetStore, enrichment, consolidationEngine, memory: memorySvc));
         var exportSvc = new ExportService(eidetStore, memory: memorySvc);
         var qualitySvc = new QualityService(eidetStore);
         var usageTracker = new UsageTracker(store);
@@ -122,7 +122,7 @@ public sealed class EidetHost : IDisposable
             Usage = usageTracker,
             ScheduledTasks = scheduler,
         });
-        var enrichmentWorker = new EnrichmentWorker(store, enrichment);
+        var enrichmentWorker = new EnrichmentWorker(store, enrichment, memorySvc);
 
         return new EidetHost(store, eidetStore, enrichment, scheduler, enrichmentWorker, apiServer, config, actualBind, actualPort);
     }

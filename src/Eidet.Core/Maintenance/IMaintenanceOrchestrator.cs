@@ -16,17 +16,20 @@ public sealed class MaintenanceOrchestrator : IMaintenanceOrchestrator
     private readonly EnrichmentService _enrichment;
     private readonly ConsolidationEngine _consolidation;
     private readonly IReadOnlyList<IMaintenanceStage> _stages;
+    private readonly MemoryService? _memory;
 
     public MaintenanceOrchestrator(
         IEidetStore store,
         EnrichmentService? enrichment = null,
         ConsolidationEngine? consolidation = null,
-        IReadOnlyList<IMaintenanceStage>? stages = null)
+        IReadOnlyList<IMaintenanceStage>? stages = null,
+        MemoryService? memory = null)
     {
         _store = store;
         _enrichment = enrichment ?? EnrichmentService.CreateNull();
         _consolidation = consolidation ?? new ConsolidationEngine(store, _enrichment);
         _stages = stages ?? DefaultStages();
+        _memory = memory;
     }
 
     public static IReadOnlyList<IMaintenanceStage> DefaultStages() =>
@@ -77,6 +80,12 @@ public sealed class MaintenanceOrchestrator : IMaintenanceOrchestrator
                 report.Stages.Add(new StageOutcome(stage.Name, 0, ex.Message));
             }
         }
+
+        // Every maintenance run is single-repo, so one invalidation of request.RepoId covers
+        // all direct-writing stages (TTL/retention/orphan/enrichment) plus DedupSweepStage —
+        // none of which invalidate on their own. Gated on net writes to avoid needless misses.
+        if (report.Stages.Sum(s => s.Affected) > 0)
+            _memory?.InvalidateRecallCache(request.RepoId);
 
         report.CompletedAt = DateTime.UtcNow;
         return report;
