@@ -41,7 +41,7 @@ public sealed class LayerSyncCommand : AsyncCommand<LayerSyncCommand.Settings>
         var store = DocumentStoreFactory.CreateFromConfig(config);
         var eidetStore = new RavenEidetStore(store);
         var layerSvc = new LayerService(eidetStore);
-        var syncSvc = new LayerSyncService(eidetStore, layerSvc);
+        var syncSvc = new LayerSyncService(eidetStore, layerSvc, new MemoryService(eidetStore));
 
         try
         {

@@ -35,3 +35,22 @@ public sealed record EditOptions
     public string? Summary { get; init; }
     public string? ForesightHint { get; init; }
 }
+
+/// <summary>Options for <see cref="MemoryService.RunBulkAsync{T}"/>. Hooks and validation are off by default — bulk paths opt in.</summary>
+public sealed record BulkOptions
+{
+    public string OperationName { get; init; } = "bulk";
+    public bool FireHooks { get; init; }
+    public bool Validate { get; init; }
+}
+
+/// <summary>Options for <see cref="MemoryService.WriteManyAsync"/>.</summary>
+public sealed record BulkWriteOptions
+{
+    public bool SkipIfExists { get; init; }
+    public bool FireHooks { get; init; }
+    public bool Validate { get; init; }
+}
+
+/// <summary>Outcome of a <see cref="MemoryService.WriteManyAsync"/> call.</summary>
+public sealed record BulkWriteResult(int Added, int Skipped);

@@ -51,7 +51,7 @@ public sealed class ExportCommand : AsyncCommand<ExportCommand.Settings>
         var config = ConfigManager.Load();
         var store = DocumentStoreFactory.CreateFromConfig(config);
         var eidetStore = new RavenEidetStore(store);
-        var exportSvc = new ExportService(eidetStore);
+        var exportSvc = new ExportService(eidetStore, new MemoryService(eidetStore));
 
         var repoId = Eidet.Core.Domain.RepoIdNormalizer.Normalize(settings.Repo ?? Directory.GetCurrentDirectory());
 

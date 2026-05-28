@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Eidet.Core.Domain;
 using Eidet.Core.Maintenance;
+using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Tools;
 using Eidet.Service.Tools.Handlers;
@@ -31,8 +32,11 @@ public class ConsolidateToolHandlerTests
         Assert.Equal(ToolStatus.Ok, result.Status);
     }
 
-    private static ConsolidateToolHandler NewHandler() =>
-        new(new ConsolidationEngine(new EmptyStore()));
+    private static ConsolidateToolHandler NewHandler()
+    {
+        var store = new EmptyStore();
+        return new(new ConsolidationEngine(store, enrichment: null, memory: new MemoryService(store)));
+    }
 
     private static Task<ToolResult> Invoke(ConsolidateToolHandler handler, object args) =>
         handler.ExecuteAsync(new ToolRequest(

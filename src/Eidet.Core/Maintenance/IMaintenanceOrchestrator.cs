@@ -27,9 +27,12 @@ public sealed class MaintenanceOrchestrator : IMaintenanceOrchestrator
     {
         _store = store;
         _enrichment = enrichment ?? EnrichmentService.CreateNull();
-        _consolidation = consolidation ?? new ConsolidationEngine(store, _enrichment);
-        _stages = stages ?? DefaultStages();
         _memory = memory;
+        // The default consolidation engine shares this orchestrator's MemoryService so recall and
+        // consolidation writes hit one cache; the throwaway fallback is only reached when no memory
+        // was supplied (CLI one-shots / tests), where no long-lived recall cache exists to keep coherent.
+        _consolidation = consolidation ?? new ConsolidationEngine(store, _enrichment, _memory ?? new MemoryService(store));
+        _stages = stages ?? DefaultStages();
     }
 
     public static IReadOnlyList<IMaintenanceStage> DefaultStages() =>

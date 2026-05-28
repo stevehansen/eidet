@@ -42,8 +42,11 @@ public class IntakeToolHandlerTests
         }
     }
 
-    private static IntakeToolHandler NewHandler() =>
-        new(new IntakeService(new EmptyStore()));
+    private static IntakeToolHandler NewHandler()
+    {
+        var store = new EmptyStore();
+        return new(new IntakeService(store, new MemoryService(store)));
+    }
 
     private static Task<ToolResult> Invoke(IntakeToolHandler handler, object args) =>
         InvokeWithRepo(handler, "test-repo", args);

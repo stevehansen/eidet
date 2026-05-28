@@ -1,6 +1,7 @@
 using Eidet.Core.Domain;
 using Eidet.Core.Enrichment;
 using Eidet.Core.Maintenance;
+using Eidet.Core.Services;
 using Eidet.Core.Storage;
 
 namespace Eidet.Core.Tests.Maintenance;
@@ -25,7 +26,7 @@ public class MaintenanceOrchestratorTests
     {
         IEidetStore store = null!; // stub stages don't touch the store
         return new MaintenanceOrchestrator(store, EnrichmentService.CreateNull(),
-            new ConsolidationEngine(store), stages);
+            new ConsolidationEngine(store, enrichment: null, memory: new MemoryService(store)), stages);
     }
 
     [Fact]

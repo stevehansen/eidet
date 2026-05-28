@@ -139,6 +139,215 @@ public class MemoryServiceBoundaryTests
         Assert.Contains(after, r => r.Id == entry.Id);
     }
 
+    // ─── Bulk-write gate (#10) ──────────────────────────────────────
+
+    private static MemoryEntry MakeEntry(string repoId, string id, string content) => new()
+    {
+        Id = id,
+        RepoId = repoId,
+        Type = MemoryType.Insight,
+        Content = content,
+        CreatedAt = DateTime.UtcNow,
+        Validity = new Validity { ValidFrom = DateTime.UtcNow },
+        IsLatest = true,
+        Importance = 0.7f,
+    };
+
+    [Fact]
+    public async Task RunBulkAsync_StoresMany_InvalidatesEachScopeOnce()
+    {
+        var store = new InMemoryEidetStore();
+        var svc = new MemoryService(store);
+
+        // Warm an empty cache for every scope the bulk will touch.
+        Assert.Empty(await svc.RecallAsync("repo-a", "kubernetes"));
+        Assert.Empty(await svc.RecallAsync("repo-b", "kubernetes"));
+        Assert.Empty(await svc.RecallAsync("repo-c", "kubernetes"));
+
+        await svc.RunBulkAsync(async ctx =>
+        {
+            await ctx.StoreNewAsync(MakeEntry("repo-a", "memories/repo-a/insight/1", "deploys to kubernetes via argo"), CancellationToken.None);
+            await ctx.StoreNewAsync(MakeEntry("repo-a", "memories/repo-a/insight/2", "kubernetes ingress is nginx"), CancellationToken.None);
+            await ctx.StoreNewAsync(MakeEntry("repo-b", "memories/repo-b/insight/1", "kubernetes cluster is gke"), CancellationToken.None);
+            await ctx.StoreNewAsync(MakeEntry("repo-c", "memories/repo-c/insight/1", "kubernetes nodes autoscale"), CancellationToken.None);
+            return 0;
+        });
+
+        // Each touched scope must observe its own new entries after the bulk. The "exactly
+        // once" bump count isn't observable through the public API; per-scope coherence is
+        // the strongest invariant we can assert from here.
+        Assert.Equal(2, (await svc.RecallAsync("repo-a", "kubernetes")).Count);
+        Assert.Single(await svc.RecallAsync("repo-b", "kubernetes"));
+        Assert.Single(await svc.RecallAsync("repo-c", "kubernetes"));
+    }
+
+    [Fact]
+    public async Task RunBulkAsync_BodyThrows_StillInvalidatesTouchedScopes()
+    {
+        var store = new InMemoryEidetStore();
+        var svc = new MemoryService(store);
+
+        // Warm repo-a's empty cache so a stale read would be observable.
+        Assert.Empty(await svc.RecallAsync("repo-a", "kubernetes"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            svc.RunBulkAsync<int>(async ctx =>
+            {
+                await ctx.StoreNewAsync(MakeEntry("repo-a", "memories/repo-a/insight/1", "deploys to kubernetes"), CancellationToken.None);
+                throw new InvalidOperationException("boom");
+            }));
+
+        // The finally must have invalidated repo-a despite the throw — the entry written
+        // before the exception is now visible rather than masked by the stale empty cache.
+        Assert.Single(await svc.RecallAsync("repo-a", "kubernetes"));
+    }
+
+    [Fact]
+    public async Task RunBulkAsync_HardDelete_UsesExplicitScope()
+    {
+        var store = new InMemoryEidetStore();
+        var svc = new MemoryService(store);
+
+        // Entry living in scope "layer-x" — the scope we will pass to HardDeleteAsync.
+        var inLayer = MakeEntry("layer-x", "memories/layer-x/insight/1", "redis caching layer");
+        await store.StoreAsync(inLayer);
+        // Entry living in repo-a — its RepoId differs from the scope we will pass.
+        var inRepoA = MakeEntry("repo-a", "memories/repo-a/insight/1", "redis caching repo");
+        await store.StoreAsync(inRepoA);
+
+        // Warm both caches so a missed invalidation is observable as a stale hit.
+        Assert.Single(await svc.RecallAsync("layer-x", "redis"));
+        Assert.Single(await svc.RecallAsync("repo-a", "redis"));
+
+        // Delete BOTH entries but always pass the explicit scope "layer-x".
+        await svc.RunBulkAsync(async ctx =>
+        {
+            await ctx.HardDeleteAsync(inLayer.Id, "layer-x", CancellationToken.None);
+            await ctx.HardDeleteAsync(inRepoA.Id, "layer-x", CancellationToken.None);
+            return 0;
+        });
+
+        // Both entries are physically gone from the store.
+        Assert.Null(await store.GetAsync(inLayer.Id));
+        Assert.Null(await store.GetAsync(inRepoA.Id));
+
+        // The explicit scope "layer-x" was invalidated: its recall reflects the deletion.
+        Assert.Empty(await svc.RecallAsync("layer-x", "redis"));
+
+        // repo-a's scope was NOT invalidated — proving the SCOPE PARAMETER ("layer-x"), not
+        // the deleted entry's RepoId ("repo-a"), is what gets recorded. repo-a still serves
+        // its warmed (now physically stale) cache, so the recall still returns the entry.
+        Assert.Single(await svc.RecallAsync("repo-a", "redis"));
+    }
+
+    [Fact]
+    public async Task RunBulkAsync_WithFireHooks_FiresPerEntry()
+    {
+        var store = new InMemoryEidetStore();
+        var hooks = new CountingHookRunner();
+        var svc = new MemoryService(store, hooks: hooks);
+
+        await svc.RunBulkAsync(async ctx =>
+        {
+            await ctx.StoreNewAsync(MakeEntry("repo-a", "memories/repo-a/insight/1", "one"), CancellationToken.None);
+            await ctx.StoreNewAsync(MakeEntry("repo-a", "memories/repo-a/insight/2", "two"), CancellationToken.None);
+            await ctx.StoreNewAsync(MakeEntry("repo-a", "memories/repo-a/insight/3", "three"), CancellationToken.None);
+            return 0;
+        }, new BulkOptions { FireHooks = true });
+
+        Assert.Equal(3, hooks.PostStoreCount);
+
+        // Default options (FireHooks = false) must fire no post-store hooks.
+        var hooks2 = new CountingHookRunner();
+        var svc2 = new MemoryService(store, hooks: hooks2);
+        await svc2.RunBulkAsync(async ctx =>
+        {
+            await ctx.StoreNewAsync(MakeEntry("repo-b", "memories/repo-b/insight/1", "one"), CancellationToken.None);
+            await ctx.StoreNewAsync(MakeEntry("repo-b", "memories/repo-b/insight/2", "two"), CancellationToken.None);
+            return 0;
+        });
+
+        Assert.Equal(0, hooks2.PostStoreCount);
+    }
+
+    [Fact]
+    public async Task RunBulkAsync_WithValidate_RejectsBadEntry_FailsFast()
+    {
+        var store = new InMemoryEidetStore();
+        var svc = new MemoryService(store);
+
+        // Warm repo-a so we can observe whether the pre-throw good store landed + invalidated.
+        Assert.Empty(await svc.RecallAsync("repo-a", "deployment"));
+
+        var good = MakeEntry("repo-a", "memories/repo-a/insight/good", "deployment uses argo cd");
+        var bad = MakeEntry("repo-a", "memories/repo-a/observation/bad", "AWS access key: AKIAIOSFODNN7EXAMPLE");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            svc.RunBulkAsync<int>(async ctx =>
+            {
+                await ctx.StoreNewAsync(good, CancellationToken.None);
+                await ctx.StoreNewAsync(bad, CancellationToken.None); // secret → fail-fast
+                return 0;
+            }, new BulkOptions { Validate = true }));
+
+        // Fail-fast does not roll back: the good entry stored before the bad one persists,
+        // and the finally invalidated repo-a so the recall sees it.
+        Assert.Single(await svc.RecallAsync("repo-a", "deployment"));
+        // The rejected entry was never stored.
+        Assert.Null(await store.GetAsync(bad.Id));
+    }
+
+    [Fact]
+    public async Task WriteManyAsync_SkipIfExists_SkipsExisting()
+    {
+        var store = new InMemoryEidetStore();
+        var svc = new MemoryService(store);
+
+        var a = MakeEntry("repo-a", "memories/repo-a/insight/a", "alpha deployment notes");
+        var b = MakeEntry("repo-a", "memories/repo-a/insight/b", "bravo deployment notes");
+        await store.StoreAsync(a);
+
+        var result = await svc.WriteManyAsync([a, b], new BulkWriteOptions { SkipIfExists = true });
+        Assert.Equal(1, result.Added);
+        Assert.Equal(1, result.Skipped);
+
+        // B is now searchable, A is still present — recall sees both.
+        Assert.Equal(2, (await svc.RecallAsync("repo-a", "deployment")).Count);
+
+        // Without SkipIfExists, a pre-existing id is overwritten rather than skipped.
+        var store2 = new InMemoryEidetStore();
+        var svc2 = new MemoryService(store2);
+        var a2 = MakeEntry("repo-b", "memories/repo-b/insight/a", "alpha");
+        var b2 = MakeEntry("repo-b", "memories/repo-b/insight/b", "bravo");
+        await store2.StoreAsync(a2);
+        var result2 = await svc2.WriteManyAsync([a2, b2]);
+        Assert.Equal(2, result2.Added);
+        Assert.Equal(0, result2.Skipped);
+    }
+
+    [Fact]
+    public async Task UpdateManyAsync_InvalidatesOncePerScope()
+    {
+        var store = new InMemoryEidetStore();
+        var svc = new MemoryService(store);
+
+        var e1 = MakeEntry("repo-a", "memories/repo-a/insight/1", "original alpha");
+        var e2 = MakeEntry("repo-a", "memories/repo-a/insight/2", "original bravo");
+        await store.StoreAsync(e1);
+        await store.StoreAsync(e2);
+
+        // Warm repo-a; "rewritten" matches nothing yet.
+        Assert.Empty(await svc.RecallAsync("repo-a", "rewritten"));
+
+        e1.Content = "rewritten alpha";
+        e2.Content = "rewritten bravo";
+        var written = await svc.UpdateManyAsync([e1, e2]);
+        Assert.Equal(2, written);
+
+        // repo-a's cache was invalidated — the updated content is now observable.
+        Assert.Equal(2, (await svc.RecallAsync("repo-a", "rewritten")).Count);
+    }
+
     [Fact]
     public async Task Concurrent_StoreDuringRecall_NoStaleResult()
     {
@@ -199,6 +408,27 @@ internal sealed class GatedSearchStore : InMemoryEidetStore
         }
         return snapshot;
     }
+}
+
+/// <summary>
+/// Counts post-store hook invocations. Increments synchronously so the fire-and-forget
+/// <c>_ = RunPostHooksAsync(...)</c> in the bulk path is observable without an await race.
+/// </summary>
+internal sealed class CountingHookRunner : IHookRunner
+{
+    private int _postStore;
+    public int PostStoreCount => _postStore;
+
+    public Task<HookResult> RunPreHooksAsync(HookEvent evt, HookContext context, CancellationToken ct) =>
+        Task.FromResult(HookResult.Ok());
+
+    public Task RunPostHooksAsync(HookEvent evt, HookContext context, CancellationToken ct)
+    {
+        if (evt == HookEvent.PostStore) Interlocked.Increment(ref _postStore);
+        return Task.CompletedTask;
+    }
+
+    public bool HasHooks(HookEvent evt) => true;
 }
 
 /// <summary>
