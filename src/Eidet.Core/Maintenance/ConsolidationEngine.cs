@@ -134,6 +134,7 @@ public sealed class ConsolidationEngine
             }
         }
 
+        if (changed.Count == 0) return 0;
         await _memory.UpdateManyAsync(changed, ct);
         return changed.Count;
     }
