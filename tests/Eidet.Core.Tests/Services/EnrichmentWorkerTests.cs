@@ -17,7 +17,7 @@ public class EnrichmentWorkerTests
         // CreateNull() means Ollama is disabled — worker should not start.
         // Passing null! for store proves it's never accessed.
         using var enrichment = EnrichmentService.CreateNull();
-        using var worker = new EnrichmentWorker(null!, enrichment);
+        using var worker = new EnrichmentWorker(null!, enrichment, null!);
         await worker.StartAsync(CancellationToken.None);
     }
 
@@ -25,7 +25,7 @@ public class EnrichmentWorkerTests
     public void Dispose_WithoutStart_DoesNotThrow()
     {
         using var enrichment = EnrichmentService.CreateNull();
-        var worker = new EnrichmentWorker(null!, enrichment);
+        var worker = new EnrichmentWorker(null!, enrichment, null!);
         worker.Dispose();
     }
 
@@ -33,7 +33,7 @@ public class EnrichmentWorkerTests
     public async Task Dispose_AfterNullEnrichmentStart_DoesNotThrow()
     {
         using var enrichment = EnrichmentService.CreateNull();
-        var worker = new EnrichmentWorker(null!, enrichment);
+        var worker = new EnrichmentWorker(null!, enrichment, null!);
         await worker.StartAsync(CancellationToken.None);
         worker.Dispose();
     }

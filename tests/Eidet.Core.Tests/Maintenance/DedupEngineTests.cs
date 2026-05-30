@@ -1,5 +1,6 @@
 using Eidet.Core.Domain;
 using Eidet.Core.Maintenance;
+using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Core.Tests.Services;
 
@@ -51,7 +52,7 @@ public class DedupEngineTests
         await store.StoreAsync(high);
         await store.StoreAsync(low);
 
-        var engine = new DedupEngine(store);
+        var engine = new DedupEngine(store, new MemoryService(store));
         var result = await engine.DedupAsync("repo-a");
 
         Assert.Equal(1, result.MergedCount);
@@ -100,7 +101,7 @@ public class DedupEngineTests
         // The vector index "knows" b is a near-dup of a.
         store.SeedNearDuplicate(a.Id, b.Id);
 
-        var engine = new DedupEngine(store);
+        var engine = new DedupEngine(store, new MemoryService(store));
         var result = await engine.DedupAsync("repo-a");
 
         Assert.Equal(1, result.MergedCount);
@@ -136,7 +137,7 @@ public class DedupEngineTests
         // Even if the index were asked, cross-type seeding must not bridge them.
         store.SeedNearDuplicate(observation.Id, insight.Id);
 
-        var engine = new DedupEngine(store);
+        var engine = new DedupEngine(store, new MemoryService(store));
         var result = await engine.DedupAsync("repo-a");
 
         Assert.Equal(0, result.MergedCount);
@@ -161,7 +162,7 @@ public class DedupEngineTests
         await store.StoreAsync(high);
         await store.StoreAsync(low);
 
-        var engine = new DedupEngine(store);
+        var engine = new DedupEngine(store, new MemoryService(store));
         var result = await engine.DedupAsync("repo-a", dryRun: true);
 
         // The would-merge pair is reported.
@@ -185,7 +186,7 @@ public class DedupEngineTests
             "The cache layer evicts least-recently-used entries on memory pressure",
             importance: 0.6f));
 
-        var engine = new DedupEngine(store);
+        var engine = new DedupEngine(store, new MemoryService(store));
         var result = await engine.DedupAsync("repo-a");
 
         Assert.Equal(0, result.MergedCount);
@@ -211,7 +212,7 @@ public class DedupEngineTests
         await store.StoreAsync(e2);
         await store.StoreAsync(e3);
 
-        var engine = new DedupEngine(store);
+        var engine = new DedupEngine(store, new MemoryService(store));
         var result = await engine.DedupAsync("repo-a");
 
         // Two merges fold e2 and e3 away; no entry is both kept and discarded.
@@ -254,7 +255,7 @@ public class DedupEngineTests
         await store.StoreAsync(obsHigh);
         await store.StoreAsync(obsLow);
 
-        var engine = new DedupEngine(store);
+        var engine = new DedupEngine(store, new MemoryService(store));
         var result = await engine.DedupAsync("repo-a",
             new DedupOptions { Types = [MemoryType.Insight] });
 
@@ -289,7 +290,7 @@ public class DedupEngineTests
         store.SeedNearDuplicate(mid.Id, high.Id);
         store.SeedNearDuplicate(mid.Id, low.Id);
 
-        var engine = new DedupEngine(store);
+        var engine = new DedupEngine(store, new MemoryService(store));
         var result = await engine.DedupAsync("repo-a");
 
         // Exactly one merge: mid folds into high; low is untouched.

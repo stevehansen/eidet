@@ -45,7 +45,7 @@ internal sealed class EnrichmentCleanupStage : IMaintenanceStage
 
             if (changed)
             {
-                await ctx.Store.UpdateAsync(entry, ct);
+                await ctx.Write.WriteAsync(entry, ct);
                 cleaned++;
             }
         }

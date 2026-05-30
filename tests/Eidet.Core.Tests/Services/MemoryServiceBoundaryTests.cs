@@ -102,43 +102,6 @@ public class MemoryServiceBoundaryTests
         Assert.Single(afterReject);
     }
 
-    [Fact]
-    public async Task Bulk_invalidate_keeps_recall_coherent_after_direct_store_writes()
-    {
-        var store = new InMemoryEidetStore();
-        var svc = new MemoryService(store);
-
-        // Warm cache.
-        var initial = await svc.RecallAsync("repo-a", "deployment");
-        Assert.Empty(initial);
-
-        // Simulate a bulk-write path (e.g. ExportService.ImportPackAsync) that writes
-        // directly to the store and then explicitly invalidates the recall cache via
-        // the internal helper. This is exactly what the four tactical patches do.
-        var entry = new MemoryEntry
-        {
-            Id = "memories/repo-a/insight/bulk-deploy-1",
-            RepoId = "repo-a",
-            Type = MemoryType.Insight,
-            Content = "deployment uses argo cd via gitops",
-            CreatedAt = DateTime.UtcNow,
-            Validity = new Validity { ValidFrom = DateTime.UtcNow },
-            IsLatest = true,
-            Importance = 0.7f,
-        };
-        await store.StoreAsync(entry);
-
-        // Without invalidation, the next recall would hit the stale empty cache.
-        // The internal helper is what bulk callers use; here we verify it works.
-        typeof(MemoryService)
-            .GetMethod("InvalidateRecallCache", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
-                types: [typeof(string)])!
-            .Invoke(svc, ["repo-a"]);
-
-        var after = await svc.RecallAsync("repo-a", "deployment");
-        Assert.Contains(after, r => r.Id == entry.Id);
-    }
-
     // ─── Bulk-write gate (#10) ──────────────────────────────────────
 
     private static MemoryEntry MakeEntry(string repoId, string id, string content) => new()

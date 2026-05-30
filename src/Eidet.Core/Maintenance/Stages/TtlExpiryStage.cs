@@ -16,7 +16,7 @@ internal sealed class TtlExpiryStage : IMaintenanceStage
         {
             entry.Validity.ValidUntil = ctx.Now;
             entry.ForgetReason = "TTL expired";
-            await ctx.Store.UpdateAsync(entry, ct);
+            await ctx.Write.WriteAsync(entry, ct);
             expired++;
         }
 

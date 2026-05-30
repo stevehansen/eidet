@@ -26,7 +26,7 @@ internal sealed class OrphanCleanupStage : IMaintenanceStage
 
             entry.Validity.ValidUntil = ctx.Now;
             entry.ForgetReason = "Orphan cleanup";
-            await ctx.Store.UpdateAsync(entry, ct);
+            await ctx.Write.WriteAsync(entry, ct);
             cleaned++;
         }
 

@@ -18,8 +18,10 @@ public readonly record struct StageOutcome(string Name, int Affected, string? Er
 public sealed class MaintenanceContext
 {
     public required IEidetStore Store { get; init; }
+    public required BulkMutationCtx Write { get; init; }
     public required EnrichmentService Enrichment { get; init; }
     public required ConsolidationEngine Consolidation { get; init; }
+    public required DedupEngine Dedup { get; init; }
 
     public required string RepoId { get; init; }
     public required bool IsRepoActive { get; init; }

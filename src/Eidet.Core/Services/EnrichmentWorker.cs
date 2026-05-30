@@ -16,13 +16,13 @@ public sealed class EnrichmentWorker : IDisposable
 
     private readonly IDocumentStore _store;
     private readonly EnrichmentService _enrichment;
-    private readonly MemoryService? _memory;
+    private readonly MemoryService _memory;
     private CancellationTokenSource? _cts;
     private Task? _workerTask;
 
-    public EnrichmentWorker(IDocumentStore store, EnrichmentService enrichment, MemoryService? memory = null)
+    public EnrichmentWorker(IDocumentStore subscriptionStore, EnrichmentService enrichment, MemoryService memory)
     {
-        _store = store;
+        _store = subscriptionStore;
         _enrichment = enrichment;
         _memory = memory;
     }
@@ -92,13 +92,9 @@ public sealed class EnrichmentWorker : IDisposable
     {
         if (!await _enrichment.EnrichMemoryAsync(entry, ct)) return;
 
-        using var session = _store.OpenAsyncSession();
-        await session.StoreAsync(entry, entry.Id, ct);
-        await session.SaveChangesAsync(ct);
-
         // Enrichment updates Summary/OneLiner/ForesightHint — all part of SearchText and recall
-        // scoring — so a cached recall for this repo could otherwise serve pre-enrichment results.
-        _memory?.InvalidateRecallCache(entry.RepoId);
+        // scoring — so the write must route through the gate to invalidate this repo's recall cache.
+        await _memory.UpdateManyAsync([entry], ct);
     }
 
     public void Dispose()

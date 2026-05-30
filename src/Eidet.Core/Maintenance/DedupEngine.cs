@@ -17,19 +17,30 @@ public sealed class DedupEngine
 {
     private readonly IEidetStore _store;
     private readonly EnrichmentService _enrichment;
-    private readonly MemoryService? _memory;
+    private readonly MemoryService _memory;
 
-    public DedupEngine(IEidetStore store, EnrichmentService? enrichment = null, MemoryService? memory = null)
+    public DedupEngine(IEidetStore store, MemoryService memory, EnrichmentService? enrichment = null)
     {
         _store = store;
-        _enrichment = enrichment ?? EnrichmentService.CreateNull();
         _memory = memory;
+        _enrichment = enrichment ?? EnrichmentService.CreateNull();
     }
 
-    public Task<DedupResult> DedupAsync(string repoId, bool dryRun = false, CancellationToken ct = default) =>
-        DedupAsync(repoId, new DedupOptions(), dryRun, ct);
+    public Task<DedupResult> DedupAsync(
+        string repoId, bool dryRun = false, CancellationToken ct = default, BulkMutationCtx? write = null) =>
+        DedupAsync(repoId, new DedupOptions(), dryRun, ct, write);
 
-    public async Task<DedupResult> DedupAsync(string repoId, DedupOptions options, bool dryRun = false, CancellationToken ct = default)
+    public Task<DedupResult> DedupAsync(
+        string repoId, DedupOptions options, bool dryRun = false, CancellationToken ct = default, BulkMutationCtx? write = null) =>
+        // Join the caller's bulk scope when handed one (maintenance stage); otherwise open our own
+        // so standalone API / MCP / scheduler runs still invalidate the recall cache exactly once.
+        write is { } w
+            ? DedupCoreAsync(repoId, options, dryRun, w, ct)
+            : _memory.RunBulkAsync(w2 => DedupCoreAsync(repoId, options, dryRun, w2, ct),
+                                   new BulkOptions { OperationName = "dedup" }, ct);
+
+    private async Task<DedupResult> DedupCoreAsync(
+        string repoId, DedupOptions options, bool dryRun, BulkMutationCtx write, CancellationToken ct)
     {
         var result = new DedupResult();
         var types = options.Types ?? Enum.GetValues<MemoryType>();
@@ -51,7 +62,7 @@ public sealed class DedupEngine
                     if (claimed.Contains(entry.Id)) break;   // entry itself was folded away — stop merging into a tombstone
                     if (cand.Id == entry.Id || claimed.Contains(cand.Id)) continue;
                     if (!byId.TryGetValue(cand.Id, out var local)) continue;
-                    await MergeAsync(entry, local, claimed, result, dryRun, ct);
+                    await MergeAsync(entry, local, claimed, result, dryRun, write, ct);
                 }
             }
 
@@ -63,19 +74,16 @@ public sealed class DedupEngine
                 {
                     if (claimed.Contains(entries[j].Id)) continue;
                     if (WordSimilarity.Compute(entries[i].Content, entries[j].Content) < LexicalThreshold) continue;
-                    await MergeAsync(entries[i], entries[j], claimed, result, dryRun, ct);
+                    await MergeAsync(entries[i], entries[j], claimed, result, dryRun, write, ct);
                 }
             }
         }
-
-        if (!dryRun && result.Merges.Count > 0)
-            _memory?.InvalidateRecallCache(repoId);
 
         return result;
     }
 
     private async Task MergeAsync(
-        MemoryEntry a, MemoryEntry b, HashSet<string> claimed, DedupResult result, bool dryRun, CancellationToken ct)
+        MemoryEntry a, MemoryEntry b, HashSet<string> claimed, DedupResult result, bool dryRun, BulkMutationCtx write, CancellationToken ct)
     {
         var (keep, discard) = a.Importance >= b.Importance ? (a, b) : (b, a);
 
@@ -94,8 +102,8 @@ public sealed class DedupEngine
 
         if (!dryRun)
         {
-            await _store.UpdateAsync(keep, ct);
-            await _store.UpdateAsync(discard, ct);
+            await write.WriteAsync(keep, ct);
+            await write.WriteAsync(discard, ct);
         }
     }
 

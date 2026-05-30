@@ -24,7 +24,8 @@ public sealed class ConsolidationEngine
         _memory = memory;
     }
 
-    public async Task<ConsolidationResult> ConsolidateAsync(string repoId, bool dryRun = false, CancellationToken ct = default)
+    public async Task<ConsolidationResult> ConsolidateAsync(
+        string repoId, bool dryRun = false, CancellationToken ct = default, BulkMutationCtx? write = null)
     {
         var result = new ConsolidationResult();
 
@@ -37,77 +38,88 @@ public sealed class ConsolidationEngine
 
         var groups = TagOverlapGrouper.Group(observations);
 
-        await _memory.RunBulkAsync(async ctx =>
-        {
-            foreach (var group in groups.Where(g => g.Count >= 3))
-            {
-                var unionTags = group.SelectMany(o => o.Tags).Distinct().ToList();
-                var meanImportance = group.Average(o => o.Importance);
-                var proposedImportance = Math.Min(1.0f, (float)(meanImportance * 1.2));
-                var representative = group.OrderByDescending(o => o.Importance).First();
-
-                var candidate = new ConsolidationCandidate
-                {
-                    ObservationIds = group.Select(o => o.Id).ToList(),
-                    Tags = unionTags,
-                    ProposedContent = representative.Content,
-                    ProposedImportance = proposedImportance,
-                };
-                result.Candidates.Add(candidate);
-
-                if (dryRun) continue;
-
-                var existingInsight = await _store.FindDuplicateAsync(repoId, representative.Content, 0.85f, ct);
-                if (existingInsight is not null && existingInsight.Type == MemoryType.Insight)
-                {
-                    existingInsight.Importance = Math.Min(1.0f, existingInsight.Importance + 0.05f * group.Count);
-                    existingInsight.DerivedFrom = existingInsight.DerivedFrom
-                        .Concat(candidate.ObservationIds)
-                        .Distinct()
-                        .ToList();
-                    await ctx.WriteAsync(existingInsight, ct);
-                    result.InsightsBoosted++;
-                }
-                else
-                {
-                    var mergedContent = representative.Content;
-                    if (group.Count > 5 && _enrichment.IsAvailable)
-                    {
-                        var merged = await _enrichment.MergeObservationsAsync(
-                            group.Select(o => o.Content).ToList(), ct);
-                        if (!string.IsNullOrEmpty(merged))
-                            mergedContent = merged;
-                    }
-
-                    var now = DateTime.UtcNow;
-                    var insight = new MemoryEntry
-                    {
-                        Id = MemoryIdGenerator.Generate(repoId, MemoryType.Insight, mergedContent, now),
-                        RepoId = repoId,
-                        Type = MemoryType.Insight,
-                        Content = mergedContent,
-                        Tags = unionTags,
-                        Importance = proposedImportance,
-                        Source = "consolidation",
-                        Provenance = MemoryProvenance.Consolidation,
-                        Confidence = 0.7f,
-                        CreatedAt = now,
-                        Validity = new Validity { ValidFrom = now },
-                        DerivedFrom = candidate.ObservationIds,
-                        Entities = EntityExtractor.Extract(mergedContent),
-                        OneLiner = EntityExtractor.GenerateHeuristicOneLiner(mergedContent),
-                    };
-                    await ctx.StoreNewAsync(insight, ct);
-                    result.InsightsCreated++;
-                }
-            }
-            return 0;
-        }, new BulkOptions { OperationName = "consolidate" }, ct);
+        // Join the caller's bulk scope when handed one (maintenance stage); otherwise open our own.
+        if (write is { } w)
+            await ConsolidateGroupsAsync(w, repoId, groups, dryRun, result, ct);
+        else
+            await _memory.RunBulkAsync(
+                ctx => ConsolidateGroupsAsync(ctx, repoId, groups, dryRun, result, ct),
+                new BulkOptions { OperationName = "consolidate" }, ct);
 
         return result;
     }
 
-    public async Task<int> ApplyImportanceDecayAsync(string repoId, bool isRepoActive = true, CancellationToken ct = default)
+    private async Task<int> ConsolidateGroupsAsync(
+        BulkMutationCtx ctx, string repoId, IReadOnlyList<List<MemoryEntry>> groups,
+        bool dryRun, ConsolidationResult result, CancellationToken ct)
+    {
+        foreach (var group in groups.Where(g => g.Count >= 3))
+        {
+            var unionTags = group.SelectMany(o => o.Tags).Distinct().ToList();
+            var meanImportance = group.Average(o => o.Importance);
+            var proposedImportance = Math.Min(1.0f, (float)(meanImportance * 1.2));
+            var representative = group.OrderByDescending(o => o.Importance).First();
+
+            var candidate = new ConsolidationCandidate
+            {
+                ObservationIds = group.Select(o => o.Id).ToList(),
+                Tags = unionTags,
+                ProposedContent = representative.Content,
+                ProposedImportance = proposedImportance,
+            };
+            result.Candidates.Add(candidate);
+
+            if (dryRun) continue;
+
+            var existingInsight = await _store.FindDuplicateAsync(repoId, representative.Content, 0.85f, ct);
+            if (existingInsight is not null && existingInsight.Type == MemoryType.Insight)
+            {
+                existingInsight.Importance = Math.Min(1.0f, existingInsight.Importance + 0.05f * group.Count);
+                existingInsight.DerivedFrom = existingInsight.DerivedFrom
+                    .Concat(candidate.ObservationIds)
+                    .Distinct()
+                    .ToList();
+                await ctx.WriteAsync(existingInsight, ct);
+                result.InsightsBoosted++;
+            }
+            else
+            {
+                var mergedContent = representative.Content;
+                if (group.Count > 5 && _enrichment.IsAvailable)
+                {
+                    var merged = await _enrichment.MergeObservationsAsync(
+                        group.Select(o => o.Content).ToList(), ct);
+                    if (!string.IsNullOrEmpty(merged))
+                        mergedContent = merged;
+                }
+
+                var now = DateTime.UtcNow;
+                var insight = new MemoryEntry
+                {
+                    Id = MemoryIdGenerator.Generate(repoId, MemoryType.Insight, mergedContent, now),
+                    RepoId = repoId,
+                    Type = MemoryType.Insight,
+                    Content = mergedContent,
+                    Tags = unionTags,
+                    Importance = proposedImportance,
+                    Source = "consolidation",
+                    Provenance = MemoryProvenance.Consolidation,
+                    Confidence = 0.7f,
+                    CreatedAt = now,
+                    Validity = new Validity { ValidFrom = now },
+                    DerivedFrom = candidate.ObservationIds,
+                    Entities = EntityExtractor.Extract(mergedContent),
+                    OneLiner = EntityExtractor.GenerateHeuristicOneLiner(mergedContent),
+                };
+                await ctx.StoreNewAsync(insight, ct);
+                result.InsightsCreated++;
+            }
+        }
+        return 0;
+    }
+
+    public async Task<int> ApplyImportanceDecayAsync(
+        string repoId, bool isRepoActive = true, CancellationToken ct = default, BulkMutationCtx? write = null)
     {
         if (!isRepoActive) return 0;
 
@@ -135,7 +147,17 @@ public sealed class ConsolidationEngine
         }
 
         if (changed.Count == 0) return 0;
-        await _memory.UpdateManyAsync(changed, ct);
+
+        // Join the caller's bulk scope when handed one (maintenance stage); otherwise own one.
+        if (write is { } w)
+        {
+            foreach (var entry in changed)
+                await w.WriteAsync(entry, ct);
+        }
+        else
+        {
+            await _memory.UpdateManyAsync(changed, ct);
+        }
         return changed.Count;
     }
 }

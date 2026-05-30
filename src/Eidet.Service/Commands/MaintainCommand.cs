@@ -30,7 +30,7 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
         var memorySvc = new MemoryService(eidetStore);
         var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memorySvc);
         IMaintenanceRunner runner = new MaintenanceRunner(
-            new MaintenanceOrchestrator(eidetStore, enrichment, consolidationEngine, memory: memorySvc));
+            new MaintenanceOrchestrator(eidetStore, memorySvc, enrichment, consolidationEngine));
 
         var repoId = Eidet.Core.Domain.RepoIdNormalizer.Normalize(settings.Repo ?? Directory.GetCurrentDirectory());
 
