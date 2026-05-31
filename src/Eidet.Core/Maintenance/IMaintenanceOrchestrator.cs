@@ -13,25 +13,24 @@ public interface IMaintenanceOrchestrator
 public sealed class MaintenanceOrchestrator : IMaintenanceOrchestrator
 {
     private readonly IEidetStore _store;
+    private readonly MemoryService _memory;
     private readonly EnrichmentService _enrichment;
     private readonly ConsolidationEngine _consolidation;
     private readonly IReadOnlyList<IMaintenanceStage> _stages;
-    private readonly MemoryService? _memory;
 
     public MaintenanceOrchestrator(
         IEidetStore store,
+        MemoryService memory,
         EnrichmentService? enrichment = null,
         ConsolidationEngine? consolidation = null,
-        IReadOnlyList<IMaintenanceStage>? stages = null,
-        MemoryService? memory = null)
+        IReadOnlyList<IMaintenanceStage>? stages = null)
     {
         _store = store;
-        _enrichment = enrichment ?? EnrichmentService.CreateNull();
         _memory = memory;
+        _enrichment = enrichment ?? EnrichmentService.CreateNull();
         // The default consolidation engine shares this orchestrator's MemoryService so recall and
-        // consolidation writes hit one cache; the throwaway fallback is only reached when no memory
-        // was supplied (CLI one-shots / tests), where no long-lived recall cache exists to keep coherent.
-        _consolidation = consolidation ?? new ConsolidationEngine(store, _enrichment, _memory ?? new MemoryService(store));
+        // consolidation writes hit one cache.
+        _consolidation = consolidation ?? new ConsolidationEngine(store, _enrichment, _memory);
         _stages = stages ?? DefaultStages();
     }
 
@@ -48,49 +47,51 @@ public sealed class MaintenanceOrchestrator : IMaintenanceOrchestrator
         new ConsolidationStage(),
     ];
 
-    public async Task<MaintenanceReport> RunAsync(MaintenanceRequest request, CancellationToken ct = default)
-    {
-        var ctx = new MaintenanceContext
+    public Task<MaintenanceReport> RunAsync(MaintenanceRequest request, CancellationToken ct = default) =>
+        // One bulk scope per run: every direct-writing stage and both dual-use engines write
+        // through `write`, so the touched scopes are invalidated exactly once in the finally.
+        _memory.RunBulkAsync(async write =>
         {
-            Store = _store,
-            Enrichment = _enrichment,
-            Consolidation = _consolidation,
-            RepoId = request.RepoId,
-            IsRepoActive = request.IsRepoActive,
-            ObservationRetentionDays = request.ObservationRetentionDays,
-        };
+            var dedup = new DedupEngine(_store, _memory, _enrichment);
+            var report = new MaintenanceReport { RepoId = request.RepoId };
 
-        var report = new MaintenanceReport { RepoId = request.RepoId };
-
-        foreach (var stage in _stages)
-        {
-            if (ct.IsCancellationRequested) break;
-
-            if (request.OnlyStages is { Count: > 0 } only && !only.Contains(stage.Name)) continue;
-            if (request.SkipStages is { Count: > 0 } skip && skip.Contains(stage.Name)) continue;
-
-            try
+            // Built once per run: every field is run-constant, and stages share one Now and one
+            // Items scratch dictionary (the documented stage-to-stage contract).
+            var ctx = new MaintenanceContext
             {
-                var outcome = await stage.ExecuteAsync(ctx, ct);
-                report.Stages.Add(outcome);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                report.Stages.Add(new StageOutcome(stage.Name, 0, ex.Message));
-            }
-        }
+                Store = _store,
+                Write = write,
+                Enrichment = _enrichment,
+                Consolidation = _consolidation,
+                Dedup = dedup,
+                RepoId = request.RepoId,
+                IsRepoActive = request.IsRepoActive,
+                ObservationRetentionDays = request.ObservationRetentionDays,
+            };
 
-        // Every maintenance run is single-repo, so one invalidation of request.RepoId covers
-        // all direct-writing stages (TTL/retention/orphan/enrichment) plus DedupSweepStage —
-        // none of which invalidate on their own. Gated on net writes to avoid needless misses.
-        if (report.Stages.Sum(s => s.Affected) > 0)
-            _memory?.InvalidateRecallCache(request.RepoId);
+            foreach (var stage in _stages)
+            {
+                if (ct.IsCancellationRequested) break;
 
-        report.CompletedAt = DateTime.UtcNow;
-        return report;
-    }
+                if (request.OnlyStages is { Count: > 0 } only && !only.Contains(stage.Name)) continue;
+                if (request.SkipStages is { Count: > 0 } skip && skip.Contains(stage.Name)) continue;
+
+                try
+                {
+                    var outcome = await stage.ExecuteAsync(ctx, ct);
+                    report.Stages.Add(outcome);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    report.Stages.Add(new StageOutcome(stage.Name, 0, ex.Message));
+                }
+            }
+
+            report.CompletedAt = DateTime.UtcNow;
+            return report;
+        }, new BulkOptions { OperationName = "maintenance" }, ct);
 }

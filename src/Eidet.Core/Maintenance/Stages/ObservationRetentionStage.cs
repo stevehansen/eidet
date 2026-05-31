@@ -21,7 +21,7 @@ internal sealed class ObservationRetentionStage : IMaintenanceStage
 
             obs.Validity.ValidUntil = ctx.Now;
             obs.ForgetReason = $"Observation retention ({ctx.ObservationRetentionDays}d)";
-            await ctx.Store.UpdateAsync(obs, ct);
+            await ctx.Write.WriteAsync(obs, ct);
             expired++;
         }
 

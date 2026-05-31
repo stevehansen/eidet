@@ -8,8 +8,7 @@ internal sealed class DedupSweepStage : IMaintenanceStage
 
     public async Task<StageOutcome> ExecuteAsync(MaintenanceContext ctx, CancellationToken ct)
     {
-        var engine = new DedupEngine(ctx.Store, ctx.Enrichment);
-        var result = await engine.DedupAsync(ctx.RepoId, ct: ct);
+        var result = await ctx.Dedup.DedupAsync(ctx.RepoId, new DedupOptions(), dryRun: false, write: ctx.Write, ct: ct);
         return new StageOutcome(Name, result.MergedCount);
     }
 }

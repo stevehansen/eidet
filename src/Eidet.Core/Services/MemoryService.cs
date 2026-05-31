@@ -580,22 +580,6 @@ public sealed class MemoryService
     public bool IsRepoActive(string repoId, int withinDays = 7) =>
         _activity.IsActive(repoId, withinDays);
 
-    // ─── Bulk-write coherence assist ─────────────────────────────────
-
-    /// <summary>
-    /// Bumps the recall-cache generation for <paramref name="scope"/>. Serves the bulk paths
-    /// that have not yet been migrated onto <see cref="RunBulkAsync"/> — the Enrichment worker,
-    /// the Dedup engine, and the Maintenance stages, which still write through <see cref="IEidetStore"/>
-    /// directly and invalidate by hand.
-    /// </summary>
-    internal void InvalidateRecallCache(string scope) => _cache.Invalidate(scope);
-
-    /// <summary>
-    /// Bumps the recall-cache generation for every scope. Serves the not-yet-migrated bulk
-    /// paths (Enrichment / Dedup / Maintenance stages).
-    /// </summary>
-    internal void InvalidateRecallCache(IEnumerable<string> scopes) => _cache.InvalidateAll(scopes);
-
     // ─── Bulk mutations ──────────────────────────────────────────────
 
     /// <summary>
@@ -652,8 +636,7 @@ public sealed class MemoryService
     /// Escape hatch for mixed-op bulk bodies (store + update + delete). Hands the body a
     /// <see cref="BulkMutationCtx"/> whose write methods each record the touched scope; the
     /// surrounding pipeline invalidates each touched scope exactly once in a <c>finally</c>,
-    /// including when the body throws. This is the structural guarantee callers used to provide
-    /// by hand-calling <c>InvalidateRecallCache</c>.
+    /// including when the body throws — so callers never invalidate the recall cache by hand.
     /// </summary>
     /// <remarks>
     /// The touched-scope set is shared by reference and is not thread-safe; writes within a body

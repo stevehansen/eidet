@@ -20,7 +20,7 @@ internal sealed class OllamaEnrichmentStage : IMaintenanceStage
 
             if (await ctx.Enrichment.EnrichMemoryAsync(entry, ct))
             {
-                await ctx.Store.UpdateAsync(entry, ct);
+                await ctx.Write.WriteAsync(entry, ct);
                 enriched++;
             }
         }

@@ -25,7 +25,7 @@ public class MaintenanceOrchestratorTests
     private static MaintenanceOrchestrator WithStages(params IMaintenanceStage[] stages)
     {
         IEidetStore store = null!; // stub stages don't touch the store
-        return new MaintenanceOrchestrator(store, EnrichmentService.CreateNull(),
+        return new MaintenanceOrchestrator(store, new MemoryService(store), EnrichmentService.CreateNull(),
             new ConsolidationEngine(store, enrichment: null, memory: new MemoryService(store)), stages);
     }
 
