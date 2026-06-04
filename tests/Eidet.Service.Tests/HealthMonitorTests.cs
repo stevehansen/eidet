@@ -1,3 +1,4 @@
+using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
 using Eidet.Core.Storage;
 
@@ -5,32 +6,40 @@ namespace Eidet.Service.Tests;
 
 public class HealthMonitorTests
 {
+    [Theory]
+    [InlineData(EnrichmentProvider.Ollama, "/api/tags")]
+    [InlineData(EnrichmentProvider.OpenAiCompatible, "/v1/models")]
+    public void ProbePathFor_IsProviderSpecific(EnrichmentProvider provider, string expected)
+    {
+        Assert.Equal(expected, HealthMonitor.ProbePathFor(provider));
+    }
+
     [Fact]
     public void CurrentState_ReflectsInitialState()
     {
         using var cts = new CancellationTokenSource();
         using var monitor = new HealthMonitor(
-            new StubStore(healthy: true), ollamaEnabled: false,
-            "gemma4", "http://localhost:11434", "http://localhost:8080",
-            initialOllamaHealthy: false, cts.Token);
+            new StubStore(healthy: true), enrichmentEnabled: false,
+            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            initialEnrichmentHealthy: false, cts.Token);
 
         var state = monitor.CurrentState;
         Assert.True(state.RavenDbHealthy);
-        Assert.False(state.OllamaHealthy);
+        Assert.False(state.EnrichmentHealthy);
     }
 
     [Fact]
-    public void CurrentState_OllamaEnabled_ReflectsInitialHealth()
+    public void CurrentState_EnrichmentEnabled_ReflectsInitialHealth()
     {
         using var cts = new CancellationTokenSource();
         using var monitor = new HealthMonitor(
-            new StubStore(healthy: true), ollamaEnabled: true,
-            "gemma4", "http://localhost:11434", "http://localhost:8080",
-            initialOllamaHealthy: true, cts.Token);
+            new StubStore(healthy: true), enrichmentEnabled: true,
+            EnrichmentProvider.OpenAiCompatible, "gemma4", "http://localhost:1234", "http://localhost:8080",
+            initialEnrichmentHealthy: true, cts.Token);
 
         var state = monitor.CurrentState;
         Assert.True(state.RavenDbHealthy);
-        Assert.True(state.OllamaHealthy);
+        Assert.True(state.EnrichmentHealthy);
     }
 
     [Fact]
@@ -38,9 +47,9 @@ public class HealthMonitorTests
     {
         using var cts = new CancellationTokenSource();
         var monitor = new HealthMonitor(
-            new StubStore(healthy: true), ollamaEnabled: true,
-            "gemma4", "http://localhost:11434", "http://localhost:8080",
-            initialOllamaHealthy: false, cts.Token);
+            new StubStore(healthy: true), enrichmentEnabled: true,
+            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            initialEnrichmentHealthy: false, cts.Token);
 
         monitor.Dispose();
         // Should not throw on double dispose
@@ -53,6 +62,7 @@ public class HealthMonitorTests
         var a = new HealthMonitor.HealthState(true, false);
         var b = new HealthMonitor.HealthState(true, false);
         var c = new HealthMonitor.HealthState(false, false);
+        // record field rename guard: second positional is EnrichmentHealthy
 
         Assert.Equal(a, b);
         Assert.NotEqual(a, c);
@@ -64,9 +74,9 @@ public class HealthMonitorTests
         using var cts = new CancellationTokenSource();
         var store = new StubStore(healthy: true);
         using var monitor = new HealthMonitor(
-            store, ollamaEnabled: false,
-            "gemma4", "http://localhost:11434", "http://localhost:8080",
-            initialOllamaHealthy: false, cts.Token);
+            store, enrichmentEnabled: false,
+            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            initialEnrichmentHealthy: false, cts.Token);
 
         var events = new List<(string Component, bool Healthy, string Detail)>();
         monitor.OnStatusChanged += (c, h, d) => events.Add((c, h, d));
@@ -99,9 +109,9 @@ public class HealthMonitorTests
         // The monitor assumes RavenDB is healthy at start, so a false store will trigger "down" first,
         // then we flip to healthy to trigger "recovered"
         using var monitor = new HealthMonitor(
-            store, ollamaEnabled: false,
-            "gemma4", "http://localhost:11434", "http://localhost:8080",
-            initialOllamaHealthy: false, cts.Token);
+            store, enrichmentEnabled: false,
+            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            initialEnrichmentHealthy: false, cts.Token);
 
         var events = new List<(string Component, bool Healthy, string Detail)>();
         monitor.OnStatusChanged += (c, h, d) => events.Add((c, h, d));
@@ -134,9 +144,9 @@ public class HealthMonitorTests
         using var cts = new CancellationTokenSource();
         var store = new StubStore(healthy: true);
         using var monitor = new HealthMonitor(
-            store, ollamaEnabled: false,
-            "gemma4", "http://localhost:11434", "http://localhost:8080",
-            initialOllamaHealthy: false, cts.Token);
+            store, enrichmentEnabled: false,
+            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            initialEnrichmentHealthy: false, cts.Token);
 
         var events = new List<(string Component, bool Healthy, string Detail)>();
         monitor.OnStatusChanged += (c, h, d) => events.Add((c, h, d));

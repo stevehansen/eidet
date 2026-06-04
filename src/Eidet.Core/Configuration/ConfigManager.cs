@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace Eidet.Core.Configuration;
@@ -34,12 +35,41 @@ public static class ConfigManager
         else
         {
             var json = File.ReadAllText(path);
+            json = MigrateLegacyEnrichmentKeys(json);
             config = JsonSerializer.Deserialize<EidetConfig>(json, JsonOptions) ?? new EidetConfig();
         }
 
         // Environment variable overrides
         ApplyEnvironmentOverrides(config);
         return config;
+    }
+
+    // Pre-v0.2 configs stored enrichment under ollamaEnabled/ollamaUrl/ollamaModel.
+    // Map those onto the new enabled/url/model keys when the new keys are absent,
+    // so existing config.json files keep working without manual edits.
+    private static string MigrateLegacyEnrichmentKeys(string json)
+    {
+        JsonNode? root;
+        try { root = JsonNode.Parse(json); }
+        catch { return json; }
+
+        if (root?["enrichment"] is not JsonObject enrichment) return json;
+
+        var migrated = false;
+        migrated |= RenameKey(enrichment, "ollamaEnabled", "enabled");
+        migrated |= RenameKey(enrichment, "ollamaUrl", "url");
+        migrated |= RenameKey(enrichment, "ollamaModel", "model");
+
+        return migrated ? root!.ToJsonString() : json;
+    }
+
+    private static bool RenameKey(JsonObject obj, string legacy, string current)
+    {
+        if (obj.ContainsKey(current) || !obj.ContainsKey(legacy)) return false;
+        var node = obj[legacy];
+        obj.Remove(legacy);
+        obj[current] = node;
+        return true;
     }
 
     private static void ApplyEnvironmentOverrides(EidetConfig config)
@@ -57,15 +87,17 @@ public static class ConfigManager
         if (!string.IsNullOrEmpty(ravenUrl))
             config.Storage.RavenUrl = ravenUrl;
 
-        // EIDET_OLLAMA_URL — override Ollama connection
-        var ollamaUrl = Environment.GetEnvironmentVariable("EIDET_OLLAMA_URL");
-        if (!string.IsNullOrEmpty(ollamaUrl))
-            config.Enrichment.OllamaUrl = ollamaUrl;
+        // EIDET_ENRICHMENT_URL (EIDET_OLLAMA_URL = legacy alias) — override enrichment endpoint
+        var enrichUrl = Environment.GetEnvironmentVariable("EIDET_ENRICHMENT_URL")
+            ?? Environment.GetEnvironmentVariable("EIDET_OLLAMA_URL");
+        if (!string.IsNullOrEmpty(enrichUrl))
+            config.Enrichment.Url = enrichUrl;
 
-        // EIDET_OLLAMA_MODEL — override Ollama model
-        var ollamaModel = Environment.GetEnvironmentVariable("EIDET_OLLAMA_MODEL");
-        if (!string.IsNullOrEmpty(ollamaModel))
-            config.Enrichment.OllamaModel = ollamaModel;
+        // EIDET_ENRICHMENT_MODEL (EIDET_OLLAMA_MODEL = legacy alias) — override enrichment model
+        var enrichModel = Environment.GetEnvironmentVariable("EIDET_ENRICHMENT_MODEL")
+            ?? Environment.GetEnvironmentVariable("EIDET_OLLAMA_MODEL");
+        if (!string.IsNullOrEmpty(enrichModel))
+            config.Enrichment.Model = enrichModel;
 
         // EIDET_STORAGE_MODE — override storage mode (embedded/external)
         var storageMode = Environment.GetEnvironmentVariable("EIDET_STORAGE_MODE");

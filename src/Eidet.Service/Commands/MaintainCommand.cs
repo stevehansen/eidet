@@ -24,9 +24,7 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
         var config = ConfigManager.Load();
         var store = DocumentStoreFactory.CreateFromConfig(config);
         var eidetStore = new RavenEidetStore(store);
-        using var enrichment = config.Enrichment.OllamaEnabled
-            ? EnrichmentService.CreateOllama(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
-            : EnrichmentService.CreateNull();
+        using var enrichment = EnrichmentService.CreateFromConfig(config.Enrichment);
         var memorySvc = new MemoryService(eidetStore);
         var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memorySvc);
         IMaintenanceRunner runner = new MaintenanceRunner(

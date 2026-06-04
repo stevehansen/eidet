@@ -32,9 +32,7 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
             var store = DocumentStoreFactory.CreateFromConfig(config);
             DatabaseProvisioner.DeployIndexes(store);
             var eidetStore = new RavenEidetStore(store);
-            using var enrichment = config.Enrichment.OllamaEnabled
-                ? EnrichmentService.CreateOllama(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
-                : EnrichmentService.CreateNull();
+            using var enrichment = EnrichmentService.CreateFromConfig(config.Enrichment);
             IHookRunner hookRunner = config.Hooks.PreStore.Count > 0 || config.Hooks.PostStore.Count > 0
                 || config.Hooks.PreRecall.Count > 0 || config.Hooks.PostRecall.Count > 0
                 || config.Hooks.PreForget.Count > 0 || config.Hooks.PostForget.Count > 0

@@ -1,14 +1,21 @@
+using Eidet.Core.Configuration;
 using Eidet.Core.Storage;
 
 namespace Eidet.Service;
 
 /// <summary>
-/// Background health monitor that periodically checks dependency health (RavenDB, Ollama)
-/// and raises events when status changes. Used by ServeCommand to print live status updates.
+/// Background health monitor that periodically checks dependency health (RavenDB and the
+/// enrichment backend) and raises events when status changes. Used by ServeCommand to print
+/// live status updates. The enrichment probe path is provider-aware so it works against both
+/// Ollama-native and OpenAI-compatible servers.
 /// </summary>
 public sealed class HealthMonitor : IDisposable
 {
-    public record HealthState(bool RavenDbHealthy, bool OllamaHealthy);
+    public record HealthState(bool RavenDbHealthy, bool EnrichmentHealthy);
+
+    /// <summary>The lightweight liveness endpoint to probe for a given enrichment provider.</summary>
+    internal static string ProbePathFor(EnrichmentProvider provider) =>
+        provider == EnrichmentProvider.OpenAiCompatible ? "/v1/models" : "/api/tags";
 
     /// <summary>
     /// Fired when a dependency's health status changes.
@@ -17,16 +24,17 @@ public sealed class HealthMonitor : IDisposable
     public event Action<string, bool, string>? OnStatusChanged;
 
     private readonly IEidetStore _store;
-    private readonly HttpClient? _ollamaHttp;
-    private readonly bool _ollamaEnabled;
-    private readonly string _ollamaModel;
-    private readonly string _ollamaUrl;
+    private readonly HttpClient? _enrichmentHttp;
+    private readonly bool _enrichmentEnabled;
+    private readonly string _enrichmentModel;
+    private readonly string _enrichmentUrl;
+    private readonly string _probePath;
     private readonly string _ravenUrl;
     private readonly Timer _timer;
     private readonly CancellationToken _ct;
 
     private bool _ravenHealthy = true; // assume healthy at start (we just connected)
-    private bool _ollamaHealthy;
+    private bool _enrichmentHealthy;
     private bool _disposed;
 
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(30);
@@ -34,33 +42,35 @@ public sealed class HealthMonitor : IDisposable
 
     public HealthMonitor(
         IEidetStore store,
-        bool ollamaEnabled,
-        string ollamaModel,
-        string ollamaUrl,
+        bool enrichmentEnabled,
+        EnrichmentProvider provider,
+        string enrichmentModel,
+        string enrichmentUrl,
         string ravenUrl,
-        bool initialOllamaHealthy,
+        bool initialEnrichmentHealthy,
         CancellationToken ct)
     {
         _store = store;
-        _ollamaEnabled = ollamaEnabled;
-        _ollamaModel = ollamaModel;
-        _ollamaUrl = ollamaUrl;
+        _enrichmentEnabled = enrichmentEnabled;
+        _enrichmentModel = enrichmentModel;
+        _enrichmentUrl = enrichmentUrl;
+        _probePath = ProbePathFor(provider);
         _ravenUrl = ravenUrl;
-        _ollamaHealthy = initialOllamaHealthy;
+        _enrichmentHealthy = initialEnrichmentHealthy;
         _ct = ct;
         _timer = new Timer(OnTick, null, Timeout.Infinite, Timeout.Infinite);
 
-        if (ollamaEnabled)
+        if (enrichmentEnabled)
         {
-            _ollamaHttp = new HttpClient
+            _enrichmentHttp = new HttpClient
             {
-                BaseAddress = new Uri(ollamaUrl.TrimEnd('/')),
+                BaseAddress = new Uri(enrichmentUrl.TrimEnd('/')),
                 Timeout = TimeSpan.FromSeconds(5),
             };
         }
     }
 
-    public HealthState CurrentState => new(_ravenHealthy, _ollamaHealthy);
+    public HealthState CurrentState => new(_ravenHealthy, _enrichmentHealthy);
 
     public void Start()
     {
@@ -75,8 +85,8 @@ public sealed class HealthMonitor : IDisposable
         {
             await CheckRavenDbAsync();
 
-            if (_ollamaEnabled)
-                await CheckOllamaAsync();
+            if (_enrichmentEnabled)
+                await CheckEnrichmentAsync();
         }
         catch
         {
@@ -96,14 +106,14 @@ public sealed class HealthMonitor : IDisposable
         }
     }
 
-    private async Task CheckOllamaAsync()
+    private async Task CheckEnrichmentAsync()
     {
-        // Direct lightweight check — bypasses the Ollama adapter's 5-minute health cache
+        // Direct lightweight check — bypasses the adapter's 5-minute health cache
         // so we can detect status changes within 30 seconds.
         bool healthy;
         try
         {
-            var response = await _ollamaHttp!.GetAsync("/api/tags", _ct);
+            var response = await _enrichmentHttp!.GetAsync(_probePath, _ct);
             healthy = response.IsSuccessStatusCode;
         }
         catch
@@ -111,13 +121,13 @@ public sealed class HealthMonitor : IDisposable
             healthy = false;
         }
 
-        if (healthy != _ollamaHealthy)
+        if (healthy != _enrichmentHealthy)
         {
-            _ollamaHealthy = healthy;
+            _enrichmentHealthy = healthy;
             var detail = healthy
-                ? $"Connected ({_ollamaModel} @ {_ollamaUrl})"
-                : $"Unavailable ({_ollamaModel} @ {_ollamaUrl})";
-            OnStatusChanged?.Invoke("Ollama", healthy, detail);
+                ? $"Connected ({_enrichmentModel} @ {_enrichmentUrl})"
+                : $"Unavailable ({_enrichmentModel} @ {_enrichmentUrl})";
+            OnStatusChanged?.Invoke("Enrichment", healthy, detail);
         }
     }
 
@@ -126,6 +136,6 @@ public sealed class HealthMonitor : IDisposable
         if (_disposed) return;
         _disposed = true;
         _timer.Dispose();
-        _ollamaHttp?.Dispose();
+        _enrichmentHttp?.Dispose();
     }
 }

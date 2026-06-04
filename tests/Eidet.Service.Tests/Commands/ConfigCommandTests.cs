@@ -41,7 +41,7 @@ public class ConfigCommandTests
     {
         var config = new EidetConfig();
         ConfigHelper.SetValue(config, "enrichment.ollamaEnabled", "True");
-        Assert.True(config.Enrichment.OllamaEnabled);
+        Assert.True(config.Enrichment.Enabled);
     }
 
     [Fact]
@@ -85,7 +85,42 @@ public class ConfigCommandTests
     {
         var config = new EidetConfig();
         ConfigHelper.SetValue(config, "enrichment.ollamaUrl", "http://custom:11434");
-        Assert.Equal("http://custom:11434", config.Enrichment.OllamaUrl);
+        Assert.Equal("http://custom:11434", config.Enrichment.Url);
+    }
+
+    [Fact]
+    public void SetValue_LegacyOllamaUrlAlias_MapsToSameValueAsNewKey()
+    {
+        var config = new EidetConfig();
+        ConfigHelper.SetValue(config, "enrichment.ollamaUrl", "http://aliased:9999");
+        Assert.Equal("http://aliased:9999", ConfigHelper.GetValue(config, "enrichment.url"));
+        Assert.Equal("http://aliased:9999", ConfigHelper.GetValue(config, "enrichment.ollamaUrl"));
+    }
+
+    [Fact]
+    public void SetValue_NewUrlKey_ReadableViaLegacyAlias()
+    {
+        var config = new EidetConfig();
+        ConfigHelper.SetValue(config, "enrichment.url", "http://viaNew:7777");
+        Assert.Equal("http://viaNew:7777", ConfigHelper.GetValue(config, "enrichment.ollamaUrl"));
+    }
+
+    [Fact]
+    public void SetValue_LegacyEnabledAndModelAliases_MapToNewKeys()
+    {
+        var config = new EidetConfig();
+        ConfigHelper.SetValue(config, "enrichment.ollamaEnabled", "True");
+        ConfigHelper.SetValue(config, "enrichment.ollamaModel", "qwen");
+        Assert.Equal("True", ConfigHelper.GetValue(config, "enrichment.enabled"));
+        Assert.Equal("qwen", ConfigHelper.GetValue(config, "enrichment.model"));
+    }
+
+    [Fact]
+    public void SetValue_ProviderKey_ParsesEnum()
+    {
+        var config = new EidetConfig();
+        Assert.True(ConfigHelper.SetValue(config, "enrichment.provider", "OpenAiCompatible"));
+        Assert.Equal(EnrichmentProvider.OpenAiCompatible, config.Enrichment.Provider);
     }
 
     [Fact]

@@ -25,11 +25,11 @@ public sealed class EidetWindowsService : BackgroundService
             _logger.LogInformation("Eidet v{Version} starting on http://{Bind}:{Port}",
                 Eidet.Core.EidetVersion.Current, _host.BindAddress, _host.Port);
 
-            if (_host.OllamaEnabled)
+            if (_host.EnrichmentEnabled)
             {
-                var healthy = await _host.CheckOllamaAsync(stoppingToken);
-                _logger.LogInformation("Ollama: {Status} ({Model})",
-                    healthy ? "Connected" : "Unavailable", _host.OllamaModel);
+                var healthy = await _host.CheckEnrichmentAsync(stoppingToken);
+                _logger.LogInformation("Enrichment: {Status} ({Model})",
+                    healthy ? "Connected" : "Unavailable", _host.EnrichmentModel);
             }
 
             if (!_host.CheckAuthGuard())
@@ -42,7 +42,7 @@ public sealed class EidetWindowsService : BackgroundService
             _logger.LogInformation("Scheduler active (persisted — maintenance every {M}h, consolidation every {C}h)",
                 _host.MaintenanceIntervalHours, _host.ConsolidationIntervalHours);
 
-            if (_host.OllamaEnabled)
+            if (_host.EnrichmentEnabled)
             {
                 await _host.StartEnrichmentWorkerAsync(stoppingToken);
                 _logger.LogInformation("Enrichment worker active (RavenDB subscription)");

@@ -17,11 +17,11 @@ public sealed class OllamaStatusCommand : AsyncCommand<OllamaStatusCommand.Setti
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
-        using var svc = new OllamaService(config.Enrichment.OllamaUrl);
+        using var svc = new OllamaService(config.Enrichment.Url);
 
         var version = await svc.GetVersionAsync(cancellation);
         var models = await svc.ListModelsAsync(cancellation);
-        var configuredModel = config.Enrichment.OllamaModel;
+        var configuredModel = config.Enrichment.Model;
         var hasConfigured = models.Any(m =>
             m.Name.Equals(configuredModel, StringComparison.OrdinalIgnoreCase) ||
             m.Name.StartsWith(configuredModel + ":", StringComparison.OrdinalIgnoreCase));
@@ -32,8 +32,8 @@ public sealed class OllamaStatusCommand : AsyncCommand<OllamaStatusCommand.Setti
             {
                 available = version != null,
                 version,
-                url = config.Enrichment.OllamaUrl,
-                enrichmentEnabled = config.Enrichment.OllamaEnabled,
+                url = config.Enrichment.Url,
+                enrichmentEnabled = config.Enrichment.Enabled,
                 configuredModel,
                 modelInstalled = hasConfigured,
                 models = models.Select(m => new { m.Name, size = OllamaService.FormatSize(m.Size) }),
@@ -45,8 +45,8 @@ public sealed class OllamaStatusCommand : AsyncCommand<OllamaStatusCommand.Setti
         AnsiConsole.WriteLine();
         if (version != null)
         {
-            AnsiConsole.MarkupLine($"[green]Ollama[/] v{version} at {config.Enrichment.OllamaUrl}");
-            AnsiConsole.MarkupLine($"  Enrichment:  {(config.Enrichment.OllamaEnabled ? "[green]Enabled[/]" : "[dim]Disabled[/]")}");
+            AnsiConsole.MarkupLine($"[green]Ollama[/] v{version} at {config.Enrichment.Url}");
+            AnsiConsole.MarkupLine($"  Enrichment:  {(config.Enrichment.Enabled ? "[green]Enabled[/]" : "[dim]Disabled[/]")}");
             AnsiConsole.MarkupLine($"  Model:       {configuredModel} {(hasConfigured ? "[green](installed)[/]" : "[red](not installed)[/]")}");
 
             if (models.Count > 0)
@@ -65,12 +65,12 @@ public sealed class OllamaStatusCommand : AsyncCommand<OllamaStatusCommand.Setti
 
                 var (suggested, isInstalled) = await svc.SuggestModelAsync(cancellation);
                 if (isInstalled && suggested != configuredModel)
-                    AnsiConsole.MarkupLine($"  Or use:   [dim]eidet config set enrichment.ollamaModel {suggested}[/]");
+                    AnsiConsole.MarkupLine($"  Or use:   [dim]eidet config set enrichment.model {suggested}[/]");
             }
         }
         else
         {
-            AnsiConsole.MarkupLine($"[red]Ollama not available[/] at {config.Enrichment.OllamaUrl}");
+            AnsiConsole.MarkupLine($"[red]Ollama not available[/] at {config.Enrichment.Url}");
             AnsiConsole.MarkupLine("[dim]Install Ollama from https://ollama.ai[/]");
         }
 
@@ -90,7 +90,7 @@ public sealed class OllamaPullCommand : AsyncCommand<OllamaPullCommand.Settings>
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
-        using var svc = new OllamaService(config.Enrichment.OllamaUrl);
+        using var svc = new OllamaService(config.Enrichment.Url);
 
         if (!await svc.IsAvailableAsync(cancellation))
         {
@@ -98,7 +98,7 @@ public sealed class OllamaPullCommand : AsyncCommand<OllamaPullCommand.Settings>
             return 1;
         }
 
-        var modelName = settings.Model ?? config.Enrichment.OllamaModel;
+        var modelName = settings.Model ?? config.Enrichment.Model;
 
         // Check if already installed
         if (await svc.HasModelAsync(modelName, cancellation))
@@ -144,16 +144,16 @@ public sealed class OllamaPullCommand : AsyncCommand<OllamaPullCommand.Settings>
         AnsiConsole.MarkupLine($"[green]Model \"{modelName}\" pulled successfully.[/]");
 
         // Auto-configure if this is the first model
-        if (!config.Enrichment.OllamaEnabled)
+        if (!config.Enrichment.Enabled)
         {
-            config.Enrichment.OllamaEnabled = true;
-            config.Enrichment.OllamaModel = modelName;
+            config.Enrichment.Enabled = true;
+            config.Enrichment.Model = modelName;
             ConfigManager.Save(config);
             AnsiConsole.MarkupLine("[green]Ollama enrichment enabled automatically.[/]");
         }
-        else if (config.Enrichment.OllamaModel != modelName)
+        else if (config.Enrichment.Model != modelName)
         {
-            AnsiConsole.MarkupLine($"[dim]To use this model: eidet config set enrichment.ollamaModel {modelName}[/]");
+            AnsiConsole.MarkupLine($"[dim]To use this model: eidet config set enrichment.model {modelName}[/]");
         }
 
         return 0;
@@ -167,7 +167,7 @@ public sealed class OllamaListCommand : AsyncCommand<OllamaListCommand.Settings>
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
-        using var svc = new OllamaService(config.Enrichment.OllamaUrl);
+        using var svc = new OllamaService(config.Enrichment.Url);
 
         var models = await svc.ListModelsAsync(cancellation);
 
@@ -189,7 +189,7 @@ public sealed class OllamaListCommand : AsyncCommand<OllamaListCommand.Settings>
         foreach (var m in models)
         {
             var baseName = m.Name.Split(':')[0];
-            var isCurrent = baseName.Equals(config.Enrichment.OllamaModel, StringComparison.OrdinalIgnoreCase);
+            var isCurrent = baseName.Equals(config.Enrichment.Model, StringComparison.OrdinalIgnoreCase);
             var status = isCurrent ? "[green]active[/]" : "";
             table.AddRow(m.Name, OllamaService.FormatSize(m.Size), status);
         }

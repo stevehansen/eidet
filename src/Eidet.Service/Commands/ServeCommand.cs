@@ -115,10 +115,10 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         else
             AnsiConsole.MarkupLine($"  RavenDB: [green]Connected[/] ({Markup.Escape(host.RavenUrl)})");
 
-        if (host.OllamaEnabled)
+        if (host.EnrichmentEnabled)
         {
-            var healthy = await host.CheckOllamaAsync(cancellation);
-            AnsiConsole.MarkupLine($"  Ollama:  {(healthy ? "[green]Connected[/]" : "[yellow]Unavailable[/]")} ({host.OllamaModel} @ {Markup.Escape(host.OllamaUrl)})");
+            var healthy = await host.CheckEnrichmentAsync(cancellation);
+            AnsiConsole.MarkupLine($"  Enrichment: {(healthy ? "[green]Connected[/]" : "[yellow]Unavailable[/]")} ({host.EnrichmentModel} @ {Markup.Escape(host.EnrichmentUrl)})");
         }
 
         if (host.AuthEnabled)
@@ -145,7 +145,7 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         await host.StartSchedulerAsync(cancellation);
         AnsiConsole.MarkupLine($"  Scheduler: [green]Active[/] (persisted — maintenance every {host.MaintenanceIntervalHours}h, consolidation every {host.ConsolidationIntervalHours}h)");
 
-        if (host.OllamaEnabled)
+        if (host.EnrichmentEnabled)
         {
             await host.StartEnrichmentWorkerAsync(cancellation);
             AnsiConsole.MarkupLine("  Enrichment: [green]Active[/] (RavenDB subscription — enriches on store)");

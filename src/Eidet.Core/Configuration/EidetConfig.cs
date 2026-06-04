@@ -5,6 +5,9 @@ namespace Eidet.Core.Configuration;
 [JsonConverter(typeof(JsonStringEnumConverter<StorageMode>))]
 public enum StorageMode { External, Embedded }
 
+[JsonConverter(typeof(JsonStringEnumConverter<EnrichmentProvider>))]
+public enum EnrichmentProvider { Ollama, OpenAiCompatible }
+
 public class EidetConfig
 {
     public ServiceConfig Service { get; set; } = new();
@@ -52,9 +55,10 @@ public class MaintenanceConfig
 
 public class EnrichmentConfig
 {
-    public bool OllamaEnabled { get; set; }
-    public string OllamaUrl { get; set; } = "http://localhost:11434";
-    public string OllamaModel { get; set; } = "gemma4";
+    public bool Enabled { get; set; }
+    public EnrichmentProvider Provider { get; set; } = EnrichmentProvider.Ollama;
+    public string Url { get; set; } = "http://localhost:11434";
+    public string Model { get; set; } = "gemma4";
     public bool AutoOneLiner { get; set; } = true;
     public bool AutoForesight { get; set; } = true;
     public bool AutoConsolidation { get; set; } = true;

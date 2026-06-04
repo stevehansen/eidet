@@ -1,9 +1,39 @@
+using System.Reflection;
+using System.Text.Json;
 using Eidet.Core.Configuration;
 
 namespace Eidet.Core.Tests.Configuration;
 
 public class ConfigManagerTests
 {
+    // ConfigManager.Load() is anchored at the real user-profile config path with no
+    // injectable seam, so the migration/env-override logic is exercised directly via the
+    // private static methods rather than touching the filesystem (which would clobber the
+    // developer's real config.json).
+
+    private static string MigrateLegacyEnrichmentKeys(string json)
+    {
+        var m = typeof(ConfigManager).GetMethod("MigrateLegacyEnrichmentKeys",
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+        return (string)m.Invoke(null, [json])!;
+    }
+
+    private static void ApplyEnvironmentOverrides(EidetConfig config)
+    {
+        var m = typeof(ConfigManager).GetMethod("ApplyEnvironmentOverrides",
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+        m.Invoke(null, [config]);
+    }
+
+    private static EnrichmentConfig DeserializeEnrichment(string json)
+    {
+        var options = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        };
+        return JsonSerializer.Deserialize<EidetConfig>(json, options)!.Enrichment;
+    }
+
     [Fact]
     public void Load_NoFile_ReturnsDefaults()
     {
@@ -33,9 +63,10 @@ public class ConfigManagerTests
     public void EnrichmentConfig_Defaults()
     {
         var enrichment = new EnrichmentConfig();
-        Assert.False(enrichment.OllamaEnabled);
-        Assert.Equal("http://localhost:11434", enrichment.OllamaUrl);
-        Assert.Equal("gemma4", enrichment.OllamaModel);
+        Assert.False(enrichment.Enabled);
+        Assert.Equal(EnrichmentProvider.Ollama, enrichment.Provider);
+        Assert.Equal("http://localhost:11434", enrichment.Url);
+        Assert.Equal("gemma4", enrichment.Model);
         Assert.True(enrichment.AutoOneLiner);
         Assert.True(enrichment.AutoForesight);
         Assert.True(enrichment.AutoConsolidation);
@@ -59,5 +90,118 @@ public class ConfigManagerTests
         var maintenance = new MaintenanceConfig();
         Assert.Equal(24, maintenance.IntervalHours);
         Assert.Equal(6, maintenance.ConsolidationIntervalHours);
+    }
+
+    // ─── Legacy enrichment-key migration ─────────────────────────────────
+
+    [Fact]
+    public void Migrate_LegacyKeysOnly_MapToNewKeys()
+    {
+        var json = """
+            { "enrichment": { "ollamaEnabled": true, "ollamaUrl": "http://legacy:11434", "ollamaModel": "llama3" } }
+            """;
+        var enrichment = DeserializeEnrichment(MigrateLegacyEnrichmentKeys(json));
+        Assert.True(enrichment.Enabled);
+        Assert.Equal("http://legacy:11434", enrichment.Url);
+        Assert.Equal("llama3", enrichment.Model);
+    }
+
+    [Fact]
+    public void Migrate_BothLegacyAndNewKeys_NewWins_LegacyIgnored()
+    {
+        var json = """
+            {
+              "enrichment": {
+                "ollamaEnabled": false, "ollamaUrl": "http://legacy:11434", "ollamaModel": "llama3",
+                "enabled": true, "url": "http://new:1234", "model": "qwen"
+              }
+            }
+            """;
+        var enrichment = DeserializeEnrichment(MigrateLegacyEnrichmentKeys(json));
+        Assert.True(enrichment.Enabled);
+        Assert.Equal("http://new:1234", enrichment.Url);
+        Assert.Equal("qwen", enrichment.Model);
+    }
+
+    [Fact]
+    public void Migrate_NewKeysOnly_Unchanged()
+    {
+        var json = """
+            { "enrichment": { "enabled": true, "provider": "OpenAiCompatible", "url": "http://new:1234", "model": "qwen" } }
+            """;
+        var enrichment = DeserializeEnrichment(MigrateLegacyEnrichmentKeys(json));
+        Assert.True(enrichment.Enabled);
+        Assert.Equal(EnrichmentProvider.OpenAiCompatible, enrichment.Provider);
+        Assert.Equal("http://new:1234", enrichment.Url);
+        Assert.Equal("qwen", enrichment.Model);
+    }
+
+    [Fact]
+    public void Migrate_MalformedJson_ReturnedUntouched()
+    {
+        var json = "{ not valid json";
+        Assert.Equal(json, MigrateLegacyEnrichmentKeys(json));
+    }
+
+    // ─── Environment-variable overrides (new wins over legacy alias) ─────
+
+    [Fact]
+    public void EnvOverride_NewVars_WinOverLegacyAliases()
+    {
+        var prev = (
+            Environment.GetEnvironmentVariable("EIDET_ENRICHMENT_URL"),
+            Environment.GetEnvironmentVariable("EIDET_OLLAMA_URL"),
+            Environment.GetEnvironmentVariable("EIDET_ENRICHMENT_MODEL"),
+            Environment.GetEnvironmentVariable("EIDET_OLLAMA_MODEL"));
+        try
+        {
+            Environment.SetEnvironmentVariable("EIDET_ENRICHMENT_URL", "http://new:1234");
+            Environment.SetEnvironmentVariable("EIDET_OLLAMA_URL", "http://legacy:11434");
+            Environment.SetEnvironmentVariable("EIDET_ENRICHMENT_MODEL", "qwen");
+            Environment.SetEnvironmentVariable("EIDET_OLLAMA_MODEL", "llama3");
+
+            var config = new EidetConfig();
+            ApplyEnvironmentOverrides(config);
+
+            Assert.Equal("http://new:1234", config.Enrichment.Url);
+            Assert.Equal("qwen", config.Enrichment.Model);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("EIDET_ENRICHMENT_URL", prev.Item1);
+            Environment.SetEnvironmentVariable("EIDET_OLLAMA_URL", prev.Item2);
+            Environment.SetEnvironmentVariable("EIDET_ENRICHMENT_MODEL", prev.Item3);
+            Environment.SetEnvironmentVariable("EIDET_OLLAMA_MODEL", prev.Item4);
+        }
+    }
+
+    [Fact]
+    public void EnvOverride_LegacyVarsOnly_StillApply()
+    {
+        var prev = (
+            Environment.GetEnvironmentVariable("EIDET_ENRICHMENT_URL"),
+            Environment.GetEnvironmentVariable("EIDET_OLLAMA_URL"),
+            Environment.GetEnvironmentVariable("EIDET_ENRICHMENT_MODEL"),
+            Environment.GetEnvironmentVariable("EIDET_OLLAMA_MODEL"));
+        try
+        {
+            Environment.SetEnvironmentVariable("EIDET_ENRICHMENT_URL", null);
+            Environment.SetEnvironmentVariable("EIDET_ENRICHMENT_MODEL", null);
+            Environment.SetEnvironmentVariable("EIDET_OLLAMA_URL", "http://legacy:11434");
+            Environment.SetEnvironmentVariable("EIDET_OLLAMA_MODEL", "llama3");
+
+            var config = new EidetConfig();
+            ApplyEnvironmentOverrides(config);
+
+            Assert.Equal("http://legacy:11434", config.Enrichment.Url);
+            Assert.Equal("llama3", config.Enrichment.Model);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("EIDET_ENRICHMENT_URL", prev.Item1);
+            Environment.SetEnvironmentVariable("EIDET_OLLAMA_URL", prev.Item2);
+            Environment.SetEnvironmentVariable("EIDET_ENRICHMENT_MODEL", prev.Item3);
+            Environment.SetEnvironmentVariable("EIDET_OLLAMA_MODEL", prev.Item4);
+        }
     }
 }

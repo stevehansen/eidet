@@ -1,3 +1,4 @@
+using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
 using Eidet.Core.Services;
 
@@ -24,6 +25,18 @@ public sealed class EnrichmentService : IDisposable
 
     public static EnrichmentService CreateNull()
         => new(new NullEnrichmentAdapter());
+
+    /// <summary>
+    /// Builds the enrichment service the config asks for: disabled → null adapter,
+    /// OpenAI-compatible provider → <see cref="OpenAiEnrichmentAdapter"/>, otherwise Ollama.
+    /// </summary>
+    public static EnrichmentService CreateFromConfig(EnrichmentConfig cfg)
+    {
+        if (!cfg.Enabled) return CreateNull();
+        return cfg.Provider == EnrichmentProvider.OpenAiCompatible
+            ? new EnrichmentService(new OpenAiEnrichmentAdapter(cfg.Url, cfg.Model))
+            : CreateOllama(cfg.Url, cfg.Model);
+    }
 
     public bool IsAvailable => _port.IsAvailable;
 

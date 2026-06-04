@@ -127,9 +127,14 @@ internal static class ConfigHelper
         ["maintenance.consolidationIntervalHours"] = (c => c.Maintenance.ConsolidationIntervalHours.ToString(), (c, v) => c.Maintenance.ConsolidationIntervalHours = int.Parse(v)),
 
         // Enrichment
-        ["enrichment.ollamaEnabled"] = (c => c.Enrichment.OllamaEnabled.ToString(), (c, v) => c.Enrichment.OllamaEnabled = bool.Parse(v)),
-        ["enrichment.ollamaUrl"] = (c => c.Enrichment.OllamaUrl, (c, v) => c.Enrichment.OllamaUrl = v),
-        ["enrichment.ollamaModel"] = (c => c.Enrichment.OllamaModel, (c, v) => c.Enrichment.OllamaModel = v),
+        ["enrichment.enabled"] = (c => c.Enrichment.Enabled.ToString(), (c, v) => c.Enrichment.Enabled = bool.Parse(v)),
+        ["enrichment.provider"] = (c => c.Enrichment.Provider.ToString(), (c, v) => c.Enrichment.Provider = Enum.Parse<EnrichmentProvider>(v, true)),
+        ["enrichment.url"] = (c => c.Enrichment.Url, (c, v) => c.Enrichment.Url = v),
+        ["enrichment.model"] = (c => c.Enrichment.Model, (c, v) => c.Enrichment.Model = v),
+        // Legacy aliases (pre-v0.2) — same getters/setters so existing scripts keep working.
+        ["enrichment.ollamaEnabled"] = (c => c.Enrichment.Enabled.ToString(), (c, v) => c.Enrichment.Enabled = bool.Parse(v)),
+        ["enrichment.ollamaUrl"] = (c => c.Enrichment.Url, (c, v) => c.Enrichment.Url = v),
+        ["enrichment.ollamaModel"] = (c => c.Enrichment.Model, (c, v) => c.Enrichment.Model = v),
         ["enrichment.autoOneLiner"] = (c => c.Enrichment.AutoOneLiner.ToString(), (c, v) => c.Enrichment.AutoOneLiner = bool.Parse(v)),
         ["enrichment.autoForesight"] = (c => c.Enrichment.AutoForesight.ToString(), (c, v) => c.Enrichment.AutoForesight = bool.Parse(v)),
         ["enrichment.autoConsolidation"] = (c => c.Enrichment.AutoConsolidation.ToString(), (c, v) => c.Enrichment.AutoConsolidation = bool.Parse(v)),
