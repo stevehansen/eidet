@@ -53,14 +53,14 @@ public static class ConfigManager
         try { root = JsonNode.Parse(json); }
         catch { return json; }
 
-        if (root?["enrichment"] is not JsonObject enrichment) return json;
+        if (root is not JsonObject rootObj || rootObj["enrichment"] is not JsonObject enrichment) return json;
 
         var migrated = false;
         migrated |= RenameKey(enrichment, "ollamaEnabled", "enabled");
         migrated |= RenameKey(enrichment, "ollamaUrl", "url");
         migrated |= RenameKey(enrichment, "ollamaModel", "model");
 
-        return migrated ? root!.ToJsonString() : json;
+        return migrated ? rootObj.ToJsonString() : json;
     }
 
     private static bool RenameKey(JsonObject obj, string legacy, string current)

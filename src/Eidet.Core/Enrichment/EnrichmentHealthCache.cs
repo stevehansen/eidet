@@ -15,8 +15,12 @@ internal sealed class EnrichmentHealthCache
 
     public EnrichmentHealthCache(HttpClient http) => _http = http;
 
+    // Optimistic once the cache goes stale, regardless of the last result: a stale
+    // unhealthy verdict must not pin enrichment off forever — letting IsAvailable return
+    // true after CacheDuration lets the next call re-probe and recover when the backend
+    // comes back (the actual probe still happens in CheckAsync).
     public bool IsAvailable => _lastHealthy == true ||
-        (_lastHealthy == null && DateTime.UtcNow - _lastCheck > CacheDuration);
+        DateTime.UtcNow - _lastCheck > CacheDuration;
 
     public async Task<bool> CheckAsync(string probePath, CancellationToken ct)
     {

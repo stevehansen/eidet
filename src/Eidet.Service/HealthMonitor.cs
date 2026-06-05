@@ -113,7 +113,7 @@ public sealed class HealthMonitor : IDisposable
         bool healthy;
         try
         {
-            var response = await _enrichmentHttp!.GetAsync(_probePath, _ct);
+            using var response = await _enrichmentHttp!.GetAsync(_probePath, _ct);
             healthy = response.IsSuccessStatusCode;
         }
         catch

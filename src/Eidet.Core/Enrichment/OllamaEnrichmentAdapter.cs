@@ -50,7 +50,7 @@ internal sealed class OllamaEnrichmentAdapter : IEnrichmentPort, IDisposable
 
             var json = JsonSerializer.Serialize(payload, JsonOpts);
             var httpContent = new StringContent(json, Encoding.UTF8, "application/json");
-            var response = await _http.PostAsync("/api/chat", httpContent, ct);
+            using var response = await _http.PostAsync("/api/chat", httpContent, ct);
 
             if (!response.IsSuccessStatusCode)
                 return null;

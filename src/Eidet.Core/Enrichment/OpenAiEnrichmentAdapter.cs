@@ -54,7 +54,7 @@ internal sealed class OpenAiEnrichmentAdapter : IEnrichmentPort, IDisposable
 
             var json = JsonSerializer.Serialize(payload, JsonOpts);
             var httpContent = new StringContent(json, Encoding.UTF8, "application/json");
-            var response = await _http.PostAsync("/v1/chat/completions", httpContent, ct);
+            using var response = await _http.PostAsync("/v1/chat/completions", httpContent, ct);
 
             if (!response.IsSuccessStatusCode)
                 return null;

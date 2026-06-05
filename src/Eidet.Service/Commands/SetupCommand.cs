@@ -157,7 +157,7 @@ public sealed class SetupCommand : AsyncCommand<SetupCommand.Settings>
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            var resp = await http.GetAsync($"{config.Enrichment.Url}/api/version", cancellation);
+            var resp = await http.GetAsync($"{config.Enrichment.Url.TrimEnd('/')}/api/version", cancellation);
             ollamaConnected = resp.IsSuccessStatusCode;
         }
         catch { }

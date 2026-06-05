@@ -131,7 +131,7 @@ public sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-            var response = await http.GetAsync($"{config.Enrichment.Url}{probePath}");
+            var response = await http.GetAsync($"{config.Enrichment.Url.TrimEnd('/')}{probePath}");
             if (response.IsSuccessStatusCode)
             {
                 var body = await response.Content.ReadAsStringAsync();
