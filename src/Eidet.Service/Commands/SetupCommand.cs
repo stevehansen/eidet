@@ -157,21 +157,21 @@ public sealed class SetupCommand : AsyncCommand<SetupCommand.Settings>
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            var resp = await http.GetAsync($"{config.Enrichment.OllamaUrl}/api/version", cancellation);
+            var resp = await http.GetAsync($"{config.Enrichment.Url.TrimEnd('/')}/api/version", cancellation);
             ollamaConnected = resp.IsSuccessStatusCode;
         }
         catch { }
 
         if (ollamaConnected)
         {
-            AnsiConsole.MarkupLine($"  [green]✓[/] Ollama detected at {config.Enrichment.OllamaUrl}");
+            AnsiConsole.MarkupLine($"  [green]✓[/] Ollama detected at {config.Enrichment.Url}");
             if (!settings.NonInteractive)
             {
-                config.Enrichment.OllamaEnabled = AnsiConsole.Confirm("  Enable Ollama enrichment?", defaultValue: true);
+                config.Enrichment.Enabled = AnsiConsole.Confirm("  Enable Ollama enrichment?", defaultValue: true);
             }
             else
             {
-                config.Enrichment.OllamaEnabled = true;
+                config.Enrichment.Enabled = true;
             }
             changed = true;
         }

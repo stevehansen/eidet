@@ -36,17 +36,18 @@ internal sealed class MetaEndpoints
     {
         var info = await _svc.GetStoreInfoAsync(ct);
 
-        // Check Ollama health if enrichment is configured
+        // Check enrichment backend health if configured
         object? ollamaStatus = null;
-        if (_config?.Enrichment.OllamaEnabled == true && _enrichment is not null)
+        if (_config?.Enrichment.Enabled == true && _enrichment is not null)
         {
             var healthy = await _enrichment.CheckHealthAsync(ct);
             ollamaStatus = new
             {
                 enabled = true,
                 healthy,
-                model = _config.Enrichment.OllamaModel,
-                url = _config.Enrichment.OllamaUrl,
+                provider = _config.Enrichment.Provider.ToString(),
+                model = _config.Enrichment.Model,
+                url = _config.Enrichment.Url,
             };
         }
         else if (_config is not null)

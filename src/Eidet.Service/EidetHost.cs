@@ -26,15 +26,16 @@ public sealed class EidetHost : IDisposable
     public string BindAddress { get; }
     public int Port { get; }
     public StorageMode StorageMode { get; }
-    public bool OllamaEnabled { get; }
-    public bool OllamaHealthy { get; private set; }
-    public string OllamaModel { get; }
+    public bool EnrichmentEnabled { get; }
+    public EnrichmentProvider EnrichmentProvider { get; }
+    public bool EnrichmentHealthy { get; private set; }
+    public string EnrichmentModel { get; }
     public bool AuthEnabled { get; }
     public int ApiKeyCount { get; }
     public int MaintenanceIntervalHours { get; }
     public int ConsolidationIntervalHours { get; }
     public string RavenUrl { get; }
-    public string OllamaUrl { get; }
+    public string EnrichmentUrl { get; }
     public int HookCount { get; }
 
     private EidetHost(IDocumentStore store, IEidetStore eidetStore, EnrichmentService enrichment,
@@ -51,8 +52,9 @@ public sealed class EidetHost : IDisposable
         BindAddress = bind;
         Port = port;
         StorageMode = config.Storage.Mode;
-        OllamaEnabled = config.Enrichment.OllamaEnabled;
-        OllamaModel = config.Enrichment.OllamaModel;
+        EnrichmentEnabled = config.Enrichment.Enabled;
+        EnrichmentProvider = config.Enrichment.Provider;
+        EnrichmentModel = config.Enrichment.Model;
         AuthEnabled = config.Auth.Enabled;
         ApiKeyCount = config.Auth.ApiKeys.Count;
         MaintenanceIntervalHours = config.Maintenance.IntervalHours;
@@ -60,7 +62,7 @@ public sealed class EidetHost : IDisposable
         RavenUrl = config.Storage.Mode == StorageMode.Embedded
             ? $"Embedded ({config.Storage.DataDir ?? "default"})"
             : config.Storage.RavenUrl;
-        OllamaUrl = config.Enrichment.OllamaUrl;
+        EnrichmentUrl = config.Enrichment.Url;
         HookCount = config.Hooks.PreStore.Count + config.Hooks.PostStore.Count
             + config.Hooks.PreRecall.Count + config.Hooks.PostRecall.Count
             + config.Hooks.PreForget.Count + config.Hooks.PostForget.Count;
@@ -80,9 +82,7 @@ public sealed class EidetHost : IDisposable
 
         var eidetStore = new RavenEidetStore(store);
 
-        var enrichment = config.Enrichment.OllamaEnabled
-            ? EnrichmentService.CreateOllama(config.Enrichment.OllamaUrl, config.Enrichment.OllamaModel)
-            : EnrichmentService.CreateNull();
+        var enrichment = EnrichmentService.CreateFromConfig(config.Enrichment);
 
         var layerSvc = new LayerService(eidetStore);
         IHookRunner hookRunner = config.Hooks.PreStore.Count > 0 || config.Hooks.PostStore.Count > 0
@@ -127,11 +127,11 @@ public sealed class EidetHost : IDisposable
         return new EidetHost(store, eidetStore, enrichment, scheduler, enrichmentWorker, apiServer, config, actualBind, actualPort);
     }
 
-    public async Task<bool> CheckOllamaAsync(CancellationToken ct = default)
+    public async Task<bool> CheckEnrichmentAsync(CancellationToken ct = default)
     {
-        if (!OllamaEnabled) return false;
-        OllamaHealthy = await _enrichment.CheckHealthAsync(ct);
-        return OllamaHealthy;
+        if (!EnrichmentEnabled) return false;
+        EnrichmentHealthy = await _enrichment.CheckHealthAsync(ct);
+        return EnrichmentHealthy;
     }
 
     public bool CheckAuthGuard()
@@ -149,18 +149,19 @@ public sealed class EidetHost : IDisposable
     public Task StartEnrichmentWorkerAsync(CancellationToken ct) => _enrichmentWorker.StartAsync(ct);
 
     /// <summary>
-    /// Starts a background health monitor that checks RavenDB and Ollama every 30 seconds
-    /// and fires OnStatusChanged when a dependency's health state changes.
+    /// Starts a background health monitor that checks RavenDB and the enrichment backend every
+    /// 30 seconds and fires OnStatusChanged when a dependency's health state changes.
     /// </summary>
     public HealthMonitor StartHealthMonitor(CancellationToken ct)
     {
         _healthMonitor = new HealthMonitor(
             _eidetStore,
-            OllamaEnabled,
-            OllamaModel,
-            OllamaUrl,
+            EnrichmentEnabled,
+            EnrichmentProvider,
+            EnrichmentModel,
+            EnrichmentUrl,
             RavenUrl,
-            OllamaHealthy,
+            EnrichmentHealthy,
             ct);
         _healthMonitor.Start();
         return _healthMonitor;

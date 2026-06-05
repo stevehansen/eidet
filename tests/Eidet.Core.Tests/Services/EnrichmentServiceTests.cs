@@ -1,3 +1,5 @@
+using System.Reflection;
+using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
 using Eidet.Core.Enrichment;
 using Eidet.Core.Services;
@@ -6,6 +8,13 @@ namespace Eidet.Core.Tests.Services;
 
 public class EnrichmentServiceTests
 {
+    private static IEnrichmentPort GetPort(EnrichmentService svc)
+    {
+        var field = typeof(EnrichmentService).GetField("_port",
+            BindingFlags.NonPublic | BindingFlags.Instance)!;
+        return (IEnrichmentPort)field.GetValue(svc)!;
+    }
+
     // ─── Null / unavailable ──────────────────────────────────────────────
 
     [Fact]
@@ -330,5 +339,113 @@ public class EnrichmentServiceTests
         var input = "The user wants an ultra-compact, 10-word maximum summary.\nDraft 1: option A\nDraft 2: option B\n<channel|>Use AndAlso() in RavenDB queries to enforce AND logic over OR.";
         Assert.Equal("Use AndAlso() in RavenDB queries to enforce AND logic over OR.",
             OllamaTextSanitizer.Clean(input));
+    }
+
+    // ─── CreateFromConfig dispatch ────────────────────────────────────────
+
+    [Fact]
+    public void CreateFromConfig_Disabled_UsesNullAdapter_NotAvailable()
+    {
+        var cfg = new EnrichmentConfig { Enabled = false, Provider = EnrichmentProvider.OpenAiCompatible };
+        using var svc = EnrichmentService.CreateFromConfig(cfg);
+        Assert.False(svc.IsAvailable);
+        Assert.IsType<NullEnrichmentAdapter>(GetPort(svc));
+    }
+
+    [Fact]
+    public void CreateFromConfig_OpenAiCompatible_UsesOpenAiAdapter()
+    {
+        var cfg = new EnrichmentConfig { Enabled = true, Provider = EnrichmentProvider.OpenAiCompatible, Url = "http://localhost:1234", Model = "qwen" };
+        using var svc = EnrichmentService.CreateFromConfig(cfg);
+        Assert.IsType<OpenAiEnrichmentAdapter>(GetPort(svc));
+    }
+
+    [Fact]
+    public void CreateFromConfig_Ollama_UsesOllamaAdapter()
+    {
+        var cfg = new EnrichmentConfig { Enabled = true, Provider = EnrichmentProvider.Ollama, Url = "http://localhost:11434", Model = "gemma4" };
+        using var svc = EnrichmentService.CreateFromConfig(cfg);
+        Assert.IsType<OllamaEnrichmentAdapter>(GetPort(svc));
+    }
+
+    // ─── EnrichmentPrompts.Build parity ───────────────────────────────────
+    // Guards against the two adapters diverging: the shared builder must produce
+    // exactly the prompt text the original per-adapter logic produced.
+
+    [Fact]
+    public void Prompts_OneLiner_EmbedsContent_AndConstraint()
+    {
+        var prompt = EnrichmentPrompts.Build(new EnrichmentRequest(EnrichmentPrompt.OneLiner, "My memory body"));
+        Assert.Contains("ultra-compact one-liner", prompt);
+        Assert.Contains("Memory: My memory body", prompt);
+    }
+
+    [Fact]
+    public void Prompts_Summary_EmbedsContent()
+    {
+        var prompt = EnrichmentPrompts.Build(new EnrichmentRequest(EnrichmentPrompt.Summary, "Body text"));
+        Assert.Contains("Summarize this memory", prompt);
+        Assert.Contains("Memory: Body text", prompt);
+    }
+
+    [Fact]
+    public void Prompts_ForesightHint_EmbedsContent()
+    {
+        var prompt = EnrichmentPrompts.Build(new EnrichmentRequest(EnrichmentPrompt.ForesightHint, "Body text"));
+        Assert.Contains("foresight hint", prompt);
+        Assert.Contains("Memory: Body text", prompt);
+    }
+
+    [Fact]
+    public void Prompts_Entities_UsesTextLabel()
+    {
+        var prompt = EnrichmentPrompts.Build(new EnrichmentRequest(EnrichmentPrompt.Entities, "Body text"));
+        Assert.Contains("Extract named entities", prompt);
+        Assert.Contains("Text: Body text", prompt);
+    }
+
+    [Fact]
+    public void Prompts_MergeObservations_NumbersTheAuxList()
+    {
+        var prompt = EnrichmentPrompts.Build(
+            new EnrichmentRequest(EnrichmentPrompt.MergeObservations, string.Empty, ["first obs", "second obs"]));
+        Assert.Contains("merged into a single coherent insight", prompt);
+        Assert.Contains("1. first obs", prompt);
+        Assert.Contains("2. second obs", prompt);
+    }
+
+    [Fact]
+    public void Prompts_SameRequest_IsDeterministic()
+    {
+        var a = EnrichmentPrompts.Build(new EnrichmentRequest(EnrichmentPrompt.Summary, "same content"));
+        var b = EnrichmentPrompts.Build(new EnrichmentRequest(EnrichmentPrompt.Summary, "same content"));
+        Assert.Equal(a, b);
+    }
+
+    // ─── OpenAiEnrichmentAdapter (no server running) ──────────────────────
+    // The adapter constructs its own HttpClient with no injection seam, so the HTTP
+    // request shape (/v1/chat/completions, choices[0].message.content parsing, sanitizer
+    // pass) cannot be asserted without modifying production code. What IS cleanly
+    // testable is the health-gated short-circuit against an unreachable endpoint.
+
+    [Fact]
+    public void OpenAi_BeforeHealthCheck_IsAvailable()
+    {
+        using var adapter = new OpenAiEnrichmentAdapter("http://localhost:1234", "qwen");
+        Assert.True(adapter.IsAvailable);
+    }
+
+    [Fact]
+    public async Task OpenAi_CheckHealth_Unreachable_ReturnsFalse()
+    {
+        using var adapter = new OpenAiEnrichmentAdapter("http://localhost:19999", "qwen");
+        Assert.False(await adapter.CheckHealthAsync());
+    }
+
+    [Fact]
+    public async Task OpenAi_Complete_WhenUnhealthy_ReturnsNull()
+    {
+        using var adapter = new OpenAiEnrichmentAdapter("http://localhost:19999", "qwen");
+        Assert.Null(await adapter.CompleteAsync(new EnrichmentRequest(EnrichmentPrompt.OneLiner, "content")));
     }
 }

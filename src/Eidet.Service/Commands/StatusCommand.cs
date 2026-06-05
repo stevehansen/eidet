@@ -90,8 +90,9 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
                 },
                 enrichment = new
                 {
-                    ollamaEnabled = config.Enrichment.OllamaEnabled,
-                    ollamaUrl = config.Enrichment.OllamaUrl,
+                    enabled = config.Enrichment.Enabled,
+                    provider = config.Enrichment.Provider.ToString(),
+                    url = config.Enrichment.Url,
                 },
                 versionHistory = versionHistory.TakeLast(5).Select(e => new
                 {
@@ -140,7 +141,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
             if (ravenVersion != null)
                 AnsiConsole.MarkupLine($"  RavenDB:    v{ravenVersion}");
 
-            AnsiConsole.MarkupLine($"  Ollama:     {(config.Enrichment.OllamaEnabled ? config.Enrichment.OllamaUrl : "[dim]Disabled[/]")}");
+            AnsiConsole.MarkupLine($"  Enrichment: {(config.Enrichment.Enabled ? $"{config.Enrichment.Provider} @ {config.Enrichment.Url}" : "[dim]Disabled[/]")}");
             AnsiConsole.MarkupLine($"  Config:     {ConfigManager.GetConfigPath()}");
             AnsiConsole.MarkupLine($"  Logs:       {Path.Combine(ConfigManager.GetConfigDir(), "logs", "eidet.log")}");
             AnsiConsole.MarkupLine($"  MCP:        {FormatMcpClients(mcpClients)}");

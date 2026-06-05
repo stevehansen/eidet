@@ -83,7 +83,7 @@ public sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
         checks.Add(await CheckServiceAsync());
 
         // Ollama check (optional)
-        checks.Add(await CheckOllamaAsync(config));
+        checks.Add(await CheckEnrichmentAsync(config));
 
         // Config file check
         checks.Add(CheckConfigFile());
@@ -117,37 +117,45 @@ public sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             $"Healthy (PID {info.Pid}, port {info.Port}, up {uptime.TotalHours:F0}h {uptime.Minutes}m)");
     }
 
-    private static async Task<CheckResult> CheckOllamaAsync(EidetConfig config)
+    private static async Task<CheckResult> CheckEnrichmentAsync(EidetConfig config)
     {
-        if (!config.Enrichment.OllamaEnabled)
-            return new CheckResult("Ollama", true, "Disabled (optional)", Optional: true);
+        var label = config.Enrichment.Provider == EnrichmentProvider.OpenAiCompatible
+            ? "Enrichment (OpenAI)" : "Enrichment (Ollama)";
+
+        if (!config.Enrichment.Enabled)
+            return new CheckResult(label, true, "Disabled (optional)", Optional: true);
+
+        var openAi = config.Enrichment.Provider == EnrichmentProvider.OpenAiCompatible;
+        var probePath = openAi ? "/v1/models" : "/api/tags";
 
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-            var response = await http.GetAsync($"{config.Enrichment.OllamaUrl}/api/tags");
+            var response = await http.GetAsync($"{config.Enrichment.Url.TrimEnd('/')}{probePath}");
             if (response.IsSuccessStatusCode)
             {
                 var body = await response.Content.ReadAsStringAsync();
-                var hasModel = body.Contains(config.Enrichment.OllamaModel, StringComparison.OrdinalIgnoreCase);
+                var hasModel = body.Contains(config.Enrichment.Model, StringComparison.OrdinalIgnoreCase);
                 return hasModel
-                    ? new CheckResult("Ollama", true, $"Connected ({config.Enrichment.OllamaModel})")
-                    : new CheckResult("Ollama", false,
-                        $"Connected but model \"{config.Enrichment.OllamaModel}\" not found",
+                    ? new CheckResult(label, true, $"Connected ({config.Enrichment.Model})")
+                    : new CheckResult(label, false,
+                        $"Connected but model \"{config.Enrichment.Model}\" not found",
                         Optional: true,
-                        Fix: $"Pull the model: ollama pull {config.Enrichment.OllamaModel}");
+                        Fix: openAi
+                            ? $"Load \"{config.Enrichment.Model}\" in your server, or: eidet config set enrichment.model <name>"
+                            : $"Pull the model: ollama pull {config.Enrichment.Model}");
             }
 
-            return new CheckResult("Ollama", false,
-                $"HTTP {(int)response.StatusCode} from {config.Enrichment.OllamaUrl}",
+            return new CheckResult(label, false,
+                $"HTTP {(int)response.StatusCode} from {config.Enrichment.Url}",
                 Optional: true);
         }
         catch (Exception ex)
         {
-            return new CheckResult("Ollama", false,
+            return new CheckResult(label, false,
                 $"Connection failed: {ex.Message}",
                 Optional: true,
-                Fix: "Install Ollama from https://ollama.ai or disable:\n  eidet config set enrichment.ollamaEnabled false");
+                Fix: "Start the enrichment backend or disable:\n  eidet config set enrichment.enabled false");
         }
     }
 

@@ -3,7 +3,12 @@ using System.Text.Json;
 
 namespace Eidet.Core.Enrichment;
 
-internal sealed class OllamaEnrichmentAdapter : IEnrichmentPort, IDisposable
+/// <summary>
+/// Enrichment over any OpenAI-compatible local server (LM Studio, llama.cpp server, vLLM):
+/// <c>GET /v1/models</c> for health, <c>POST /v1/chat/completions</c> for chat. No Ollama-only
+/// <c>think</c> field; response is read from <c>choices[0].message.content</c>.
+/// </summary>
+internal sealed class OpenAiEnrichmentAdapter : IEnrichmentPort, IDisposable
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -14,12 +19,12 @@ internal sealed class OllamaEnrichmentAdapter : IEnrichmentPort, IDisposable
     private readonly EnrichmentHealthCache _health;
     private readonly string _model;
 
-    public OllamaEnrichmentAdapter(string ollamaUrl, string model)
+    public OpenAiEnrichmentAdapter(string baseUrl, string model)
     {
         _model = model;
         _http = new HttpClient
         {
-            BaseAddress = new Uri(ollamaUrl.TrimEnd('/')),
+            BaseAddress = new Uri(baseUrl.TrimEnd('/')),
             Timeout = TimeSpan.FromSeconds(120),
         };
         _health = new EnrichmentHealthCache(_http);
@@ -28,7 +33,7 @@ internal sealed class OllamaEnrichmentAdapter : IEnrichmentPort, IDisposable
     public bool IsAvailable => _health.IsAvailable;
 
     public Task<bool> CheckHealthAsync(CancellationToken ct = default)
-        => _health.CheckAsync("/api/tags", ct);
+        => _health.CheckAsync("/v1/models", ct);
 
     public async Task<string?> CompleteAsync(EnrichmentRequest request, CancellationToken ct = default)
     {
@@ -45,12 +50,11 @@ internal sealed class OllamaEnrichmentAdapter : IEnrichmentPort, IDisposable
                 model = _model,
                 messages = new[] { new { role = "user", content = prompt } },
                 stream = false,
-                think = false,
             };
 
             var json = JsonSerializer.Serialize(payload, JsonOpts);
             var httpContent = new StringContent(json, Encoding.UTF8, "application/json");
-            using var response = await _http.PostAsync("/api/chat", httpContent, ct);
+            using var response = await _http.PostAsync("/v1/chat/completions", httpContent, ct);
 
             if (!response.IsSuccessStatusCode)
                 return null;
@@ -58,7 +62,9 @@ internal sealed class OllamaEnrichmentAdapter : IEnrichmentPort, IDisposable
             var responseJson = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(responseJson);
 
-            if (doc.RootElement.TryGetProperty("message", out var msg) &&
+            if (doc.RootElement.TryGetProperty("choices", out var choices) &&
+                choices.ValueKind == JsonValueKind.Array && choices.GetArrayLength() > 0 &&
+                choices[0].TryGetProperty("message", out var msg) &&
                 msg.TryGetProperty("content", out var content))
             {
                 var text = OllamaTextSanitizer.Clean(content.GetString()?.Trim());
