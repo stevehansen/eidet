@@ -35,3 +35,4 @@ sdk/typescript/dist/
 ## OS
 Thumbs.db
 .DS_Store
+/.claude/scheduled_tasks.lock
