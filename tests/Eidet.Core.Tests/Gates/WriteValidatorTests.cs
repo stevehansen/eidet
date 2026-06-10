@@ -148,4 +148,32 @@ public class WriteValidatorTests
             "I will always run migrations before tests in this repo", MemoryType.Heuristic);
         Assert.True(heurResult.Passed);
     }
+
+    // ─── Drift cleared on edit ────────────────────────────────────────────
+
+    [Fact]
+    public void TryBuildEditEntry_ClearsDriftVerdictOnSupersedingVersion()
+    {
+        var original = new MemoryEntry
+        {
+            Id = "memories/repo-a/insight/abc123",
+            RepoId = "repo-a",
+            Type = MemoryType.Insight,
+            Content = "The old content that drifted out of date",
+            Drift = new DriftReview
+            {
+                Verdict = DriftVerdictKind.Stale,
+                ModelConfidence = 0.9f,
+                Reason = "outdated",
+                ReviewedAt = DateTime.UtcNow,
+            },
+        };
+
+        var built = WriteValidator.TryBuildEditEntry(original,
+            "The rewritten content that reflects the current architecture",
+            type: null, tags: null, importance: null, confidence: null);
+
+        Assert.True(built.IsBuilt);
+        Assert.Null(built.Entry!.Drift); // the superseding version starts un-reviewed
+    }
 }

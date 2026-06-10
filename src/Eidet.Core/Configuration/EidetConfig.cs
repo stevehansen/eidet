@@ -8,6 +8,9 @@ public enum StorageMode { External, Embedded }
 [JsonConverter(typeof(JsonStringEnumConverter<EnrichmentProvider>))]
 public enum EnrichmentProvider { Ollama, OpenAiCompatible }
 
+[JsonConverter(typeof(JsonStringEnumConverter<DriftAutonomy>))]
+public enum DriftAutonomy { FlagOnly, Decay, Expire }
+
 public class EidetConfig
 {
     public ServiceConfig Service { get; set; } = new();
@@ -62,6 +65,16 @@ public class EnrichmentConfig
     public bool AutoOneLiner { get; set; } = true;
     public bool AutoForesight { get; set; } = true;
     public bool AutoConsolidation { get; set; } = true;
+    public DriftReviewConfig DriftReview { get; set; } = new();
+}
+
+public class DriftReviewConfig
+{
+    public bool Enabled { get; set; } = true;             // still gated by EnrichmentConfig.Enabled at runtime
+    public int NightlyBatch { get; set; } = 25;
+    public int MinAgeDays { get; set; } = 7;
+    public float MinModelConfidence { get; set; } = 0.7f; // below: verdict recorded, no action
+    public DriftAutonomy Autonomy { get; set; } = DriftAutonomy.Decay;
 }
 
 public class AuthConfig

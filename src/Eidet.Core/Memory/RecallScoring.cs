@@ -83,6 +83,7 @@ public static class RecallScoring
         Score = score,
         LayerSource = entry.LayerId,
         IsSuperseded = !entry.IsLatest,
+        Drift = entry.Drift,
     };
 
     public static int EstimateTokens(int charCount) => (int)Math.Ceiling(charCount / 4.0);

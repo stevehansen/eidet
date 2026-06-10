@@ -31,6 +31,7 @@ public class QualityBreakdown
     public int HighFizzleCount { get; set; }
     public int LowConfidenceCount { get; set; }
     public int OrphanObservationCount { get; set; }
+    public int DriftFlaggedCount { get; set; }
     public float AverageImportance { get; set; }
     public float AverageConfidence { get; set; }
 }

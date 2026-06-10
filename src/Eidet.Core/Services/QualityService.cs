@@ -41,6 +41,7 @@ public class QualityService
         issues.Add(CheckLowConfidence(entries));
         issues.Add(CheckMissingEntities(entries));
         issues.Add(CheckConflicts(entries));
+        issues.Add(CheckDriftFlagged(entries));
 
         report.Issues = issues.Where(i => i != null).Cast<QualityIssue>().ToList();
 
@@ -235,6 +236,23 @@ public class QualityService
         };
     }
 
+    private static QualityIssue? CheckDriftFlagged(List<MemoryEntry> entries)
+    {
+        var flagged = entries.Where(e => e.Drift is { Verdict: not DriftVerdictKind.Ok } && e.IsLatest).ToList();
+
+        if (flagged.Count == 0) return null;
+
+        return new QualityIssue
+        {
+            CheckId = "drift-flagged",
+            Severity = QualitySeverity.Warning,
+            Title = "Drift-flagged memories",
+            Description = $"{flagged.Count} memories were flagged by drift review as stale, contradicted, or vague — SuggestedFix proposals await human review",
+            AffectedCount = flagged.Count,
+            ExampleIds = flagged.Take(5).Select(e => e.Id).ToList(),
+        };
+    }
+
     private static QualityBreakdown ComputeBreakdown(List<MemoryEntry> entries, DateTime now)
     {
         var byType = entries.GroupBy(e => e.Type).ToDictionary(g => g.Key.ToString(), g => g.Count());
@@ -255,6 +273,7 @@ public class QualityService
             LowConfidenceCount = entries.Count(e => e.Confidence < 0.3f),
             OrphanObservationCount = entries.Count(e =>
                 e.Type == MemoryType.Observation && e.DerivedFrom.Count == 0 && (now - e.CreatedAt).TotalDays > 14),
+            DriftFlaggedCount = entries.Count(e => e.Drift is { Verdict: not DriftVerdictKind.Ok } && e.IsLatest),
             AverageImportance = entries.Count > 0 ? entries.Average(e => e.Importance) : 0,
             AverageConfidence = entries.Count > 0 ? entries.Average(e => e.Confidence) : 0,
         };

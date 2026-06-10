@@ -1,3 +1,4 @@
+using Eidet.Core.Configuration;
 using Eidet.Core.Enrichment;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
@@ -26,6 +27,7 @@ public sealed class MaintenanceContext
     public required string RepoId { get; init; }
     public required bool IsRepoActive { get; init; }
     public int ObservationRetentionDays { get; init; } = 90;
+    public DriftReviewConfig Drift { get; init; } = new();
     public DateTime Now { get; init; } = DateTime.UtcNow;
 
     /// <summary>Stage-to-stage scratch area — avoid unless truly needed.</summary>

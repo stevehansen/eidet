@@ -27,4 +27,5 @@ public class MemorySearchResult
     public int AgeDays { get; set; }
     public string? StalenessWarning { get; set; }
     public bool IsSuperseded { get; set; }
+    public DriftReview? Drift { get; set; }
 }

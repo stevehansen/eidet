@@ -109,4 +109,53 @@ public class QualityServiceTests
         Assert.Equal(10, breakdown.StaleCount);
         Assert.Equal(0.55f, breakdown.AverageImportance);
     }
+
+    // ─── Drift-flagged analysis ───────────────────────────────────────────
+
+    private static MemoryEntry MakeDriftEntry(string id, DriftVerdictKind? verdict, bool isLatest = true) => new()
+    {
+        Id = $"memories/repo-a/insight/{id}",
+        RepoId = "repo-a",
+        Type = MemoryType.Insight,
+        Content = $"deployment uses argo cd via gitops {id}",
+        CreatedAt = DateTime.UtcNow,
+        Validity = new Validity { ValidFrom = DateTime.UtcNow },
+        IsLatest = isLatest,
+        Importance = 0.6f,
+        Drift = verdict is null ? null : new DriftReview { Verdict = verdict.Value, ReviewedAt = DateTime.UtcNow },
+    };
+
+    [Fact]
+    public async Task Analyze_DriftFlaggedEntries_ReportsIssueWithExamplesAndCount()
+    {
+        var store = new InMemoryEidetStore();
+        await store.StoreAsync(MakeDriftEntry("stale-1", DriftVerdictKind.Stale));
+        await store.StoreAsync(MakeDriftEntry("vague-1", DriftVerdictKind.Vague));
+        await store.StoreAsync(MakeDriftEntry("ok-1", DriftVerdictKind.Ok));
+        await store.StoreAsync(MakeDriftEntry("unreviewed-1", null));
+        await store.StoreAsync(MakeDriftEntry("superseded-1", DriftVerdictKind.Contradicted, isLatest: false));
+
+        var report = await new QualityService(store).AnalyzeAsync("repo-a");
+
+        var issue = report.Issues.Single(i => i.CheckId == "drift-flagged");
+        Assert.Equal(QualitySeverity.Warning, issue.Severity);
+        Assert.Equal(2, issue.AffectedCount);
+        Assert.Equal(2, issue.ExampleIds.Count);
+        Assert.Contains("memories/repo-a/insight/stale-1", issue.ExampleIds);
+        Assert.Contains("memories/repo-a/insight/vague-1", issue.ExampleIds);
+        Assert.Equal(2, report.Breakdown.DriftFlaggedCount);
+    }
+
+    [Fact]
+    public async Task Analyze_NoDriftFlags_NoIssueAndZeroCount()
+    {
+        var store = new InMemoryEidetStore();
+        await store.StoreAsync(MakeDriftEntry("ok-1", DriftVerdictKind.Ok));
+        await store.StoreAsync(MakeDriftEntry("unreviewed-1", null));
+
+        var report = await new QualityService(store).AnalyzeAsync("repo-a");
+
+        Assert.DoesNotContain(report.Issues, i => i.CheckId == "drift-flagged");
+        Assert.Equal(0, report.Breakdown.DriftFlaggedCount);
+    }
 }

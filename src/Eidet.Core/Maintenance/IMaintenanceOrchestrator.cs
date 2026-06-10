@@ -1,3 +1,4 @@
+using Eidet.Core.Configuration;
 using Eidet.Core.Enrichment;
 using Eidet.Core.Maintenance.Stages;
 using Eidet.Core.Services;
@@ -17,13 +18,15 @@ public sealed class MaintenanceOrchestrator : IMaintenanceOrchestrator
     private readonly EnrichmentService _enrichment;
     private readonly ConsolidationEngine _consolidation;
     private readonly IReadOnlyList<IMaintenanceStage> _stages;
+    private readonly DriftReviewConfig _drift;
 
     public MaintenanceOrchestrator(
         IEidetStore store,
         MemoryService memory,
         EnrichmentService? enrichment = null,
         ConsolidationEngine? consolidation = null,
-        IReadOnlyList<IMaintenanceStage>? stages = null)
+        IReadOnlyList<IMaintenanceStage>? stages = null,
+        DriftReviewConfig? drift = null)
     {
         _store = store;
         _memory = memory;
@@ -32,6 +35,7 @@ public sealed class MaintenanceOrchestrator : IMaintenanceOrchestrator
         // consolidation writes hit one cache.
         _consolidation = consolidation ?? new ConsolidationEngine(store, _enrichment, _memory);
         _stages = stages ?? DefaultStages();
+        _drift = drift ?? new();
     }
 
     public static IReadOnlyList<IMaintenanceStage> DefaultStages() =>
@@ -44,6 +48,7 @@ public sealed class MaintenanceOrchestrator : IMaintenanceOrchestrator
         new EnrichmentCleanupStage(),
         new HeuristicEnrichmentBackfillStage(),
         new OllamaEnrichmentStage(),
+        new DriftReviewStage(),
         new ConsolidationStage(),
     ];
 
@@ -67,6 +72,7 @@ public sealed class MaintenanceOrchestrator : IMaintenanceOrchestrator
                 RepoId = request.RepoId,
                 IsRepoActive = request.IsRepoActive,
                 ObservationRetentionDays = request.ObservationRetentionDays,
+                Drift = _drift,
             };
 
             foreach (var stage in _stages)

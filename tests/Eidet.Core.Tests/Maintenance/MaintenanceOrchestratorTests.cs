@@ -135,10 +135,10 @@ public class MaintenanceOrchestratorTests
     }
 
     [Fact]
-    public void DefaultStages_IncludesAllNineStages()
+    public void DefaultStages_IncludesAllTenStages()
     {
         var names = MaintenanceOrchestrator.DefaultStages().Select(s => s.Name).ToList();
-        Assert.Equal(9, names.Count);
+        Assert.Equal(10, names.Count);
         Assert.Contains("TtlExpiry", names);
         Assert.Contains("ObservationRetention", names);
         Assert.Contains("DedupSweep", names);
@@ -147,6 +147,7 @@ public class MaintenanceOrchestratorTests
         Assert.Contains("EnrichmentCleanup", names);
         Assert.Contains("HeuristicEnrichmentBackfill", names);
         Assert.Contains("OllamaEnrichment", names);
+        Assert.Contains("DriftReview", names);
         Assert.Contains("Consolidation", names);
     }
 

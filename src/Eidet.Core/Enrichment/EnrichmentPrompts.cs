@@ -40,6 +40,8 @@ internal static class EnrichmentPrompts
 
         EnrichmentPrompt.MergeObservations => BuildMergePrompt(request.Aux ?? []),
 
+        EnrichmentPrompt.DriftReview => BuildDriftReviewPrompt(request.Primary, request.Aux ?? []),
+
         _ => request.Primary,
     };
 
@@ -53,6 +55,27 @@ internal static class EnrichmentPrompts
 
             Observations:
             {numbered}
+            """;
+    }
+
+    private static string BuildDriftReviewPrompt(string memory, IReadOnlyList<string> newerSiblings)
+    {
+        var siblingSection = newerSiblings.Count == 0
+            ? ""
+            : $"\n\nNewer memories from the same project:\n{string.Join("\n", newerSiblings.Select((s, i) => $"{i + 1}. {s}"))}";
+
+        return $$"""
+            Review this developer memory for drift. Pick exactly one verdict:
+            - stale: describes a state that has likely changed, or is time-bound and old
+            - contradicted: a newer sibling memory disagrees with it
+            - vague: too unspecific to ever act on
+            - ok: still sound
+
+            Return STRICT JSON only, nothing else:
+            {"verdict":"ok|stale|contradicted|vague","confidence":0.0-1.0,"reason":"<short>","suggested_fix":"<rewrite or null>"}
+
+            Memory:
+            {{memory}}{{siblingSection}}
             """;
     }
 }

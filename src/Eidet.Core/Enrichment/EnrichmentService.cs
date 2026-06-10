@@ -14,14 +14,15 @@ public sealed class EnrichmentService : IDisposable
     private readonly IEnrichmentPort _port;
     private readonly bool _ownsPort;
 
-    public EnrichmentService(IEnrichmentPort port, bool ownsPort = true)
+    public EnrichmentService(IEnrichmentPort port, bool ownsPort = true, string? modelName = null)
     {
         _port = port;
         _ownsPort = ownsPort;
+        ModelName = modelName;
     }
 
     public static EnrichmentService CreateOllama(string ollamaUrl, string model)
-        => new(new OllamaEnrichmentAdapter(ollamaUrl, model));
+        => new(new OllamaEnrichmentAdapter(ollamaUrl, model), modelName: model);
 
     public static EnrichmentService CreateNull()
         => new(new NullEnrichmentAdapter());
@@ -34,11 +35,14 @@ public sealed class EnrichmentService : IDisposable
     {
         if (!cfg.Enabled) return CreateNull();
         return cfg.Provider == EnrichmentProvider.OpenAiCompatible
-            ? new EnrichmentService(new OpenAiEnrichmentAdapter(cfg.Url, cfg.Model))
+            ? new EnrichmentService(new OpenAiEnrichmentAdapter(cfg.Url, cfg.Model), modelName: cfg.Model)
             : CreateOllama(cfg.Url, cfg.Model);
     }
 
     public bool IsAvailable => _port.IsAvailable;
+
+    /// <summary>Model identifier recorded on drift reviews; null when enrichment is disabled.</summary>
+    public string? ModelName { get; }
 
     public Task<bool> CheckHealthAsync(CancellationToken ct = default) => _port.CheckHealthAsync(ct);
 
@@ -117,6 +121,38 @@ public sealed class EnrichmentService : IDisposable
 
     public Task<string?> MergeObservationsAsync(IReadOnlyList<string> observations, CancellationToken ct = default)
         => _port.CompleteAsync(new EnrichmentRequest(EnrichmentPrompt.MergeObservations, string.Empty, observations), ct);
+
+    /// <summary>
+    /// Asks the model whether a memory has drifted (stale/contradicted/vague) given the
+    /// one-liners of newer sibling memories. Returns null when the port is unavailable,
+    /// the entry has no content, or the response cannot be parsed — the caller skips the
+    /// entry and it gets retried on a future run.
+    /// </summary>
+    public async Task<DriftReview?> ReviewDriftAsync(MemoryEntry entry,
+        IReadOnlyList<string> newerSiblingOneLiners, DateTime now, CancellationToken ct = default)
+    {
+        if (!IsAvailable) return null;
+        if (string.IsNullOrWhiteSpace(entry.Content)) return null;
+
+        // EnrichmentRequest only carries strings, so age/now are folded into Primary here;
+        // the prompt wording itself stays in EnrichmentPrompts.
+        var ageDays = (int)Math.Max(0, (now - entry.CreatedAt).TotalDays);
+        var primary = $"""
+            Type: {entry.Type}
+            Age: {ageDays} days (created {entry.CreatedAt:yyyy-MM-dd}, today is {now:yyyy-MM-dd})
+            Content: {entry.Content}
+            """;
+
+        var raw = await _port.CompleteAsync(
+            new EnrichmentRequest(EnrichmentPrompt.DriftReview, primary, newerSiblingOneLiners), ct);
+
+        var review = DriftReviewParser.Parse(raw);
+        if (review is null) return null;
+
+        review.ReviewedAt = now;
+        review.Model = ModelName ?? "";
+        return review;
+    }
 
     public void Dispose()
     {

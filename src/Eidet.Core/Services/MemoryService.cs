@@ -378,7 +378,9 @@ public sealed class MemoryService
             if (!scope.IsLocalRepo(result.RepoId))
                 result.Score *= LayerScope.NonLocalDeBoost;
             result.AgeDays = (int)(now - result.CreatedAt).TotalDays;
-            if (result.AgeDays >= staleAfter)
+            if (result.Drift is { Verdict: DriftVerdictKind.Stale or DriftVerdictKind.Contradicted } drift)
+                result.StalenessWarning = $"[drift: {drift.Reason ?? drift.Verdict.ToString().ToLowerInvariant()}]";
+            else if (result.AgeDays >= staleAfter)
                 result.StalenessWarning = $"[stale: {result.AgeDays}d ago — verify before acting]";
         }
 

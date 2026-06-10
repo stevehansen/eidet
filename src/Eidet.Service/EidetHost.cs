@@ -94,7 +94,8 @@ public sealed class EidetHost : IDisposable
         var intakeSvc = new IntakeService(eidetStore, memory: memorySvc);
         var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memory: memorySvc);
         IMaintenanceRunner maintenanceRunner = new MaintenanceRunner(
-            new MaintenanceOrchestrator(eidetStore, memorySvc, enrichment, consolidationEngine));
+            new MaintenanceOrchestrator(eidetStore, memorySvc, enrichment, consolidationEngine,
+                drift: config.Enrichment.DriftReview));
         var exportSvc = new ExportService(eidetStore, memory: memorySvc);
         var qualitySvc = new QualityService(eidetStore);
         var usageTracker = new UsageTracker(store);

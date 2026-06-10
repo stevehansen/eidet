@@ -54,4 +54,7 @@ public class MemoryEntry
 
     // Enrichment
     public string? ForesightHint { get; set; }
+
+    // Drift review (null = never reviewed)
+    public DriftReview? Drift { get; set; }
 }
