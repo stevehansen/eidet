@@ -48,43 +48,43 @@ public class MaintenanceOrchestratorTests
     [Fact]
     public async Task SkipStages_SkipsNamedStage()
     {
-        var a = new StubStage("A");
-        var b = new StubStage("B");
-        var c = new StubStage("C");
+        var a = new StubStage(nameof(MaintenanceStep.TtlExpiry));
+        var b = new StubStage(nameof(MaintenanceStep.DedupSweep));
+        var c = new StubStage(nameof(MaintenanceStep.OrphanCleanup));
 
         var orchestrator = WithStages(a, b, c);
         var report = await orchestrator.RunAsync(new MaintenanceRequest
         {
             RepoId = "r",
-            SkipStages = new HashSet<string> { "B" },
+            SkipStages = new HashSet<MaintenanceStep> { MaintenanceStep.DedupSweep },
         });
 
         Assert.Equal(1, a.InvocationCount);
         Assert.Equal(0, b.InvocationCount);
         Assert.Equal(1, c.InvocationCount);
         Assert.Equal(2, report.Stages.Count);
-        Assert.DoesNotContain(report.Stages, s => s.Name == "B");
+        Assert.DoesNotContain(report.Stages, s => s.Name == nameof(MaintenanceStep.DedupSweep));
     }
 
     [Fact]
     public async Task OnlyStages_RunsOnlyNamedStages()
     {
-        var a = new StubStage("A");
-        var b = new StubStage("B");
-        var c = new StubStage("C");
+        var a = new StubStage(nameof(MaintenanceStep.TtlExpiry));
+        var b = new StubStage(nameof(MaintenanceStep.DedupSweep));
+        var c = new StubStage(nameof(MaintenanceStep.OrphanCleanup));
 
         var orchestrator = WithStages(a, b, c);
         var report = await orchestrator.RunAsync(new MaintenanceRequest
         {
             RepoId = "r",
-            OnlyStages = new HashSet<string> { "B" },
+            OnlyStages = new HashSet<MaintenanceStep> { MaintenanceStep.DedupSweep },
         });
 
         Assert.Equal(0, a.InvocationCount);
         Assert.Equal(1, b.InvocationCount);
         Assert.Equal(0, c.InvocationCount);
         Assert.Single(report.Stages);
-        Assert.Equal("B", report.Stages[0].Name);
+        Assert.Equal(nameof(MaintenanceStep.DedupSweep), report.Stages[0].Name);
     }
 
     [Fact]
@@ -135,20 +135,13 @@ public class MaintenanceOrchestratorTests
     }
 
     [Fact]
-    public void DefaultStages_IncludesAllTenStages()
+    public void DefaultStages_NamesMatchMaintenanceStepEnumExactly()
     {
-        var names = MaintenanceOrchestrator.DefaultStages().Select(s => s.Name).ToList();
-        Assert.Equal(10, names.Count);
-        Assert.Contains("TtlExpiry", names);
-        Assert.Contains("ObservationRetention", names);
-        Assert.Contains("DedupSweep", names);
-        Assert.Contains("ImportanceDecay", names);
-        Assert.Contains("OrphanCleanup", names);
-        Assert.Contains("EnrichmentCleanup", names);
-        Assert.Contains("HeuristicEnrichmentBackfill", names);
-        Assert.Contains("OllamaEnrichment", names);
-        Assert.Contains("DriftReview", names);
-        Assert.Contains("Consolidation", names);
+        var stageNames = MaintenanceOrchestrator.DefaultStages().Select(s => s.Name).ToHashSet();
+        var enumNames = Enum.GetNames<MaintenanceStep>().ToHashSet();
+
+        Assert.Equal(10, stageNames.Count);
+        Assert.Equal(enumNames, stageNames);
     }
 
     [Fact]

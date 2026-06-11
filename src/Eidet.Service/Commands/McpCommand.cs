@@ -41,9 +41,9 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
             var memorySvc = new MemoryService(eidetStore, hooks: hookRunner);
             var intakeSvc = new IntakeService(eidetStore, memorySvc);
             var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memorySvc);
-            IMaintenanceRunner maintenanceRunner = new MaintenanceRunner(
-                new MaintenanceOrchestrator(eidetStore, memorySvc, enrichment, consolidationEngine,
-                    drift: config.Enrichment.DriftReview));
+            IMaintenanceRunner maintenanceRunner = new MaintenanceOrchestrator(
+                eidetStore, memorySvc, enrichment, consolidationEngine,
+                drift: config.Enrichment.DriftReview);
 
             var exportSvc = new ExportService(eidetStore, memorySvc);
             var layerSvc = new LayerService(eidetStore);

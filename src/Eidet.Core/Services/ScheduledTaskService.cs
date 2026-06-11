@@ -26,7 +26,6 @@ public sealed class ScheduledTaskService : IDisposable
 {
     private readonly IDocumentStore _documentStore;
     private readonly IEidetStore _eidetStore;
-    private readonly MemoryService _memorySvc;
     private readonly IMaintenanceRunner _maintenance;
     private readonly ConsolidationEngine _consolidation;
     private readonly MaintenanceConfig _config;
@@ -42,14 +41,12 @@ public sealed class ScheduledTaskService : IDisposable
     public ScheduledTaskService(
         IDocumentStore documentStore,
         IEidetStore eidetStore,
-        MemoryService memorySvc,
         IMaintenanceRunner maintenance,
         ConsolidationEngine consolidation,
         MaintenanceConfig config)
     {
         _documentStore = documentStore;
         _eidetStore = eidetStore;
-        _memorySvc = memorySvc;
         _maintenance = maintenance;
         _consolidation = consolidation;
         _config = config;
@@ -212,8 +209,7 @@ public sealed class ScheduledTaskService : IDisposable
                 switch (task.TaskType)
                 {
                     case ScheduledTaskType.Maintenance:
-                        var isActive = _memorySvc.IsRepoActive(repoId);
-                        await _maintenance.RunAsync(new MaintenanceRequest { RepoId = repoId, IsRepoActive = isActive });
+                        await _maintenance.RunAsync(repoId);
                         break;
 
                     case ScheduledTaskType.Consolidation:

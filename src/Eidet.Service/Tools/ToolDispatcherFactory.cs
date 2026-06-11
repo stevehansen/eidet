@@ -29,7 +29,7 @@ internal static class ToolDispatcherFactory
             new ContextToolHandler(svc),
             new LinkToolHandler(svc),
             new ConsolidateToolHandler(consolidation),
-            new MaintenanceToolHandler(maintenance, svc),
+            new MaintenanceToolHandler(maintenance),
             new EditToolHandler(svc),
             new IntakeToolHandler(intake),
             new PackExportToolHandler(export),

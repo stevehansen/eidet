@@ -93,9 +93,9 @@ public sealed class EidetHost : IDisposable
         var memorySvc = new MemoryService(eidetStore, layerSvc, hookRunner);
         var intakeSvc = new IntakeService(eidetStore, memory: memorySvc);
         var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memory: memorySvc);
-        IMaintenanceRunner maintenanceRunner = new MaintenanceRunner(
-            new MaintenanceOrchestrator(eidetStore, memorySvc, enrichment, consolidationEngine,
-                drift: config.Enrichment.DriftReview));
+        IMaintenanceRunner maintenanceRunner = new MaintenanceOrchestrator(
+            eidetStore, memorySvc, enrichment, consolidationEngine,
+            drift: config.Enrichment.DriftReview);
         var exportSvc = new ExportService(eidetStore, memory: memorySvc);
         var qualitySvc = new QualityService(eidetStore);
         var usageTracker = new UsageTracker(store);
@@ -103,7 +103,7 @@ public sealed class EidetHost : IDisposable
         var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationEngine, maintenanceRunner,
             Directory.GetCurrentDirectory(), autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker,
             export: exportSvc, layers: layerSvc);
-        var scheduler = new ScheduledTaskService(store, eidetStore, memorySvc, maintenanceRunner, consolidationEngine, config.Maintenance);
+        var scheduler = new ScheduledTaskService(store, eidetStore, maintenanceRunner, consolidationEngine, config.Maintenance);
         var apiServer = new EidetApiServer(new EidetApiServerOptions
         {
             Memory = memorySvc,

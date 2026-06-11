@@ -53,7 +53,7 @@ public class DriftReviewStageTests
         {
             RepoId = "repo-a",
             IsRepoActive = true,
-            OnlyStages = new HashSet<string> { DriftReviewStage.StageName },
+            OnlyStages = new HashSet<MaintenanceStep> { MaintenanceStep.DriftReview },
         });
     }
 

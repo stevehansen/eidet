@@ -96,7 +96,14 @@ The handler split is intentional (sharing between MCP and REST). Question is whe
 
 ---
 
-## 4. Maintenance stages + orchestrator
+## 4. Maintenance stages + orchestrator — ✅ DESIGNED
+
+> Design hardened 2026-06-11 via `/design-interface` → RFC [#22](https://github.com/stevehansen/eidet/issues/22).
+> Verdict: **stage count is not the problem.** Chosen hybrid — collapse the redundant `IMaintenanceRunner`/`IMaintenanceOrchestrator`
+> double-facade, add a `RunAsync(string repo)` happy-path overload that derives `IsRepoActive` (fixes a CLI footgun),
+> add a `MaintenanceContext.ForTest` seam so the 10 stages become unit-testable, and type `OnlyStages`/`SkipStages`
+> as a `MaintenanceStep` enum. Rejected: folding stages into private methods (kills testability — the scope invariant
+> is already structurally sealed), `RunsAfter` topo-sort (speculative), engine ports (shallow pass-throughs).
 
 **Files**
 - `src/Eidet.Core/Maintenance/MaintenanceOrchestrator.cs`
