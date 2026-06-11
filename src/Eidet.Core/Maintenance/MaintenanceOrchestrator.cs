@@ -56,8 +56,11 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
         // through `write`, so the touched scopes are invalidated exactly once in the finally.
         _memory.RunBulkAsync(async write =>
         {
+            // Normalize here too (idempotent): the string overload already does, but a direct
+            // MaintenanceRequest caller might pass a raw path — un-normalized it misses the corpus.
+            var repoId = RepoIdNormalizer.Normalize(request.RepoId);
             var dedup = new DedupEngine(_store, _memory, _enrichment);
-            var report = new MaintenanceReport { RepoId = request.RepoId };
+            var report = new MaintenanceReport { RepoId = repoId };
 
             // Built once per run: every field is run-constant, and stages share one Now and one
             // Items scratch dictionary (the documented stage-to-stage contract).
@@ -68,9 +71,9 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
                 Enrichment = _enrichment,
                 Consolidation = _consolidation,
                 Dedup = dedup,
-                RepoId = request.RepoId,
+                RepoId = repoId,
                 // Single derivation site: null ⇒ derive so the CLI path can't decay an inactive repo.
-                IsRepoActive = request.IsRepoActive ?? _memory.IsRepoActive(request.RepoId),
+                IsRepoActive = request.IsRepoActive ?? _memory.IsRepoActive(repoId),
                 ObservationRetentionDays = request.ObservationRetentionDays,
                 Drift = _drift,
             };
