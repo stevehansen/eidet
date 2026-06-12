@@ -12,7 +12,7 @@
 
   <ItemGroup>
     <PackageReference Include="RavenDB.Client" Version="7.2.3" />
-    <PackageReference Include="RavenDB.Embedded" Version="7.2.2" />
+    <PackageReference Include="RavenDB.Embedded" Version="7.2.3" />
   </ItemGroup>
 
 </Project>
