@@ -441,7 +441,9 @@ Keys stored in config as SHA256 hashes. Creating the first key auto-enables auth
 
 ---
 
-## Client SDK (Future)
+## Client SDK ✅ Shipped
+
+Implemented in `sdk/{typescript,python,dotnet}` and published to npm (`@eidet/sdk`), PyPI (`eidet-sdk`), and NuGet (`Eidet.Sdk`).
 
 For easier programmatic integration:
 
