@@ -15,6 +15,7 @@ Design decisions live in `docs/specs/`:
 | [ServiceSpec.md](docs/specs/ServiceSpec.md) | Daemon, MCP server, REST API, RavenDB (embedded/external), TUI, Docker, installation, CLI |
 | [SyncSpec.md](docs/specs/SyncSpec.md) | *(Future)* Remote sync, E2E encryption, team sharing |
 | [IntegrationSpec.md](docs/specs/IntegrationSpec.md) | Claude Code, Claude Desktop, Cursor, TerminalHost, Docker, CI/CD, client SDKs |
+| [PortalSpec.md](docs/specs/PortalSpec.md) | Per-repo Portal — generated, audited Web UI state view (`/api/eidet/portal`); live render, source-traceable claims |
 
 - Architecture deep dive: [docs/deep-dive.md](docs/deep-dive.md)
 - Phase-by-phase implementation history: [docs/phases.md](docs/phases.md)
@@ -107,6 +108,7 @@ Base: `http://localhost:19380`
 | GET  | `/api/eidet/search?repo=...&q=...` | Hybrid search (single-repo by default) |
 | GET  | `/api/eidet/browse?repo=...&type=...` | Paginated browse |
 | GET  | `/api/eidet/graph?repo=...` | Graph data (nodes + edges) |
+| GET  | `/api/eidet/portal?repo=...` | Per-repo Portal view (`augment=off` in v1) |
 | GET  | `/api/eidet/repos` | List repos (with original paths) |
 | GET  | `/api/eidet/usage?repo=...&days=30` | Usage stats |
 | GET  | `/api/eidet/usage/hourly?repo=...` | Hourly bucket counts |
