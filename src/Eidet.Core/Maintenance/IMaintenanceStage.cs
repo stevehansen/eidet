@@ -32,4 +32,30 @@ public sealed class MaintenanceContext
 
     /// <summary>Stage-to-stage scratch area — avoid unless truly needed.</summary>
     public IDictionary<string, object> Items { get; } = new Dictionary<string, object>();
+
+    /// <summary>
+    /// Drives a single stage without the orchestrator. Builds the dual-use engines internally so
+    /// tests pass only the store + bulk write scope; run-constants default to an active test repo.
+    /// The engines run on a throwaway <see cref="MemoryService"/> distinct from the one that opened
+    /// <paramref name="write"/>; that is coherent only because delegator stages and the engines write
+    /// through the supplied <paramref name="write"/> scope — if an engine ever fell back to its own
+    /// (<c>write == null</c>) scope, a ForTest run would invalidate the wrong cache.
+    /// </summary>
+    public static MaintenanceContext ForTest(
+        IEidetStore store, BulkMutationCtx write,
+        EnrichmentService? enrichment = null, string repoId = "test-repo")
+    {
+        var memory = new MemoryService(store);
+        var enrich = enrichment ?? EnrichmentService.CreateNull();
+        return new MaintenanceContext
+        {
+            Store = store,
+            Write = write,
+            Enrichment = enrich,
+            Consolidation = new ConsolidationEngine(store, enrich, memory),
+            Dedup = new DedupEngine(store, memory, enrich),
+            RepoId = repoId,
+            IsRepoActive = true,
+        };
+    }
 }

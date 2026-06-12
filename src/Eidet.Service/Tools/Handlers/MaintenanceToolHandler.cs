@@ -1,7 +1,5 @@
 using System.Text.Json.Nodes;
-using Eidet.Core.Domain;
 using Eidet.Core.Maintenance;
-using Eidet.Core.Services;
 using Eidet.Service.Mcp;
 
 namespace Eidet.Service.Tools.Handlers;
@@ -13,12 +11,10 @@ namespace Eidet.Service.Tools.Handlers;
 public sealed class MaintenanceToolHandler : IToolHandler
 {
     private readonly IMaintenanceRunner _maintenance;
-    private readonly MemoryService _svc;
 
-    public MaintenanceToolHandler(IMaintenanceRunner maintenance, MemoryService svc)
+    public MaintenanceToolHandler(IMaintenanceRunner maintenance)
     {
         _maintenance = maintenance;
-        _svc = svc;
     }
 
     public string Name => "eidet_maintenance";
@@ -33,10 +29,7 @@ public sealed class MaintenanceToolHandler : IToolHandler
 
     public async Task<ToolResult> ExecuteAsync(ToolRequest request)
     {
-        var normalizedRepoId = RepoIdNormalizer.Normalize(request.RepoId);
-        var isActive = _svc.IsRepoActive(normalizedRepoId);
-        var report = await _maintenance.RunAsync(
-            new MaintenanceRequest { RepoId = normalizedRepoId, IsRepoActive = isActive }, request.Ct);
+        var report = await _maintenance.RunAsync(request.RepoId, request.Ct);
 
         return ToolResult.Ok(
             payload: report,

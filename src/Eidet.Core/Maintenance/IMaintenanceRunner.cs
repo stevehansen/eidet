@@ -1,24 +1,16 @@
 namespace Eidet.Core.Maintenance;
 
 /// <summary>
-/// Thin default-path facade used by scheduler / REST / MCP. Keeps those callers
-/// immune to stage additions: adding a new stage in the pipeline doesn't change
-/// this signature.
+/// Sole entry point for the maintenance pipeline (scheduler / REST / MCP / CLI). Keeps callers
+/// immune to stage additions: adding a stage doesn't change these signatures.
 /// </summary>
 public interface IMaintenanceRunner
 {
+    /// <summary>
+    /// Happy path: normalize the repo path and derive <c>IsRepoActive</c> internally, run all stages.
+    /// </summary>
+    Task<MaintenanceReport> RunAsync(string repoPathOrId, CancellationToken ct = default);
+
+    /// <summary>Power path: subset/skip/retention overrides and an explicit <c>IsRepoActive</c>.</summary>
     Task<MaintenanceReport> RunAsync(MaintenanceRequest request, CancellationToken ct = default);
-}
-
-public sealed class MaintenanceRunner : IMaintenanceRunner
-{
-    private readonly IMaintenanceOrchestrator _orchestrator;
-
-    public MaintenanceRunner(IMaintenanceOrchestrator orchestrator)
-    {
-        _orchestrator = orchestrator;
-    }
-
-    public Task<MaintenanceReport> RunAsync(MaintenanceRequest request, CancellationToken ct = default)
-        => _orchestrator.RunAsync(request, ct);
 }

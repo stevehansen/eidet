@@ -1,4 +1,5 @@
 using Eidet.Core.Configuration;
+using Eidet.Core.Domain;
 using Eidet.Core.Enrichment;
 using Eidet.Core.Maintenance.Stages;
 using Eidet.Core.Services;
@@ -6,12 +7,7 @@ using Eidet.Core.Storage;
 
 namespace Eidet.Core.Maintenance;
 
-public interface IMaintenanceOrchestrator
-{
-    Task<MaintenanceReport> RunAsync(MaintenanceRequest request, CancellationToken ct = default);
-}
-
-public sealed class MaintenanceOrchestrator : IMaintenanceOrchestrator
+public sealed class MaintenanceOrchestrator : IMaintenanceRunner
 {
     private readonly IEidetStore _store;
     private readonly MemoryService _memory;
@@ -52,13 +48,19 @@ public sealed class MaintenanceOrchestrator : IMaintenanceOrchestrator
         new ConsolidationStage(),
     ];
 
+    public Task<MaintenanceReport> RunAsync(string repoPathOrId, CancellationToken ct = default) =>
+        RunAsync(new MaintenanceRequest { RepoId = RepoIdNormalizer.Normalize(repoPathOrId) }, ct);
+
     public Task<MaintenanceReport> RunAsync(MaintenanceRequest request, CancellationToken ct = default) =>
         // One bulk scope per run: every direct-writing stage and both dual-use engines write
         // through `write`, so the touched scopes are invalidated exactly once in the finally.
         _memory.RunBulkAsync(async write =>
         {
+            // Normalize here too (idempotent): the string overload already does, but a direct
+            // MaintenanceRequest caller might pass a raw path — un-normalized it misses the corpus.
+            var repoId = RepoIdNormalizer.Normalize(request.RepoId);
             var dedup = new DedupEngine(_store, _memory, _enrichment);
-            var report = new MaintenanceReport { RepoId = request.RepoId };
+            var report = new MaintenanceReport { RepoId = repoId };
 
             // Built once per run: every field is run-constant, and stages share one Now and one
             // Items scratch dictionary (the documented stage-to-stage contract).
@@ -69,18 +71,27 @@ public sealed class MaintenanceOrchestrator : IMaintenanceOrchestrator
                 Enrichment = _enrichment,
                 Consolidation = _consolidation,
                 Dedup = dedup,
-                RepoId = request.RepoId,
-                IsRepoActive = request.IsRepoActive,
+                RepoId = repoId,
+                // Single derivation site: null ⇒ derive so the CLI path can't decay an inactive repo.
+                IsRepoActive = request.IsRepoActive ?? _memory.IsRepoActive(repoId),
                 ObservationRetentionDays = request.ObservationRetentionDays,
                 Drift = _drift,
             };
+
+            // Map the requested enum sets to stage names once. Comparing by name (never parsing
+            // stage.Name) keeps selection total: a stage whose name has no MaintenanceStep member
+            // simply never matches an Only filter, rather than throwing and aborting the run.
+            var onlyNames = request.OnlyStages is { Count: > 0 } only
+                ? only.Select(s => s.ToString()).ToHashSet(StringComparer.Ordinal) : null;
+            var skipNames = request.SkipStages is { Count: > 0 } skip
+                ? skip.Select(s => s.ToString()).ToHashSet(StringComparer.Ordinal) : null;
 
             foreach (var stage in _stages)
             {
                 if (ct.IsCancellationRequested) break;
 
-                if (request.OnlyStages is { Count: > 0 } only && !only.Contains(stage.Name)) continue;
-                if (request.SkipStages is { Count: > 0 } skip && skip.Contains(stage.Name)) continue;
+                if (onlyNames is not null && !onlyNames.Contains(stage.Name)) continue;
+                if (skipNames is not null && skipNames.Contains(stage.Name)) continue;
 
                 try
                 {

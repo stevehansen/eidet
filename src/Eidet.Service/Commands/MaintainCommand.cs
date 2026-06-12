@@ -27,15 +27,15 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
         using var enrichment = EnrichmentService.CreateFromConfig(config.Enrichment);
         var memorySvc = new MemoryService(eidetStore);
         var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memorySvc);
-        IMaintenanceRunner runner = new MaintenanceRunner(
-            new MaintenanceOrchestrator(eidetStore, memorySvc, enrichment, consolidationEngine,
-                drift: config.Enrichment.DriftReview));
+        IMaintenanceRunner runner = new MaintenanceOrchestrator(
+            eidetStore, memorySvc, enrichment, consolidationEngine,
+            drift: config.Enrichment.DriftReview);
 
         var repoId = Eidet.Core.Domain.RepoIdNormalizer.Normalize(settings.Repo ?? Directory.GetCurrentDirectory());
 
         try
         {
-            var report = await runner.RunAsync(new MaintenanceRequest { RepoId = repoId }, cancellation);
+            var report = await runner.RunAsync(repoId, cancellation);
 
             if (settings.Json)
             {

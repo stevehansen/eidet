@@ -49,7 +49,7 @@ public class MaintenanceCacheInvalidationTests
         {
             RepoId = "repo-a",
             IsRepoActive = true,
-            OnlyStages = new HashSet<string> { TtlExpiryStage.StageName },
+            OnlyStages = new HashSet<MaintenanceStep> { MaintenanceStep.TtlExpiry },
         });
         Assert.Equal(1, report.AffectedBy(TtlExpiryStage.StageName));
 
@@ -87,7 +87,7 @@ public class MaintenanceCacheInvalidationTests
         {
             RepoId = "repo-a",
             IsRepoActive = true,
-            OnlyStages = new HashSet<string> { TtlExpiryStage.StageName },
+            OnlyStages = new HashSet<MaintenanceStep> { MaintenanceStep.TtlExpiry },
         });
         Assert.Equal(0, report.AffectedBy(TtlExpiryStage.StageName));
 
@@ -240,7 +240,7 @@ public class MaintenanceCacheInvalidationTests
         {
             RepoId = "repo-a",
             IsRepoActive = true,
-            OnlyStages = new HashSet<string> { ConsolidationStage.StageName },
+            OnlyStages = new HashSet<MaintenanceStep> { MaintenanceStep.Consolidation },
         });
         Assert.Equal(1, report.AffectedBy(ConsolidationStage.StageName));
 

@@ -126,7 +126,7 @@ public class McpToolDefinitionsTests
             new ContextToolHandler(svc),
             new LinkToolHandler(svc),
             new ConsolidateToolHandler(consolidation),
-            new MaintenanceToolHandler(maintenance, svc),
+            new MaintenanceToolHandler(maintenance),
             new EditToolHandler(svc),
             new IntakeToolHandler(intake),
             new PackExportToolHandler(null),
@@ -136,6 +136,9 @@ public class McpToolDefinitionsTests
 
     private sealed class StubMaintenanceRunner : IMaintenanceRunner
     {
+        public Task<MaintenanceReport> RunAsync(string repoPathOrId, CancellationToken ct = default) =>
+            Task.FromResult(new MaintenanceReport { RepoId = repoPathOrId });
+
         public Task<MaintenanceReport> RunAsync(MaintenanceRequest request, CancellationToken ct = default) =>
             Task.FromResult(new MaintenanceReport { RepoId = request.RepoId });
     }

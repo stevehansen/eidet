@@ -1,12 +1,30 @@
 namespace Eidet.Core.Maintenance;
 
+/// <summary>
+/// The 10 maintenance stages, in pipeline order. Each value's name equals the matching
+/// stage's <c>StageName</c> const; the orchestrator maps enum ⇄ name at the selection boundary.
+/// </summary>
+public enum MaintenanceStep
+{
+    TtlExpiry,
+    ObservationRetention,
+    DedupSweep,
+    ImportanceDecay,
+    OrphanCleanup,
+    EnrichmentCleanup,
+    HeuristicEnrichmentBackfill,
+    OllamaEnrichment,
+    DriftReview,
+    Consolidation,
+}
+
 public sealed class MaintenanceRequest
 {
     public required string RepoId { get; init; }
-    public bool IsRepoActive { get; init; } = true;
+    public bool? IsRepoActive { get; init; }
     public int ObservationRetentionDays { get; init; } = 90;
-    public ISet<string>? OnlyStages { get; init; }
-    public ISet<string>? SkipStages { get; init; }
+    public ISet<MaintenanceStep>? OnlyStages { get; init; }
+    public ISet<MaintenanceStep>? SkipStages { get; init; }
 }
 
 public sealed class MaintenanceReport
@@ -17,6 +35,8 @@ public sealed class MaintenanceReport
 
     public int AffectedBy(string stageName) =>
         Stages.FirstOrDefault(s => s.Name == stageName).Affected;
+
+    public int AffectedBy(MaintenanceStep step) => AffectedBy(step.ToString());
 
     public IEnumerable<StageOutcome> Failures => Stages.Where(s => !s.Succeeded);
 
