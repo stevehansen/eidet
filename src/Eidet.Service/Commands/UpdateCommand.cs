@@ -484,8 +484,10 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
 
         // The script:
         // 1. Waits for the calling process to exit (polls every second, up to 30s)
-        // 2. Kills any remaining eidet processes (belt and suspenders)
-        // 3. Runs dotnet tool update
+        // 2. Re-kills eidet and runs dotnet tool update in a retry loop — an MCP client
+        //    supervising `eidet mcp` respawns it and re-locks the tool store, so we re-kill
+        //    immediately before each attempt and retry to out-race the respawn
+        // 3. Verifies the install and records version history from the new binary
         // 4. Restarts the scheduled task if it was running
         // 5. Writes a brief log file
         // 6. Cleans itself up
@@ -509,21 +511,29 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             goto WAIT_LOOP
             :DONE_WAITING
 
-            REM Kill any remaining eidet processes (mcp, serve, etc.)
-            echo Killing remaining eidet processes...
+            REM Run the actual update with retries. An MCP client supervising `eidet mcp`
+            REM (e.g. Claude Code) respawns it the instant we kill it, re-locking the tool
+            REM store before `dotnet tool update` can delete it. We can't stop the respawn,
+            REM so we out-race it: re-kill immediately before each attempt and retry. Pin the
+            REM version so dotnet uses the NuGet flat container, not the lagging search index.
+            set /a ATTEMPT=0
+            :UPDATE_LOOP
+            set /a ATTEMPT+=1
+            echo Killing remaining eidet processes (attempt %ATTEMPT%)...
             taskkill /f /im eidet.exe 2>nul
-            timeout /t 2 /nobreak >nul
-
-            REM Run the actual update — pin the version so dotnet falls back to the
-            REM NuGet flat container instead of the search index (which lags publish).
             echo Running dotnet tool update...
             dotnet tool update -g eidet --version {latestVersion}
-            if errorlevel 1 (
+            if not errorlevel 1 goto UPDATE_OK
+            if %ATTEMPT% geq 5 (
                 echo UPDATE FAILED >> "{logPath}"
-                echo %date% %time% - Update from v{currentVersion} to v{latestVersion} FAILED >> "{logPath}"
+                echo %date% %time% - Update from v{currentVersion} to v{latestVersion} FAILED after %ATTEMPT% attempts >> "{logPath}"
                 echo dotnet tool update -g eidet --version {latestVersion} returned error >> "{logPath}"
                 goto CLEANUP
             )
+            echo Update attempt %ATTEMPT% failed - store likely re-locked by a respawned mcp. Retrying...
+            timeout /t 2 /nobreak >nul
+            goto UPDATE_LOOP
+            :UPDATE_OK
 
             REM Verify the install actually advanced the version and record history from
             REM the freshly-installed binary. If the binary reports a different version,

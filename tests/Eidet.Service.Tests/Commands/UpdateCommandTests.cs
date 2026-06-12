@@ -82,6 +82,34 @@ public class UpdateCommandTests
     }
 
     [Fact]
+    public void GenerateWindowsTrampolineScript_RetriesUpdateToOutraceRespawn()
+    {
+        // Regression: an MCP client supervising `eidet mcp` respawns it after we kill it,
+        // re-locking the tool store before dotnet tool update can replace it. The script
+        // must re-kill and retry the update rather than abort on the first lock conflict.
+        var scriptPath = UpdateCommand.GenerateWindowsTrampolineScript("0.6.0", "0.7.0", restartService: true);
+
+        try
+        {
+            var content = File.ReadAllText(scriptPath);
+
+            // The kill must live inside the retry loop, so each attempt re-kills the
+            // respawned process immediately before re-running the update.
+            var loopIdx = content.IndexOf(":UPDATE_LOOP", StringComparison.Ordinal);
+            var killIdx = loopIdx >= 0 ? content.IndexOf("taskkill /f /im eidet.exe", loopIdx, StringComparison.Ordinal) : -1;
+            var updateIdx = killIdx >= 0 ? content.IndexOf("dotnet tool update -g eidet --version 0.7.0", killIdx, StringComparison.Ordinal) : -1;
+            var retryIdx = updateIdx >= 0 ? content.IndexOf("goto UPDATE_LOOP", updateIdx, StringComparison.Ordinal) : -1;
+
+            Assert.True(loopIdx >= 0 && killIdx > loopIdx && updateIdx > killIdx && retryIdx > updateIdx,
+                "retry loop must re-kill eidet, run the update, then loop back on failure");
+        }
+        finally
+        {
+            File.Delete(scriptPath);
+        }
+    }
+
+    [Fact]
     public void GenerateWindowsTrampolineScript_IncludesServiceRestart_WhenRunning()
     {
         var scriptPath = UpdateCommand.GenerateWindowsTrampolineScript("0.1.0", "0.3.0", restartService: true);
