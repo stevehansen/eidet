@@ -19,6 +19,7 @@ public sealed class EditToolHandler : IToolHandler
 
     public string Name => "eidet_edit";
     public string UsageOp => "Store";
+    public bool McpExposed => false;
 
     public McpToolDefinition Schema { get; } = new()
     {

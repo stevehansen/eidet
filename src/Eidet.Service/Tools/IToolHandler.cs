@@ -15,6 +15,14 @@ public interface IToolHandler
     /// <summary>The UsageTracker operation label (e.g., <c>Store</c>).</summary>
     string UsageOp { get; }
 
+    /// <summary>
+    /// Whether this tool is advertised on the MCP surface (<c>tools/list</c>) and callable over MCP.
+    /// Defaults to <c>true</c>. Advanced/maintenance tools opt out so the agent-facing surface stays
+    /// to the core session flow; they remain available via the REST API and CLI, which use the full
+    /// dispatcher regardless of this flag.
+    /// </summary>
+    bool McpExposed => true;
+
     /// <summary>MCP tool definition co-located with the handler. Used by tools/list.</summary>
     McpToolDefinition Schema { get; }
 

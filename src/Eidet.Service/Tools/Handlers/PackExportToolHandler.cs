@@ -17,6 +17,7 @@ public sealed class PackExportToolHandler : IToolHandler
 
     public string Name => "eidet_pack_export";
     public string UsageOp => "PackExport";
+    public bool McpExposed => false;
 
     public McpToolDefinition Schema { get; } = new()
     {

@@ -22,7 +22,7 @@ Design decisions live in `docs/specs/`:
 
 ## Current Capabilities
 
-- **16 MCP tools**: store, recall, context, forget, feedback, history, intake, link, consolidate, maintenance, export, pack_export, pack_import, edit (+ layer mgmt)
+- **6 MCP tools** (core session flow): context, recall, store, feedback, forget, link. Advanced operations (history, intake, consolidate, maintenance, edit, pack_export, pack_import) stay off the MCP surface — they run via the scheduler/maintenance pipeline and are reachable through the REST API, CLI, and Web UI. 13 tool handlers total, shared by REST + MCP via `ToolDispatcher`; MCP exposure is gated by `IToolHandler.McpExposed`.
 - **4 memory types**: Observation, Insight, Procedure, Heuristic — each with per-type retrieval budgets
 - **Storage**: RavenDB (embedded or external) with vector + full-text hybrid search on composite `SearchText` field
 - **Write gates**: `WriteValidator` chains rules (13 secret patterns + signal/low-signal + self-talk) — deterministic, local, always-on; single entry point from `MemoryService.StoreAsync` and `UpdateMemoryAsync`
@@ -30,7 +30,7 @@ Design decisions live in `docs/specs/`:
 - **Layers**: Local (rw) + Shared/Base (ro); auto-mount on pack import
 - **Interfaces**: MCP stdio, MCP HTTP, REST API, CLI, Web UI (`/ui`), SDKs (TS/Python/C#)
 - **Operations**: API key auth (4 scopes), hooks (6 lifecycle events), persistent scheduler (RavenDB Refresh), quality dashboard, backup/restore, usage analytics
-- **Curation**: Versioned `PUT` edits / MCP `eidet_edit`, AI-assisted enrichment via `/api/eidet/enrich`, Web UI inline editing
+- **Curation**: Versioned `PUT` / REST edits (handler available off-MCP), AI-assisted enrichment via `/api/eidet/enrich`, Web UI inline editing
 - **Pack format**: Human-readable markdown with YAML frontmatter — ScribeGate compatible
 - **Test coverage**: 646 tests (Core + Service + Integration)
 

@@ -19,6 +19,7 @@ public sealed class MaintenanceToolHandler : IToolHandler
 
     public string Name => "eidet_maintenance";
     public string UsageOp => "Maintenance";
+    public bool McpExposed => false;
 
     public McpToolDefinition Schema { get; } = new()
     {

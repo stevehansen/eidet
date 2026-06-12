@@ -21,6 +21,7 @@ public sealed class PackImportToolHandler : IToolHandler
 
     public string Name => "eidet_pack_import";
     public string UsageOp => "PackImport";
+    public bool McpExposed => false;
 
     public McpToolDefinition Schema { get; } = new()
     {

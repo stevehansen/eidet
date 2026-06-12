@@ -127,26 +127,18 @@ public sealed class InstructionsCommand : AsyncCommand<InstructionsCommand.Setti
             - Call `eidet_feedback` with `used: false` (fizzle) when a recalled memory was irrelevant
             - This feedback tunes future recall scoring
 
-            ### Maintenance
-            - Call `eidet_consolidate` after storing several observations — it merges related ones into insights
+            ### Forgetting
             - Call `eidet_forget` to invalidate memories that are no longer true (with a reason)
 
             ### Available Tools
             | Tool | Purpose |
             |------|---------|
-            | `eidet_store` | Store a memory (observation/insight/procedure/heuristic) |
-            | `eidet_recall` | Search memories (hybrid vector + full-text) |
             | `eidet_context` | Get compact project context (~600 tokens) |
-            | `eidet_forget` | Soft-delete a memory with audit trail |
+            | `eidet_recall` | Search memories (hybrid vector + full-text) |
+            | `eidet_store` | Store a memory (observation/insight/procedure/heuristic) |
             | `eidet_feedback` | Echo (useful) or fizzle (irrelevant) a memory |
-            | `eidet_history` | View version chain for a memory |
-            | `eidet_intake` | Ingest project files as seed memories |
+            | `eidet_forget` | Soft-delete a memory with audit trail |
             | `eidet_link` | Create cross-repo or memory-to-memory links |
-            | `eidet_consolidate` | Merge observations into insights |
-            | `eidet_maintenance` | Run TTL expiry, dedup, decay, enrichment |
-            | `eidet_export` | Export memories as markdown |
-            | `eidet_pack_export` | Export shareable memory bundle |
-            | `eidet_pack_import` | Import memory bundle |
             """;
     }
 }
