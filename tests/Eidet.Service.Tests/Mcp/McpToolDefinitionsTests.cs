@@ -9,17 +9,51 @@ using Eidet.Service.Tools.Handlers;
 namespace Eidet.Service.Tests.Mcp;
 
 /// <summary>
-/// Asserts the schema surface exposed by <c>tools/list</c>: tool count, naming convention,
-/// schema shape, and required fields. Source of truth is each handler's <c>Schema</c> property.
+/// Asserts the schema surface exposed by <c>tools/list</c>: which tools are advertised, tool count,
+/// naming convention, schema shape, and required fields. Source of truth is each handler's
+/// <c>Schema</c> and <c>McpExposed</c> properties.
 /// </summary>
 public class McpToolDefinitionsTests
 {
     private static readonly List<McpToolDefinition> Tools = AllHandlers().Select(h => h.Schema).ToList();
+    private static readonly List<McpToolDefinition> Exposed =
+        AllHandlers().Where(h => h.McpExposed).Select(h => h.Schema).ToList();
 
     [Fact]
-    public void All_Returns13Tools()
+    public void All_Registers13Handlers()
     {
         Assert.Equal(13, Tools.Count);
+    }
+
+    [Fact]
+    public void Exposed_Returns6Tools()
+    {
+        Assert.Equal(6, Exposed.Count);
+    }
+
+    [Theory]
+    [InlineData("eidet_store")]
+    [InlineData("eidet_recall")]
+    [InlineData("eidet_context")]
+    [InlineData("eidet_forget")]
+    [InlineData("eidet_feedback")]
+    [InlineData("eidet_link")]
+    public void Exposed_ContainsCoreTool(string toolName)
+    {
+        Assert.Contains(Exposed, t => t.Name == toolName);
+    }
+
+    [Theory]
+    [InlineData("eidet_history")]
+    [InlineData("eidet_intake")]
+    [InlineData("eidet_consolidate")]
+    [InlineData("eidet_maintenance")]
+    [InlineData("eidet_edit")]
+    [InlineData("eidet_pack_export")]
+    [InlineData("eidet_pack_import")]
+    public void Exposed_ExcludesAdvancedTool(string toolName)
+    {
+        Assert.DoesNotContain(Exposed, t => t.Name == toolName);
     }
 
     [Fact]

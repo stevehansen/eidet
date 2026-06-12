@@ -17,6 +17,7 @@ public sealed class ConsolidateToolHandler : IToolHandler
 
     public string Name => "eidet_consolidate";
     public string UsageOp => "Consolidate";
+    public bool McpExposed => false;
 
     public McpToolDefinition Schema { get; } = new()
     {

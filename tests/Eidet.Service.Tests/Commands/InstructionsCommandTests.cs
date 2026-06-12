@@ -12,22 +12,29 @@ public class InstructionsCommandTests
     }
 
     [Fact]
-    public void GenerateInstructions_ContainsAllTools()
+    public void GenerateInstructions_ContainsCoreTools()
     {
         var instructions = InstructionsCommand.GenerateInstructions();
-        Assert.Contains("eidet_store", instructions);
-        Assert.Contains("eidet_recall", instructions);
         Assert.Contains("eidet_context", instructions);
-        Assert.Contains("eidet_forget", instructions);
+        Assert.Contains("eidet_recall", instructions);
+        Assert.Contains("eidet_store", instructions);
         Assert.Contains("eidet_feedback", instructions);
-        Assert.Contains("eidet_history", instructions);
-        Assert.Contains("eidet_intake", instructions);
+        Assert.Contains("eidet_forget", instructions);
         Assert.Contains("eidet_link", instructions);
-        Assert.Contains("eidet_consolidate", instructions);
-        Assert.Contains("eidet_maintenance", instructions);
-        Assert.Contains("eidet_export", instructions);
-        Assert.Contains("eidet_pack_export", instructions);
-        Assert.Contains("eidet_pack_import", instructions);
+    }
+
+    [Theory]
+    [InlineData("eidet_history")]
+    [InlineData("eidet_intake")]
+    [InlineData("eidet_consolidate")]
+    [InlineData("eidet_maintenance")]
+    [InlineData("eidet_edit")]
+    [InlineData("eidet_pack_export")]
+    [InlineData("eidet_pack_import")]
+    public void GenerateInstructions_OmitsAdvancedTools(string toolName)
+    {
+        var instructions = InstructionsCommand.GenerateInstructions();
+        Assert.DoesNotContain(toolName, instructions);
     }
 
     [Fact]

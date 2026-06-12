@@ -17,6 +17,7 @@ public sealed class IntakeToolHandler : IToolHandler
 
     public string Name => "eidet_intake";
     public string UsageOp => "Intake";
+    public bool McpExposed => false;
 
     public McpToolDefinition Schema { get; } = new()
     {

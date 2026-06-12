@@ -11,6 +11,7 @@ public class McpServer
 {
     private readonly string _repoId;
     private readonly ToolDispatcher _dispatcher;
+    private readonly HashSet<string> _exposedTools;
     private readonly JsonRpcDispatcher _rpc;
     private readonly AutoIntakeOnContext? _autoIntake;
 
@@ -20,6 +21,7 @@ public class McpServer
     {
         _repoId = repoId;
         _dispatcher = ToolDispatcherFactory.Create(svc, intake, consolidation, maintenance, export, layers, usage);
+        _exposedTools = _dispatcher.Handlers.Where(h => h.McpExposed).Select(h => h.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         _autoIntake = autoIntake ? new AutoIntakeOnContext(svc, intake, repoId) : null;
 
         _rpc = new JsonRpcDispatcher(new Dictionary<string, JsonRpcDispatcher.Handler>
@@ -106,7 +108,7 @@ public class McpServer
     {
         return JsonRpcResponse.Success(request.Id, new McpToolsListResult
         {
-            Tools = _dispatcher.Handlers.Select(h => h.Schema).ToList(),
+            Tools = _dispatcher.Handlers.Where(h => h.McpExposed).Select(h => h.Schema).ToList(),
         });
     }
 
@@ -126,6 +128,9 @@ public class McpServer
         {
             return JsonRpcResponse.ErrorResponse(request.Id, -32602, "Invalid params: expected name and arguments");
         }
+
+        if (!_exposedTools.Contains(toolName))
+            return JsonRpcResponse.ErrorResponse(request.Id, -32601, $"Unknown tool: {toolName}");
 
         if (_autoIntake is not null)
         {

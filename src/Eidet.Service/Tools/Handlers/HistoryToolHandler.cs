@@ -15,6 +15,7 @@ public sealed class HistoryToolHandler : IToolHandler
 
     public string Name => "eidet_history";
     public string UsageOp => "History";
+    public bool McpExposed => false;
 
     public McpToolDefinition Schema { get; } = new()
     {

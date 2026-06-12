@@ -5,7 +5,7 @@ nav_order: 5
 
 # MCP Tools Reference
 
-Eidet exposes 13 tools via the [Model Context Protocol](https://modelcontextprotocol.io/). These are the tools AI agents call directly.
+Eidet exposes 6 tools via the [Model Context Protocol](https://modelcontextprotocol.io/) — the core session-flow tools AI agents call directly. Advanced operations (intake, consolidation, maintenance, version history, curation, pack import/export) run server-side and are reached via the [REST API](#server-side-operations) and CLI, keeping the agent-facing surface small.
 
 ## Transports
 
@@ -91,26 +91,6 @@ Report whether a recalled memory was useful.
 - `was_used: true` — **Echo**: boosts importance and confidence
 - `was_used: false` — **Fizzle**: reduces importance and confidence
 
-### eidet_history
-
-View the version chain for a memory (current + all ancestors via supersession).
-
-```json
-{
-  "id": "memories/P--MyProject/insight/abc123"
-}
-```
-
-### eidet_intake
-
-Ingest project files (CLAUDE.md, README.md, .editorconfig, package config) as seed memories. Splits by headings, deduplicates by content hash, extracts entities.
-
-```json
-{
-  "repo": "P:\\MyProject"
-}
-```
-
 ### eidet_link
 
 Create a cross-repo link between two memories.
@@ -123,65 +103,19 @@ Create a cross-repo link between two memories.
 }
 ```
 
-### eidet_consolidate
+## Server-side operations
 
-Group related observations and create insights. Runs FadeMem decay on all memories.
+These are deliberately **not** on the MCP surface — agents rarely need them inline, and keeping them off the tool list reduces session overhead. They run automatically (scheduler/maintenance pipeline) or are invoked by an operator via the REST API, CLI, or Web UI:
 
-```json
-{
-  "repo": "P:\\MyProject"
-}
-```
-
-### eidet_maintenance
-
-Run the full 7-stage maintenance pipeline:
-
-1. TTL expiry
-2. Observation retention (default 90 days)
-3. Deduplication sweep (Jaccard similarity 0.85)
-4. Importance decay
-5. Orphan cleanup
-6. Backfill enrichment (entities + one-liners)
-7. Auto-consolidation
-
-```json
-{
-  "repo": "P:\\MyProject"
-}
-```
-
-### eidet_export
-
-Export all memories as formatted markdown.
-
-```json
-{
-  "repo": "P:\\MyProject"
-}
-```
-
-### eidet_pack_export
-
-Export memories as a portable `.eidet` pack file for sharing.
-
-```json
-{
-  "repo": "P:\\MyProject"
-}
-```
-
-### eidet_pack_import
-
-Import a `.eidet` pack and optionally mount it as a layer.
-
-```json
-{
-  "repo": "P:\\MyProject",
-  "data": "...",
-  "mount_as_layer": true
-}
-```
+| Operation | REST endpoint | Notes |
+|-----------|---------------|-------|
+| Intake | `POST /api/eidet/intake` | Also fires automatically on first `eidet_context` for a new repo |
+| Consolidate | `POST /api/eidet/consolidate` | Also runs as a maintenance stage |
+| Maintenance | `POST /api/maintenance` | TTL expiry, dedup, decay, enrichment, auto-consolidation |
+| Version history | `GET /api/eidet/{id}` (version chain) | Supersession ancestry |
+| Curation / edit | `PUT /api/eidet/{id}` | Versioned on content change |
+| Pack export | `POST` export endpoints | Portable `.eidet` pack |
+| Pack import | mount-as-layer endpoints | Import + mount a pack |
 
 ## Agent Integration Pattern
 
