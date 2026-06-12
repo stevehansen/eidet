@@ -129,6 +129,9 @@ public class McpServer
             return JsonRpcResponse.ErrorResponse(request.Id, -32602, "Invalid params: expected name and arguments");
         }
 
+        if (string.IsNullOrEmpty(toolName))
+            return JsonRpcResponse.ErrorResponse(request.Id, -32602, "Invalid params: expected name and arguments");
+
         if (!_exposedTools.Contains(toolName))
             return JsonRpcResponse.ErrorResponse(request.Id, -32601, $"Unknown tool: {toolName}");
 
