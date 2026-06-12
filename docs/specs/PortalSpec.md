@@ -2,7 +2,7 @@
 
 > **Scope**: This spec defines a generated, audited per-repo *state view* rendered in the Eidet Web UI — a single front door that describes a repo as its memories see it, with every claim traceable back to its source memory. It is a live view served by the existing service; it is **not** a file on disk.
 >
-> *Status: ✅ implemented — `Eidet.Core/Portal/*` (renderer + sections) + `Api/Endpoints/PortalEndpoint.cs` + Web UI hash route. No `eidet_portal` MCP tool (deferred by design, see below).*
+> *Status: ✅ implemented — `src/Eidet.Core/Portal/*` (renderer + sections) + `src/Eidet.Service/Api/Endpoints/PortalEndpoint.cs` + Web UI hash route. No `eidet_portal` MCP tool (deferred by design, see below).*
 
 ---
 
