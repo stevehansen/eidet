@@ -6,7 +6,7 @@
 
 ## TL;DR
 
-Strongest candidates: **#1 (Memory pipeline)** and **#3 (Hook plumbing)**.
+Strongest candidates: **#1 (Memory pipeline)** ✅ done (RFC #9) and **#3 (Hook plumbing)** → RFC [#19](https://github.com/stevehansen/eidet/issues/19) (open).
 Skip: **#6 (Intake)** — just refactored. **#7 (Enrichment)** — already correct ports & adapters shape.
 
 ---
@@ -73,7 +73,10 @@ The handler split is intentional (sharing between MCP and REST). Question is whe
 
 ---
 
-## 3. Hook event plumbing
+## 3. Hook event plumbing — 🔬 RFC FILED
+
+> Promoted to RFC [#19](https://github.com/stevehansen/eidet/issues/19) on 2026-06-01 (open):
+> collapse firing onto `MutationKind`, kill the duplicated runner predicate.
 
 **Files**
 - `src/Eidet.Core/Services/HookRunner.cs` (defines `HookEvent` enum + `IHookRunner` + `NullHookRunner` + `HookRunner`)
@@ -96,9 +99,10 @@ The handler split is intentional (sharing between MCP and REST). Question is whe
 
 ---
 
-## 4. Maintenance stages + orchestrator — ✅ DESIGNED
+## 4. Maintenance stages + orchestrator — ✅ DONE
 
-> Design hardened 2026-06-11 via `/design-interface` → RFC [#22](https://github.com/stevehansen/eidet/issues/22).
+> Shipped 2026-06-12 via RFC [#22](https://github.com/stevehansen/eidet/issues/22) → PR [#23](https://github.com/stevehansen/eidet/pull/23).
+> Design hardened 2026-06-11 via `/design-interface`.
 > Verdict: **stage count is not the problem.** Chosen hybrid — collapse the redundant `IMaintenanceRunner`/`IMaintenanceOrchestrator`
 > double-facade, add a `RunAsync(string repo)` happy-path overload that derives `IsRepoActive` (fixes a CLI footgun),
 > add a `MaintenanceContext.ForTest` seam so the 10 stages become unit-testable, and type `OnlyStages`/`SkipStages`
@@ -190,8 +194,8 @@ Minor possible nit: `OllamaTextSanitizer` is shared between `OllamaEnrichmentAda
 |---|---------|--------|------|---------------------|
 | 1 | Memory pipeline | High | Medium (touches hot read/write path) | ✅ DONE — RFC #9 / `25abde0` |
 | 2 | API/Tools three-tier | Medium-High | High (cross-cutting MCP+REST) | Yes (intentional split) |
-| 3 | Hook event plumbing | Medium | Low | No |
-| 4 | Maintenance stages | Medium | Low | Yes (composability tradeoff) |
+| 3 | Hook event plumbing | Medium | Low | 🔬 RFC #19 (open) |
+| 4 | Maintenance stages | Medium | Low | ✅ DONE — RFC #22 / PR #23 |
 | 5 | Gates | Low | Very low | No |
 | 6 | Intake | — | — | Just refactored, skip |
 | 7 | Enrichment | — | — | Already correct shape, skip |
