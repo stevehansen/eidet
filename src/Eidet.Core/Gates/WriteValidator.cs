@@ -6,80 +6,81 @@ namespace Eidet.Core.Gates;
 
 public static class WriteValidator
 {
-    private static readonly IValidationRule[] Rules =
+    private static readonly string[] LowSignalPatterns =
     [
-        new SecretScanRule(),
-        new SignalRule(),
+        "file exists",
+        "file does not exist",
+        "ran tests",
+        "tests passed",
+        "tests failed",
+        "build succeeded",
+        "build failed",
+        "no changes",
+        "no errors",
+        "everything works",
+        "it works",
+        "fixed it",
+        "done",
+        "ok",
+        "updated",
+        "changed",
+        "modified",
     ];
 
     public static ValidationResult Validate(string content, MemoryType type = MemoryType.Observation)
     {
-        foreach (var rule in Rules)
-        {
-            var result = rule.Check(content, type);
-            if (!result.Passed) return result;
-        }
-        return ValidationResult.Pass();
+        var secret = SecretScanRule.Check(content);
+        if (!secret.Passed) return secret;
+        return CheckSignal(content, type);
     }
 
     /// <summary>
-    /// Validate <paramref name="content"/> and build a fresh <see cref="MemoryEntry"/> ready for
+    /// Validate <paramref name="opts"/> content and build a fresh <see cref="MemoryEntry"/> ready for
     /// <c>StoreAsync</c>. Single canonical entry-construction path for new stored memories — keeps
     /// validation, id generation, default field population, and entity extraction in one place so
-    /// the mutation path can't accidentally bypass any of them.
+    /// the mutation path can't accidentally bypass any of them. Normalizes the repo id internally.
     /// </summary>
-    public static EntryBuildResult TryBuildStoreEntry(
-        string normalizedRepoId,
-        string content,
-        MemoryType type,
-        IReadOnlyList<string>? tags,
-        float importance,
-        string source,
-        string? sessionId,
-        string? supersedes,
-        MemoryProvenance? provenance)
+    public static EntryBuildResult BuildEntry(StoreOptions opts)
     {
-        var validation = Validate(content, type);
-        if (!validation.Passed) return EntryBuildResult.Rejected(validation.Reason ?? "rejected");
+        var repoId = RepoIdNormalizer.Normalize(opts.RepoId);
 
-        var resolvedProvenance = provenance ?? ProvenanceResolver.FromSource(source);
+        var v = Validate(opts.Content, opts.Type);
+        if (!v.Passed) return EntryBuildResult.Rejected(v.Reason ?? "rejected");
+
+        var resolvedProvenance = opts.Provenance ?? ProvenanceResolver.FromSource(opts.Source);
         var now = DateTime.UtcNow;
         var entry = new MemoryEntry
         {
-            Id = MemoryIdGenerator.Generate(normalizedRepoId, type, content, now),
-            RepoId = normalizedRepoId,
-            Type = type,
-            Content = content,
-            Tags = tags?.ToList() ?? [],
-            Importance = Math.Clamp(importance, 0f, 1f),
-            Source = source,
-            SourceSessionId = sessionId,
+            Id = MemoryIdGenerator.Generate(repoId, opts.Type, opts.Content, now),
+            RepoId = repoId,
+            Type = opts.Type,
+            Content = opts.Content,
+            Tags = opts.Tags?.ToList() ?? [],
+            Importance = Math.Clamp(opts.Importance, 0f, 1f),
+            Source = opts.Source,
+            SourceSessionId = opts.SessionId,
             CreatedAt = now,
             Validity = new Validity { ValidFrom = now },
-            ParentMemoryId = supersedes,
+            ParentMemoryId = opts.Supersedes,
             IsLatest = true,
             Provenance = resolvedProvenance,
             Confidence = resolvedProvenance == MemoryProvenance.AgentInferred ? 0.6f : 0.7f,
-            Entities = EntityExtractor.Extract(content),
-            OneLiner = EntityExtractor.GenerateHeuristicOneLiner(content),
+            Entities = EntityExtractor.Extract(opts.Content),
+            OneLiner = EntityExtractor.GenerateHeuristicOneLiner(opts.Content),
         };
         return EntryBuildResult.Built(entry);
     }
 
     /// <summary>
-    /// Validate replacement <paramref name="newContent"/> and build the supersession <see cref="MemoryEntry"/>
-    /// that replaces <paramref name="original"/>. Carries forward stable counters (echo / fizzle / access)
-    /// and the link / derived-from graph so curation edits don't drop history.
+    /// Validate replacement content from <paramref name="edit"/> and build the supersession
+    /// <see cref="MemoryEntry"/> that replaces <paramref name="original"/>. Carries forward stable
+    /// counters (echo / fizzle / access) and the link / derived-from graph so curation edits don't
+    /// drop history. Called only when the content changed, so <c>edit.Content</c> is non-null.
     /// </summary>
-    public static EntryBuildResult TryBuildEditEntry(
-        MemoryEntry original,
-        string newContent,
-        MemoryType? type,
-        IReadOnlyList<string>? tags,
-        float? importance,
-        float? confidence)
+    public static EntryBuildResult BuildEditEntry(MemoryEntry original, EditOptions edit)
     {
-        var effectiveType = type ?? original.Type;
+        var effectiveType = edit.Type ?? original.Type;
+        var newContent = edit.Content!;
         var validation = Validate(newContent, effectiveType);
         if (!validation.Passed) return EntryBuildResult.Rejected(validation.Reason ?? "rejected");
 
@@ -90,9 +91,9 @@ public static class WriteValidator
             RepoId = original.RepoId,
             Type = effectiveType,
             Content = newContent,
-            Tags = tags?.ToList() ?? original.Tags,
-            Importance = importance.HasValue ? Math.Clamp(importance.Value, 0f, 1f) : original.Importance,
-            Confidence = confidence.HasValue ? Math.Clamp(confidence.Value, 0f, 1f) : original.Confidence,
+            Tags = edit.Tags?.ToList() ?? original.Tags,
+            Importance = edit.Importance.HasValue ? Math.Clamp(edit.Importance.Value, 0f, 1f) : original.Importance,
+            Confidence = edit.Confidence.HasValue ? Math.Clamp(edit.Confidence.Value, 0f, 1f) : original.Confidence,
             Source = original.Source,
             SourceSessionId = original.SourceSessionId,
             CreatedAt = now,
@@ -109,6 +110,33 @@ public static class WriteValidator
             DerivedFrom = original.DerivedFrom,
         };
         return EntryBuildResult.Built(entry);
+    }
+
+    private static ValidationResult CheckSignal(string content, MemoryType type)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return ValidationResult.Fail("signal", "Content is empty.");
+
+        var trimmed = content.Trim();
+
+        if (trimmed.Length < 20)
+            return ValidationResult.Fail("signal",
+                $"Content too short ({trimmed.Length} chars). Memories should be specific and self-contained (20+ chars).");
+
+        var lower = trimmed.ToLowerInvariant();
+        foreach (var pattern in LowSignalPatterns)
+        {
+            if (lower == pattern || lower == pattern + ".")
+                return ValidationResult.Fail("signal",
+                    $"Content matches low-signal pattern (\"{pattern}\"). Store specific, actionable knowledge instead.");
+        }
+
+        if (type == MemoryType.Observation &&
+            (lower.StartsWith("i will ") || lower.StartsWith("let me ") || lower.StartsWith("i'm going to ")))
+            return ValidationResult.Fail("signal",
+                "Content appears to be agent self-talk, not a project fact. Store what you learned, not what you're doing.");
+
+        return ValidationResult.Pass();
     }
 }
 

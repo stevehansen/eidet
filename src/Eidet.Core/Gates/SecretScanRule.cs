@@ -1,12 +1,10 @@
 using System.Text.RegularExpressions;
-using Eidet.Core.Domain;
 
 namespace Eidet.Core.Gates;
 
-internal sealed partial class SecretScanRule : IValidationRule
+internal static partial class SecretScanRule
 {
     public const string GateName = "secret-scan";
-    public string Name => GateName;
 
     private static readonly (Regex Pattern, string Description)[] Patterns =
     [
@@ -25,7 +23,7 @@ internal sealed partial class SecretScanRule : IValidationRule
         (SlackTokenRegex(), "Slack token"),
     ];
 
-    public ValidationResult Check(string content, MemoryType type)
+    public static ValidationResult Check(string content)
     {
         foreach (var (pattern, description) in Patterns)
         {

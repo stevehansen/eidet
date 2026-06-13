@@ -135,7 +135,15 @@ The stage interface exists for `OnlyStages` / `SkipStages` composability — the
 
 ---
 
-## 5. Gates: `WriteValidator` + `IValidationRule` + 2 rules
+## 5. Gates: `WriteValidator` + `IValidationRule` + 2 rules — 🔬 RFC FILED
+
+> Promoted to RFC [#30](https://github.com/stevehansen/eidet/issues/30) on 2026-06-13 via `/design-interface` (open):
+> kill the `IValidationRule` interface + hardcoded rule array (keep `SecretScanRule` isolated for security tests,
+> fold `SignalRule` into a private check); replace the 9-arg `TryBuildStoreEntry` with `BuildEntry(StoreOptions)`.
+> Note: the premise below was stale — `WriteValidator` grew from ~23 LOC to 131 by absorbing the canonical
+> entry-construction path, so the design was hardened against the current shape (validation folded into the
+> build path stays the structural enforcement of always-on secret-scan). Rejected: a pluggable `ValidationPipeline`
+> (over-engineering with no 3rd rule; downgrades the secret-scan guarantee from structural to test-enforced).
 
 **Files**
 - `src/Eidet.Core/Gates/WriteValidator.cs` (~23 lines)
@@ -196,7 +204,7 @@ Minor possible nit: `OllamaTextSanitizer` is shared between `OllamaEnrichmentAda
 | 2 | API/Tools three-tier | Medium-High | High (cross-cutting MCP+REST) | Yes (intentional split) |
 | 3 | Hook event plumbing | Medium | Low | 🔬 RFC #19 (open) |
 | 4 | Maintenance stages | Medium | Low | ✅ DONE — RFC #22 / PR #23 |
-| 5 | Gates | Low | Very low | No |
+| 5 | Gates | Low | Very low | 🔬 RFC #30 (open) |
 | 6 | Intake | — | — | Just refactored, skip |
 | 7 | Enrichment | — | — | Already correct shape, skip |
 
