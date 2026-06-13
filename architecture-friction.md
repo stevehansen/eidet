@@ -135,14 +135,16 @@ The stage interface exists for `OnlyStages` / `SkipStages` composability — the
 
 ---
 
-## 5. Gates: `WriteValidator` + `IValidationRule` + 2 rules — 🔬 RFC FILED
+## 5. Gates: `WriteValidator` + `IValidationRule` + 2 rules — ✅ DONE
 
-> Promoted to RFC [#30](https://github.com/stevehansen/eidet/issues/30) on 2026-06-13 via `/design-interface` (open):
-> kill the `IValidationRule` interface + hardcoded rule array (keep `SecretScanRule` isolated for security tests,
-> fold `SignalRule` into a private check); replace the 9-arg `TryBuildStoreEntry` with `BuildEntry(StoreOptions)`.
-> Note: the premise below was stale — `WriteValidator` grew from ~23 LOC to 131 by absorbing the canonical
-> entry-construction path, so the design was hardened against the current shape (validation folded into the
-> build path stays the structural enforcement of always-on secret-scan). Rejected: a pluggable `ValidationPipeline`
+> Shipped 2026-06-13 via RFC [#30](https://github.com/stevehansen/eidet/issues/30) → PR [#31](https://github.com/stevehansen/eidet/pull/31) (squash `bcfed1e`).
+> Killed the `IValidationRule` interface + the static `Rules[]` array; `WriteValidator.Validate` now calls secret-scan
+> then signal in an explicit ordered body (kept `SecretScanRule` isolated for its 13 security regexes; folded `SignalRule`
+> into a private `CheckSignal`). Replaced the 9-arg `TryBuildStoreEntry` with `BuildEntry(StoreOptions)` and
+> `TryBuildEditEntry` with `BuildEditEntry(MemoryEntry, EditOptions)`; validation stays folded into both build paths so
+> secret-scan can't be bypassed. +11 boundary tests.
+> The original premise below was stale — `WriteValidator` had grown from ~23 LOC to 131 by absorbing the canonical
+> entry-construction path, so the design was hardened against that current shape. Rejected: a pluggable `ValidationPipeline`
 > (over-engineering with no 3rd rule; downgrades the secret-scan guarantee from structural to test-enforced).
 
 **Files**
@@ -204,7 +206,7 @@ Minor possible nit: `OllamaTextSanitizer` is shared between `OllamaEnrichmentAda
 | 2 | API/Tools three-tier | Medium-High | High (cross-cutting MCP+REST) | Yes (intentional split) |
 | 3 | Hook event plumbing | Medium | Low | 🔬 RFC #19 (open) |
 | 4 | Maintenance stages | Medium | Low | ✅ DONE — RFC #22 / PR #23 |
-| 5 | Gates | Low | Very low | 🔬 RFC #30 (open) |
+| 5 | Gates | Low | Very low | ✅ DONE — RFC #30 / PR #31 |
 | 6 | Intake | — | — | Just refactored, skip |
 | 7 | Enrichment | — | — | Already correct shape, skip |
 
