@@ -63,10 +63,7 @@ public sealed class MemoryService
         var normalizedRepoId = RepoIdNormalizer.Normalize(opts.RepoId);
         _activity.Track(normalizedRepoId);
 
-        var built = WriteValidator.TryBuildStoreEntry(
-            normalizedRepoId, opts.Content, opts.Type,
-            opts.Tags, opts.Importance, opts.Source,
-            opts.SessionId, opts.Supersedes, opts.Provenance);
+        var built = WriteValidator.BuildEntry(opts);
         if (!built.IsBuilt)
             return StoreResult.Rejected(built.RejectionReason!);
         var entry = built.Entry!;
@@ -239,8 +236,7 @@ public sealed class MemoryService
             {
                 if (contentChanged)
                 {
-                    var built = WriteValidator.TryBuildEditEntry(
-                        entry, opts.Content!, opts.Type, opts.Tags, opts.Importance, opts.Confidence);
+                    var built = WriteValidator.BuildEditEntry(entry, opts);
                     if (!built.IsBuilt) return false;
 
                     entry.IsLatest = false;
