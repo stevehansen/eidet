@@ -1,5 +1,6 @@
 using Eidet.Core.Configuration;
 using Eidet.Core.Enrichment;
+using Eidet.Core.LooseEnds;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Service.Mcp;
@@ -19,6 +20,7 @@ public sealed record EidetApiServerOptions
     public required ConsolidationEngine Consolidation { get; init; }
     public required IMaintenanceRunner Maintenance { get; init; }
     public required ExportService Export { get; init; }
+    public required LooseEndService LooseEnds { get; init; }
     public required string BindAddress { get; init; }
     public required int Port { get; init; }
 

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Eidet.Core;
+using Eidet.Core.LooseEnds;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Service.Tools;
@@ -16,11 +17,11 @@ public class McpServer
     private readonly AutoIntakeOnContext? _autoIntake;
 
     public McpServer(MemoryService svc, IntakeService intake, ConsolidationEngine consolidation,
-        IMaintenanceRunner maintenance, string repoId, bool autoIntake = true,
+        IMaintenanceRunner maintenance, LooseEndService looseEnds, string repoId, bool autoIntake = true,
         UsageTracker? usage = null, ExportService? export = null, LayerService? layers = null)
     {
         _repoId = repoId;
-        _dispatcher = ToolDispatcherFactory.Create(svc, intake, consolidation, maintenance, export, layers, usage);
+        _dispatcher = ToolDispatcherFactory.Create(svc, intake, consolidation, maintenance, looseEnds, export, layers, usage);
         _exposedTools = _dispatcher.Handlers.Where(h => h.McpExposed).Select(h => h.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         _autoIntake = autoIntake ? new AutoIntakeOnContext(svc, intake, repoId) : null;
 

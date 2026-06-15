@@ -23,6 +23,7 @@ public class EidetApiServer
     private readonly MemoryReadEndpoints _memoryRead;
     private readonly MemoryWriteEndpoints _memoryWrite;
     private readonly MemoryBulkEndpoints _memoryBulk;
+    private readonly LooseEndEndpoints _looseEndEndpoints;
     private readonly LayerEndpoints _layerEndpoints;
     private readonly MaintenanceEndpoints _maintenanceEndpoints;
     private readonly QualityEndpoint _qualityEndpoint;
@@ -43,11 +44,12 @@ public class EidetApiServer
         var svc = options.Memory;
         var intake = options.Intake;
         var dispatcher = ToolDispatcherFactory.Create(svc, intake, options.Consolidation, options.Maintenance,
-            options.Export, options.Layers, options.Usage);
+            options.LooseEnds, options.Export, options.Layers, options.Usage);
 
         _memoryRead = new MemoryReadEndpoints(svc, dispatcher, options.Usage, options.Layers);
         _memoryWrite = new MemoryWriteEndpoints(svc, dispatcher);
         _memoryBulk = new MemoryBulkEndpoints(dispatcher, options.Export, options.Usage);
+        _looseEndEndpoints = new LooseEndEndpoints(dispatcher, options.LooseEnds);
         _layerEndpoints = new LayerEndpoints(options.Layers, options.LayerSync);
         _maintenanceEndpoints = new MaintenanceEndpoints(dispatcher);
         _qualityEndpoint = new QualityEndpoint(options.Quality, options.Usage);
@@ -56,7 +58,7 @@ public class EidetApiServer
         _enrichEndpoint = new EnrichEndpoint(options.Enrichment);
         _portal = new PortalEndpoint(svc, options.Usage);
         _meta = new MetaEndpoints(svc, options.Enrichment, options.Config, _baseUrl, _startedAt);
-        _mcp = new McpEndpoint(options.Mcp, svc, intake, options.Consolidation, options.Maintenance);
+        _mcp = new McpEndpoint(options.Mcp, svc, intake, options.Consolidation, options.Maintenance, options.LooseEnds);
 
         _router = BuildRouter();
     }
@@ -150,6 +152,12 @@ public class EidetApiServer
         r.MapPost("/api/eidet/packs/import", (ctx, _, ct) => _memoryBulk.PackImport(ctx, ct));
         r.MapPost("/api/eidet/links", (ctx, _, ct) => _memoryWrite.CreateLink(ctx, ct));
         r.MapGet("/api/eidet/links", (ctx, _, ct) => _memoryRead.GetLinks(ctx, ct));
+
+        // Loose Ends (must register before the catch-all GET /api/eidet/{id})
+        r.Map("POST", p => p.StartsWith("/api/eidet/loose-ends/") && p.EndsWith("/resolve"),
+            (ctx, path, ct) => _looseEndEndpoints.Resolve(ctx, LooseEndEndpoints.ExtractIdFromResolvePath(path), ct));
+        r.MapPost("/api/eidet/loose-ends", (ctx, _, ct) => _looseEndEndpoints.Park(ctx, ct));
+        r.MapGet("/api/eidet/loose-ends", (ctx, _, ct) => _looseEndEndpoints.List(ctx, ct));
 
         // Layers
         r.MapGet("/api/eidet/layers", (ctx, _, ct) => _layerEndpoints.GetLayers(ctx, ct));

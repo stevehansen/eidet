@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Eidet.Core.Domain;
+using Eidet.Core.LooseEnds;
 using Eidet.Core.Services;
 using Eidet.Service.Mcp;
 
@@ -13,10 +14,12 @@ namespace Eidet.Service.Tools.Handlers;
 public sealed class RecallToolHandler : IToolHandler
 {
     private readonly MemoryService _svc;
+    private readonly LooseEndService? _looseEnds;
 
-    public RecallToolHandler(MemoryService svc)
+    public RecallToolHandler(MemoryService svc, LooseEndService? looseEnds = null)
     {
         _svc = svc;
+        _looseEnds = looseEnds;
     }
 
     public string Name => "eidet_recall";
@@ -45,31 +48,48 @@ public sealed class RecallToolHandler : IToolHandler
 
         var results = await _svc.RecallAsync(request.RepoId, opts, request.Ct);
 
-        if (results.Count == 0)
+        // Recall ride-along: open Loose Ends whose tags overlap the query surface in a SEPARATE
+        // section, never mixed into the relevance-ranked memory list (LooseEndSpec §Surfacing mode 2).
+        IReadOnlyList<LooseEnd> looseEnds = _looseEnds is not null && opts.Tags is { Count: > 0 }
+            ? await _looseEnds.RideAlongAsync(request.RepoId, opts.Tags, request.Ct)
+            : [];
+
+        if (results.Count == 0 && looseEnds.Count == 0)
             return ToolResult.Ok(
-                payload: new { repo = request.RepoId, query = queryText, results = Array.Empty<MemorySearchResult>() },
+                payload: new { repo = request.RepoId, query = queryText, results = Array.Empty<MemorySearchResult>(), looseEnds = Array.Empty<LooseEnd>() },
                 summary: "No memories found.",
                 count: 0);
 
-        var lines = new List<string> { $"{results.Count} memory(ies) found:" };
-        foreach (var r in results)
+        var lines = new List<string>();
+        if (results.Count > 0)
         {
-            var prefix = r.Type switch
+            lines.Add($"{results.Count} memory(ies) found:");
+            foreach (var r in results)
             {
-                MemoryType.Insight => "[I]",
-                MemoryType.Observation => "[O]",
-                MemoryType.Procedure => "[P]",
-                MemoryType.Heuristic => "[H]",
-                _ => "[?]",
-            };
-            var stale = r.StalenessWarning != null ? $" {r.StalenessWarning}" : "";
-            var display = r.OneLiner ?? r.Summary ?? Truncate(r.Content, 120);
-            lines.Add($"  {prefix} {display}{stale}");
-            lines.Add($"      id={r.Id} importance={r.Importance:F2} score={r.Score:F2}");
+                var prefix = r.Type switch
+                {
+                    MemoryType.Insight => "[I]",
+                    MemoryType.Observation => "[O]",
+                    MemoryType.Procedure => "[P]",
+                    MemoryType.Heuristic => "[H]",
+                    _ => "[?]",
+                };
+                var stale = r.StalenessWarning != null ? $" {r.StalenessWarning}" : "";
+                var display = r.OneLiner ?? r.Summary ?? Truncate(r.Content, 120);
+                lines.Add($"  {prefix} {display}{stale}");
+                lines.Add($"      id={r.Id} importance={r.Importance:F2} score={r.Score:F2}");
+            }
+        }
+
+        if (looseEnds.Count > 0)
+        {
+            lines.Add($"{looseEnds.Count} open loose end(s) matching your tags:");
+            foreach (var le in looseEnds)
+                lines.Add($"  [~] {le.Note} (id={le.Id}, priority={le.Priority})");
         }
 
         return ToolResult.Ok(
-            payload: new { repo = request.RepoId, query = queryText, results },
+            payload: new { repo = request.RepoId, query = queryText, results, looseEnds },
             summary: string.Join("\n", lines),
             count: results.Count);
     }

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 using Eidet.Core;
+using Eidet.Core.LooseEnds;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Service.Mcp;
@@ -22,15 +23,17 @@ internal sealed class McpEndpoint
     private readonly IntakeService _intake;
     private readonly ConsolidationEngine _consolidation;
     private readonly IMaintenanceRunner _maintenance;
+    private readonly LooseEndService _looseEnds;
 
     public McpEndpoint(McpServer? mcpServer, MemoryService svc, IntakeService intake,
-        ConsolidationEngine consolidation, IMaintenanceRunner maintenance)
+        ConsolidationEngine consolidation, IMaintenanceRunner maintenance, LooseEndService looseEnds)
     {
         _mcpServer = mcpServer;
         _svc = svc;
         _intake = intake;
         _consolidation = consolidation;
         _maintenance = maintenance;
+        _looseEnds = looseEnds;
     }
 
     public async Task Handle(HttpListenerContext ctx, CancellationToken ct)
@@ -45,7 +48,7 @@ internal sealed class McpEndpoint
         var server = string.IsNullOrEmpty(repoOverride)
             ? _mcpServer
             : _pool.GetOrAdd(repoOverride, id =>
-                new McpServer(_svc, _intake, _consolidation, _maintenance, id));
+                new McpServer(_svc, _intake, _consolidation, _maintenance, _looseEnds, id));
 
         using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
         var body = await reader.ReadToEndAsync(ct);

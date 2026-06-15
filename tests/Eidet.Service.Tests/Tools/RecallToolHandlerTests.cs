@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Eidet.Core.Domain;
+using Eidet.Core.LooseEnds;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Tools;
@@ -47,6 +48,45 @@ public class RecallToolHandlerTests
         Assert.Contains("1 memory(ies) found:", result.HumanSummary);
         Assert.Contains("[I] RavenDB persistence", result.HumanSummary);
         Assert.Contains("id=memories/r/insight/abc", result.HumanSummary);
+    }
+
+    [Fact]
+    public async Task Recall_WithMatchingLooseEndTags_IncludesRideAlongSection()
+    {
+        var endStore = new FakeLooseEndStore();
+        var looseEnds = new LooseEndService(endStore, new FakePromotionPort(), TimeProvider.System);
+        await looseEnds.ParkAsync(new ParkOptions("test-repo", "revisit the retry backoff in the auth client")
+        {
+            Tags = ["auth", "retry"],
+        });
+
+        var svc = new MemoryService(new RecallStore());
+        var handler = new RecallToolHandler(svc, looseEnds);
+
+        var result = await Invoke(handler, new { query = "auth", tags = new[] { "auth" } });
+
+        Assert.Equal(ToolStatus.Ok, result.Status);
+        Assert.Contains("open loose end(s) matching your tags", result.HumanSummary);
+        Assert.Contains("[~] revisit the retry backoff in the auth client", result.HumanSummary);
+    }
+
+    [Fact]
+    public async Task Recall_NoTags_OmitsRideAlongSection()
+    {
+        var endStore = new FakeLooseEndStore();
+        var looseEnds = new LooseEndService(endStore, new FakePromotionPort(), TimeProvider.System);
+        await looseEnds.ParkAsync(new ParkOptions("test-repo", "revisit the retry backoff in the auth client")
+        {
+            Tags = ["auth"],
+        });
+
+        var svc = new MemoryService(new RecallStore());
+        var handler = new RecallToolHandler(svc, looseEnds);
+
+        // No tags on the query → ride-along is tag-gated, so nothing surfaces and the result is empty.
+        var result = await Invoke(handler, new { query = "auth" });
+
+        Assert.DoesNotContain("loose end", result.HumanSummary);
     }
 
     [Fact]

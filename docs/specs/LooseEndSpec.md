@@ -148,7 +148,7 @@ Park is deliberately low-friction, but **secret scanning is non-negotiable** (it
 Injected into `GetContextAsync` between L0 (`:417`) and L1 (`:423`):
 - Reserved sub-budget of **~120 tokens carved from the L1 budget** (never from L0/identity). If there are no open Loose Ends, L1 gets the full budget.
 - **Cap 3 items** in v1; rendered with a distinct `[~]` prefix so the agent reads them as open work, not facts.
-- **Ordering: `Priority` desc, then `CreatedAt` asc** (oldest-first within a priority tier) — surfaces the *stalest* high-priority work, which is the backlog-hygiene signal.
+- **Ordering: `Priority` ascending (1 = high, so high-priority sorts first), then `CreatedAt` asc** (oldest-first within a priority tier) — surfaces the *stalest* high-priority work, which is the backlog-hygiene signal.
 - L0 count header gains an addendum: `[Memory: … | 3 open loose ends]`.
 
 ### 2. Recall ride-along
@@ -281,7 +281,7 @@ Tests:
 
 | Phase | Scope |
 |-------|-------|
-| **v1 (MVP)** | `LooseEnd` domain + `ILooseEndStore` (Raven + in-memory) + `IPromotionPort` (mint-a-memory adapter) + `TimeProvider`. `eidet_park` / `eidet_resolve` (kind required). Wake-up slice (cap 3, ~120 tok, `[~]`, Priority desc → oldest). Recall ride-along on by default. Pull list via REST/UI. Promote-to-memory. |
+| **v1 (MVP)** | `LooseEnd` domain + `ILooseEndStore` (Raven + in-memory) + `IPromotionPort` (mint-a-memory adapter) + `TimeProvider`. `eidet_park` / `eidet_resolve` (kind required). Wake-up slice (cap 3, ~120 tok, `[~]`, high-priority → oldest). Recall ride-along on by default. Pull list via REST/UI. Promote-to-memory. |
 | **v1.1** | `GitHubIssuePromotionAdapter` (resolve-as-Promoted with an external ref links an issue instead of minting). Quality-dashboard **open count + aging** (the rot mitigation). Web UI Loose Ends panel. |
 | **v2** | Only on demonstrated demand: per-tag/area split (`Areas`), priority auto-bump for aging items, batch resolve. Reminders remain out of scope unless a per-item scheduler primitive is introduced separately. |
 
@@ -296,7 +296,7 @@ Tests:
 | 3 | **`kind` is required** on `eidet_resolve`; the C# convenience overload may default to `Done`. |
 | 4 | **Single `Tags` list** in v1 (no separate `Areas` axis); ride-along matches tag overlap. |
 | 5 | **Park = secret-scan only**, signal gate skipped; **promote = full gate** via `IPromotionPort`. No `ParkValidator` chain (one rule). |
-| 6 | **Wake-up slice**: cap 3 / ~120 tokens (carved from L1, never L0); ordered `Priority` desc then `CreatedAt` asc; `[~]` prefix; L0 count addendum. |
+| 6 | **Wake-up slice**: cap 3 / ~120 tokens (carved from L1, never L0); ordered `Priority` ascending (1 = high first) then `CreatedAt` asc; `[~]` prefix; L0 count addendum. |
 | 7 | **Recall ride-along on by default**, in a separated, capped result section. |
 | 8 | **One-call promote**; resolve mints the `MemoryEntry` (gated) and records `PromotedToMemoryId`, or links an `ExternalRef`. |
 | 9 | **Idempotent resolve** (re-resolve = no-op). Resolved Loose Ends are kept as audit, filtered from open views. |
