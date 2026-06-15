@@ -16,6 +16,7 @@ Design decisions live in `docs/specs/`:
 | [SyncSpec.md](docs/specs/SyncSpec.md) | *(Future)* Remote sync, E2E encryption, team sharing |
 | [IntegrationSpec.md](docs/specs/IntegrationSpec.md) | Claude Code, Claude Desktop, Cursor, TerminalHost, Docker, CI/CD, client SDKs |
 | [PortalSpec.md](docs/specs/PortalSpec.md) | Per-repo Portal — generated, audited Web UI state view (`/api/eidet/portal`); live render, source-traceable claims |
+| [LooseEndSpec.md](docs/specs/LooseEndSpec.md) | *(Designed)* Loose Ends — park/resolve open-work via `eidet_park`/`eidet_resolve`; separate `looseends/*` collection, no decay, wake-up slice + recall ride-along, promote-to-memory |
 
 - Architecture deep dive: [docs/deep-dive.md](docs/deep-dive.md)
 - Phase-by-phase implementation history: [docs/phases.md](docs/phases.md)
@@ -94,6 +95,10 @@ eidet/
 - **Versioned curation** — content edits create supersession chains; metadata edits update in place
 - **Markdown pack format** — YAML frontmatter + HTML comment metadata; renders in any viewer, machine-parseable, ScribeGate compatible
 - **Embedded Web UI** — vanilla HTML/CSS/JS SPA, canvas graph, shipped in the binary; dark theme, responsive
+
+## Ubiquitous Language
+
+`UBIQUITOUS_LANGUAGE.md` (repo root) is the canonical domain glossary — the agreed vocabulary for memories, types, layers, retrieval, the write path, lifecycle, sharing, and the **Loose End** (parked open-work) feature. Use these terms in code, comments, and UI; consult its "Flagged ambiguities" before naming new concepts — notably **Memory vs Loose End** (knowledge vs open work), **Resolve vs Forget / TTL expiry / Supersession** (closing open work vs retiring a memory), and **Park vs Store**. Update it when introducing or renaming a domain concept.
 
 ## API Quick Reference
 

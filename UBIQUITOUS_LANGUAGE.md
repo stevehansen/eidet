@@ -81,6 +81,20 @@ Every store attempt passes through these gates, in order. Any gate can reject th
 | **Maintenance**    | The periodic pipeline that runs **TTL expiry**, dedup, **FadeMem** decay, and **Enrichment**       | Housekeeping, cleanup, cron            |
 | **Intake**         | Bulk ingestion of project files (CLAUDE.md, README, docs) as seed **Memories**                     | Import, bootstrap, seeding             |
 
+## Loose End lifecycle
+
+Open work an **Agent** defers mid-task — distinct from a **Memory** (recalled knowledge; see Flagged ambiguities). A **Loose End** lives in its own store, is exempt from **FadeMem** decay and **Consolidation**, and keeps surfacing in **Context** until explicitly closed.
+
+| Term                | Definition                                                                                                          | Aliases to avoid                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| **Loose End**       | A deferred, still-actionable note an **Agent** parks mid-task to pick up later (a suspected bug, out-of-scope work)  | Todo, Task, Ticket, Parked memory |
+| **Park**            | The low-friction act of capturing a **Loose End**; accepts terse, speculative phrasing the **Signal gate** would reject | Stash, jot, note                  |
+| **Open**            | The state of a **Loose End** that still needs action; it keeps surfacing until resolved                             | Pending, active                   |
+| **Resolve**         | Explicitly closing a **Loose End** with a **Resolution kind**; distinct from **Forget**, **TTL expiry**, and **Supersession** | Close, finish, complete           |
+| **Resolved**        | The terminal state of a **Loose End**, carrying a **Resolution kind**                                               | Closed                            |
+| **Resolution kind** | Why/how a **Loose End** closed: **Done**, **Dropped**, **Promoted**, or **Superseded**                              | Status, outcome                   |
+| **Promote**         | Resolving a **Loose End** by graduating its substance into a **Memory** (**Observation**/**Insight**) or a linked external issue | Convert, save                     |
+
 ## Sharing
 
 | Term               | Definition                                                                                         | Aliases to avoid                       |
@@ -110,6 +124,9 @@ Every store attempt passes through these gates, in order. Any gate can reject th
 - **Consolidation** produces **Insights** derived from multiple **Observations**; the **Observations** remain.
 - **Echo** and **Fizzle** adjust **Recall** ranking but do not alter **Content**.
 - A **Pack import** mounts a **Shared layer**; it never merges into the **Local layer**.
+- A **Loose End** belongs to one **Repo** and the **Local layer** only; it is never written to a **Pack** or **Shared layer**.
+- A **Loose End** stays **Open** until an **Agent** **Resolves** it; nothing closes it automatically — unlike a **Memory**, it does not **FadeMem**-decay or undergo **TTL expiry**.
+- **Resolving** a **Loose End** as **Promoted** produces a **Memory**; **Resolving** it as **Dropped** is *not* the same as **Forget** (which retires a **Memory**).
 
 ## Example dialogue
 
@@ -129,6 +146,14 @@ Every store attempt passes through these gates, in order. Any gate can reject th
 
 > **Domain expert:** "Right — **L0** (identity) plus **L1** (top-ranked **One-liners**), under 600 tokens total. Full **Content** is **L2** — pulled on demand via **Recall**."
 
+> **Dev:** "Mid-task the agent spots a possible bug but lacks the context to fix it. Does it **Store** an **Observation**?"
+
+> **Domain expert:** "No — it **Parks** a **Loose End**. That's open work, not knowledge, so the **Signal gate** doesn't apply and it can be terse and speculative. It stays **Open** and keeps surfacing in **Context** until resolved — it never **FadeMem**-decays the way an **Observation** would."
+
+> **Dev:** "And once the bug is confirmed and understood?"
+
+> **Domain expert:** "**Resolve** the **Loose End** as **Promoted** — that graduates it into an **Observation** or **Insight**, or links a GitHub issue. If it turns out to be a non-issue, **Resolve** it as **Dropped** — which is *not* **Forget**: **Forget** retires a **Memory**, **Resolve** closes a **Loose End**. Different concepts, different audit trails."
+
 ## Flagged ambiguities
 
 - **"Memory" vs. "document"** — in RavenDB every **Memory** is stored as a document, but we reserve "document" for the storage primitive and always say **Memory** at the domain level.
@@ -139,3 +164,9 @@ Every store attempt passes through these gates, in order. Any gate can reject th
 - **"Importance" vs. "Confidence"** — these are distinct: **Importance** is how much you want this **Memory** to rank, **Confidence** is how true you believe it to be. A critical-but-uncertain **Observation** is high **Importance**, low **Confidence**.
 - **"Insight"** (domain) vs. **"insight"** (colloquial "aha moment") — the domain term means a *consolidated, confirmed* **Memory**, not a fresh realization. A fresh realization is an **Observation** until **Consolidation** promotes it.
 - **"User"** is overloaded: in this domain prefer **Operator** for the human curator and **Agent** for the AI writer; reserve "user" only for end-user-preference **Memories**.
+- **"Memory" vs. "Loose End"** — recalled knowledge vs. open work. The two were conflated in early discussion ("store a todo" / "park a future memory"); they are distinct concepts with distinct stores and verbs. A **Loose End** may **Promote** *into* a **Memory** but is not one.
+- **"Resolve" vs. "Forget"/"TTL expiry"/"Supersession"** — all retire something, but **Resolve** closes a **Loose End** (open work) while the other three retire a **Memory** (knowledge). Keep **Resolved** a typed, first-class **Loose End** state; do not implement it by reusing a **Memory** closure path, or quality reports conflate a *done todo* with an *expired memory*.
+- **"Todo"/"Task"** — informal aliases for **Loose End**; avoid as domain terms. They imply a work-tracker (assignees, due dates, priorities) Eidet deliberately is not.
+- **"Done"** — overloaded: a **Loose End** **Resolution kind** (closed-as-handled) AND a **Signal gate** low-signal pattern (the bare word "done" is rejected as **Memory** **Content**). Same word, unrelated meanings.
+- **"Park" vs. "Store"** — both persist, but **Park** creates a **Loose End** (terse, **Secret scanner** only) and **Store** creates a **Memory** (full **Write gate**). They are exposed as distinct MCP tools (`eidet_park`/`eidet_resolve` vs. `eidet_store`/`eidet_forget`).
+- **"Promote" vs. "Supersession"** — both link entries, but **Promote** graduates a **Loose End** into a **Memory** (cross-concept) while **Supersession** replaces a **Memory** with a newer version of itself (same concept).
