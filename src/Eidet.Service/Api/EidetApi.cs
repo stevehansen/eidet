@@ -104,6 +104,17 @@ public class EidetApiServer
             if (!await _router.DispatchAsync(ctx, method, path, ct))
                 await HttpJson.WriteAsync(ctx, new { error = "Not found", hint = "Try /ui for the Web UI, or /api/health for the API." }, 404);
         }
+        catch (HttpListenerException ex)
+        {
+            // The client disconnected before we finished responding (e.g. a browser tab
+            // closed or navigated away during a long intake/export, surfacing as
+            // ERROR_CONNECTION_INVALID/1229 when we flush or close the response). The
+            // connection is gone, so there's no socket left to write a 500 to and nothing
+            // actionable. HttpListenerException only ever comes from the transport — domain
+            // logic never throws it — so it's safe to treat as a benign disconnect and log
+            // quietly, without the console stack-trace spam a real fault gets.
+            EidetLog.Warn($"Client disconnected during {ctx.Request.HttpMethod} {ctx.Request.Url?.AbsolutePath} (HttpListener error {ex.ErrorCode})");
+        }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[Eidet] Unhandled error: {ex}");
