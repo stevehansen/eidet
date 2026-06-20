@@ -89,7 +89,10 @@ internal sealed class LooseEndEndpoints
             return;
         }
 
-        var open = await _looseEnds.PullAsync(repo, ct: ct);
+        var limit = int.TryParse(ctx.Request.QueryString["limit"], out var parsed)
+            ? Math.Clamp(parsed, 1, 100)
+            : 20;
+        var open = await _looseEnds.PullAsync(repo, limit, ct);
         await HttpJson.WriteAsync(ctx, new { repo, state = "open", looseEnds = open });
     }
 
