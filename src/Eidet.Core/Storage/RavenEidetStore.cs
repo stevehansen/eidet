@@ -131,7 +131,9 @@ public class RavenEidetStore : IEidetStore
     /// <summary>
     /// Reads each hit's raw relevance from the already-materialized session metadata
     /// (<c>@index-score</c>). Falls back to rank-decay (<c>1, 1/2, 1/3, …</c>) for any hit whose
-    /// score the backend doesn't surface, so an arm never throws over a missing score.
+    /// score the backend doesn't surface (e.g. the vector arm), so an arm never throws over a
+    /// missing score. A missing key is the expected case and is handled without an exception (no
+    /// per-hit throw cost); the narrow catch covers only a present-but-unconvertible value.
     /// </summary>
     private static IReadOnlyList<ScoredHit> ToScoredHits(IAsyncDocumentSession session, List<MemoryEntry> hits)
     {
@@ -139,9 +141,15 @@ public class RavenEidetStore : IEidetStore
         for (var rank = 0; rank < hits.Count; rank++)
         {
             var entry = hits[rank];
+            var rankDecay = 1.0 / (rank + 1);
+            var metadata = session.Advanced.GetMetadataFor(entry);
             double score;
-            try { score = session.Advanced.GetMetadataFor(entry).GetDouble("@index-score"); }
-            catch { score = 1.0 / (rank + 1); }
+            if (!metadata.ContainsKey("@index-score"))
+                score = rankDecay;
+            else
+                try { score = metadata.GetDouble("@index-score"); }
+                catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException)
+                { score = rankDecay; }
             scored.Add(new ScoredHit(entry, score));
         }
         return scored;
