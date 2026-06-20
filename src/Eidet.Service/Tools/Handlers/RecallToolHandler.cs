@@ -53,10 +53,15 @@ public sealed class RecallToolHandler : IToolHandler
         IReadOnlyList<LooseEnd> looseEnds = _looseEnds is not null && opts.Tags is { Count: > 0 }
             ? await _looseEnds.RideAlongAsync(request.RepoId, opts.Tags, request.Ct)
             : [];
+        // Trim to a stable ride-along view — the raw LooseEnd carries internal lifecycle/source
+        // fields (State, Resolution, SourceSessionId, …) that don't belong on the recall wire.
+        var rideAlong = looseEnds
+            .Select(le => new RideAlongView(le.Id, le.Note, le.Priority, le.Tags))
+            .ToList();
 
-        if (results.Count == 0 && looseEnds.Count == 0)
+        if (results.Count == 0 && rideAlong.Count == 0)
             return ToolResult.Ok(
-                payload: new { repo = request.RepoId, query = queryText, results = Array.Empty<MemorySearchResult>(), looseEnds = Array.Empty<LooseEnd>() },
+                payload: new { repo = request.RepoId, query = queryText, results = Array.Empty<MemorySearchResult>(), looseEnds = rideAlong },
                 summary: "No memories found.",
                 count: 0);
 
@@ -81,21 +86,25 @@ public sealed class RecallToolHandler : IToolHandler
             }
         }
 
-        if (looseEnds.Count > 0)
+        if (rideAlong.Count > 0)
         {
-            lines.Add($"{looseEnds.Count} open loose end(s) matching your tags:");
-            foreach (var le in looseEnds)
+            lines.Add($"{rideAlong.Count} open loose end(s) matching your tags:");
+            foreach (var le in rideAlong)
                 lines.Add($"  [~] {le.Note} (id={le.Id}, priority={le.Priority})");
         }
 
         return ToolResult.Ok(
-            payload: new { repo = request.RepoId, query = queryText, results, looseEnds },
+            payload: new { repo = request.RepoId, query = queryText, results, looseEnds = rideAlong },
             summary: string.Join("\n", lines),
             count: results.Count);
     }
 
     private static string Truncate(string s, int max) =>
         s.Length <= max ? s : s[..max] + "…";
+
+    /// <summary>Trimmed recall ride-along projection — only the fields the agent needs to act on a
+    /// matching open Loose End, deliberately excluding internal lifecycle/source fields.</summary>
+    private sealed record RideAlongView(string Id, string Note, int Priority, IReadOnlyList<string> Tags);
 
     private static JsonObject BuildSchema()
     {

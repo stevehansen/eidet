@@ -21,8 +21,9 @@ public sealed class MemoryServicePromotionAdapter : IPromotionPort
 
     public async Task<PromotionResult> PromoteAsync(LooseEnd e, PromoteOptions opts, CancellationToken ct = default)
     {
-        // Link-only: record the external ref, do not mint a memory.
-        if (!string.IsNullOrEmpty(opts.ExternalRef))
+        // Link-only: record the external ref, do not mint a memory. Treat whitespace-only as absent
+        // so a stray " " in promote_to can't silently close the end as a link with no real ref.
+        if (!string.IsNullOrWhiteSpace(opts.ExternalRef))
             return new PromotionResult(true, MemoryId: null, opts.ExternalRef, Reason: null);
 
         var result = await _memory.StoreAsync(new StoreOptions(e.RepoId, e.Note, opts.Type)

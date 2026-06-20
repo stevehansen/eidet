@@ -125,6 +125,53 @@ public class LooseEndServiceTests
         Assert.Contains("revisit this", slice);
     }
 
+    [Fact]
+    public async Task Resolve_PromoteWithExternalRef_LinksWithoutMinting_AndEchoesRef()
+    {
+        var clock = new FakeTimeProvider(T0);
+        var endStore = new InMemoryLooseEndStore();
+        var memory = new MemoryService(new InMemoryEidetStore());
+        var promote = new MemoryServicePromotionAdapter(memory);
+        var svc = new LooseEndService(endStore, promote, clock);
+
+        var parked = await svc.ParkAsync("repo-a", "track the upstream fix for the retry backoff race");
+
+        var resolved = await svc.ResolveAsync(parked.Id!, ResolutionKind.Promoted,
+            new ResolveOptions { ExternalRef = "gh#412" });
+
+        // Link-only: the external ref is recorded and echoed back, and no memory is minted.
+        Assert.True(resolved.Success);
+        Assert.Equal("gh#412", resolved.ExternalRef);
+        Assert.Null(resolved.PromotedToMemoryId);
+        Assert.Empty(await memory.RecallAsync("repo-a", "retry backoff race"));
+
+        var stored = await endStore.GetAsync(parked.Id!);
+        Assert.Equal("gh#412", stored!.ExternalRef);
+    }
+
+    [Fact]
+    public async Task Resolve_PromoteWithWhitespaceExternalRef_MintsMemory_NotBlankLink()
+    {
+        var clock = new FakeTimeProvider(T0);
+        var endStore = new InMemoryLooseEndStore();
+        var memory = new MemoryService(new InMemoryEidetStore());
+        var promote = new MemoryServicePromotionAdapter(memory);
+        var svc = new LooseEndService(endStore, promote, clock);
+
+        var parked = await svc.ParkAsync("repo-a",
+            "Possible race in the retry backoff path under high concurrency, revisit later");
+
+        // A stray whitespace-only promote_to must be treated as absent — mint the memory, never
+        // close the end as a link with a blank ref (which would silently drop the knowledge).
+        var resolved = await svc.ResolveAsync(parked.Id!, ResolutionKind.Promoted,
+            new ResolveOptions { ExternalRef = "   " });
+
+        Assert.True(resolved.Success);
+        Assert.NotNull(resolved.PromotedToMemoryId);
+        Assert.Null(resolved.ExternalRef);
+        Assert.Single(await memory.RecallAsync("repo-a", "retry backoff race"));
+    }
+
     // ─── 5. Idempotent resolve ──────────────────────────────────────────
 
     [Fact]

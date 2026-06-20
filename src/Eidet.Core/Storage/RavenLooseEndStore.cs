@@ -13,6 +13,9 @@ namespace Eidet.Core.Storage;
 /// </summary>
 public sealed class RavenLooseEndStore : ILooseEndStore
 {
+    // Upper bound on the open-set scan for tag matching — keeps the ride-along bounded on large backlogs.
+    private const int TagScanCap = 200;
+
     private readonly IDocumentStore _store;
 
     public RavenLooseEndStore(IDocumentStore store)
@@ -66,19 +69,18 @@ public sealed class RavenLooseEndStore : ILooseEndStore
     {
         if (tags.Count == 0) return [];
 
+        // Bound the fetch server-side to the highest-priority/stalest open work (same Priority→CreatedAt
+        // order used everywhere), then match tags client-side — keeps exact case-insensitive overlap
+        // without a dedicated index while stopping this ride-along (a hot path on every tagged recall)
+        // from streaming an unbounded backlog.
         using var session = _store.OpenAsyncSession();
-        var open = await session.Query<LooseEnd>()
+        var candidates = await session.Query<LooseEnd>()
             .Where(e => e.RepoId == repoId && e.State == LooseEndState.Open)
+            .OrderBy(e => e.Priority).ThenBy(e => e.CreatedAt)
+            .Take(TagScanCap)
             .ToListAsync(ct);
 
-        // Tag overlap is cheap and the open set is small; filter client-side to avoid an index.
         var wanted = new HashSet<string>(tags, StringComparer.OrdinalIgnoreCase);
-        var matched = open.Where(e => e.Tags.Any(wanted.Contains));
-        return Order(matched).Take(max).ToList();
+        return candidates.Where(e => e.Tags.Any(wanted.Contains)).Take(max).ToList();
     }
-
-    // Wake-up ordering: highest priority first (Priority 1=high, so ascending), oldest first within
-    // a priority tier (surfaces the stalest high-priority work — the backlog-hygiene signal).
-    private static IEnumerable<LooseEnd> Order(IEnumerable<LooseEnd> ends) =>
-        ends.OrderBy(e => e.Priority).ThenBy(e => e.CreatedAt);
 }

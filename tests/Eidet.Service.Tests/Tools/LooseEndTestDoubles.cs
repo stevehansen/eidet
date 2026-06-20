@@ -45,9 +45,14 @@ internal sealed class FakeLooseEndStore : ILooseEndStore
         Task.FromResult(All.Count(e => e.RepoId == repoId && e.State == LooseEndState.Open));
 }
 
-/// <summary>Promote port that always succeeds with a fake memory id (handler tests don't exercise the gate).</summary>
+/// <summary>
+/// Promote port that mirrors the real adapter's branch without the gate: a non-blank external ref
+/// links (no memory id), otherwise it mints a fake memory id. Handler tests don't exercise the gate.
+/// </summary>
 internal sealed class FakePromotionPort : IPromotionPort
 {
     public Task<PromotionResult> PromoteAsync(LooseEnd e, PromoteOptions opts, CancellationToken ct = default) =>
-        Task.FromResult(new PromotionResult(true, "memories/test-repo/insight/abc123", null, null));
+        Task.FromResult(string.IsNullOrWhiteSpace(opts.ExternalRef)
+            ? new PromotionResult(true, "memories/test-repo/insight/abc123", null, null)
+            : new PromotionResult(true, MemoryId: null, opts.ExternalRef, null));
 }

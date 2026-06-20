@@ -132,18 +132,15 @@ public sealed class LooseEndService
     public Task<int> CountOpenAsync(string repoId, CancellationToken ct = default) =>
         _store.CountOpenAsync(RepoIdNormalizer.Normalize(repoId), ct);
 
+    // `open` arrives already ordered (Priority→CreatedAt) and capped at WakeupItemCap by the store —
+    // ordering is owned there so it stays in one place; this is pure token-budgeted rendering.
     private static string RenderSlice(IReadOnlyList<LooseEnd> open, int maxTokens)
     {
         if (open.Count == 0) return "";
 
-        var ordered = open
-            .OrderBy(e => e.Priority)
-            .ThenBy(e => e.CreatedAt)
-            .Take(WakeupItemCap);
-
         var sb = new StringBuilder();
         var remaining = maxTokens;
-        foreach (var end in ordered)
+        foreach (var end in open)
         {
             var line = WakeupPrefix + end.Note;
             var lineTokens = RecallScoring.EstimateTokens(line.Length);
@@ -182,10 +179,10 @@ public sealed record ParkResult(bool Success, string? Id, string? Reason)
 /// <summary>Outcome of a resolve: the closed state, plus the minted memory id when promoted.</summary>
 public sealed record ResolveResult(
     bool Success, string Id, LooseEndState State,
-    ResolutionKind? Kind = null, string? PromotedToMemoryId = null, string? Reason = null)
+    ResolutionKind? Kind = null, string? PromotedToMemoryId = null, string? ExternalRef = null, string? Reason = null)
 {
     public static ResolveResult From(LooseEnd e) =>
-        new(true, e.Id, e.State, e.Resolution, e.PromotedToMemoryId);
+        new(true, e.Id, e.State, e.Resolution, e.PromotedToMemoryId, e.ExternalRef);
     public static ResolveResult NotFound(string id) =>
         new(false, id, LooseEndState.Open, Reason: "not found");
     public static ResolveResult Rejected(string id, string reason) =>

@@ -24,6 +24,24 @@ public class ResolveToolHandlerTests
     }
 
     [Fact]
+    public async Task Resolve_PromoteWithExternalRef_EchoesRefInPayload_WithoutMinting()
+    {
+        var handler = NewHandler(out var store);
+        var id = await Park(store, "track the upstream fix for the retry backoff race");
+
+        var result = await Invoke(handler, new { id, kind = "promoted", promote_to = "gh#412" });
+
+        Assert.Equal(ToolStatus.Ok, result.Status);
+
+        var payload = JsonSerializer.SerializeToElement(result.Payload);
+        Assert.Equal("gh#412", payload.GetProperty("externalRef").GetString());
+        Assert.Equal("resolved", payload.GetProperty("state").GetString());
+        Assert.Equal(JsonValueKind.Null, payload.GetProperty("promotedToMemoryId").ValueKind);
+
+        Assert.Equal("gh#412", (await store.GetAsync(id))!.ExternalRef);
+    }
+
+    [Fact]
     public async Task Resolve_InvalidKind_ReturnsBadRequest()
     {
         var handler = NewHandler(out var store);

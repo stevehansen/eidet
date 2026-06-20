@@ -62,6 +62,7 @@ public sealed class ResolveToolHandler : IToolHandler
                 state = "resolved",
                 kind = result.Kind?.ToString().ToLowerInvariant(),
                 promotedToMemoryId = result.PromotedToMemoryId,
+                externalRef = result.ExternalRef,
             },
             summary: $"Resolved {result.Id} as {result.Kind?.ToString().ToLowerInvariant()}.",
             count: 1);

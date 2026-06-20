@@ -23,7 +23,7 @@ Design decisions live in `docs/specs/`:
 
 ## Current Capabilities
 
-- **6 MCP tools** (core session flow): context, recall, store, feedback, forget, link. Advanced operations (history, intake, consolidate, maintenance, edit, pack_export, pack_import) stay off the MCP surface — they run via the scheduler/maintenance pipeline and are reachable through the REST API, CLI, and Web UI. 13 tool handlers total, shared by REST + MCP via `ToolDispatcher`; MCP exposure is gated by `IToolHandler.McpExposed`.
+- **8 MCP tools**: 6 core session flow (context, recall, store, feedback, forget, link) + park/resolve (Loose Ends). Advanced operations (history, intake, consolidate, maintenance, edit, pack_export, pack_import) stay off the MCP surface — they run via the scheduler/maintenance pipeline and are reachable through the REST API, CLI, and Web UI. 15 tool handlers total, shared by REST + MCP via `ToolDispatcher`; MCP exposure is gated by `IToolHandler.McpExposed`.
 - **4 memory types**: Observation, Insight, Procedure, Heuristic — each with per-type retrieval budgets
 - **Storage**: RavenDB (embedded or external) with vector + full-text hybrid search on composite `SearchText` field
 - **Write gates**: `WriteValidator` chains rules (13 secret patterns + signal/low-signal + self-talk) — deterministic, local, always-on; single entry point from `MemoryService.StoreAsync` and `UpdateMemoryAsync`
