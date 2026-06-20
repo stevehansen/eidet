@@ -1,4 +1,6 @@
 using Eidet.Core.Configuration;
+using Eidet.Core.LooseEnds;
+using Eidet.Core.LooseEnds.Promotion;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Spectre.Console;
@@ -27,6 +29,12 @@ public sealed class ContextCommand : AsyncCommand<ContextCommand.Settings>
         var eidetStore = new RavenEidetStore(store);
         var layerSvc = new LayerService(eidetStore);
         var memorySvc = new MemoryService(eidetStore, layerSvc);
+
+        // Wire Loose Ends so `eidet context` shows the same wake-up slice + open-count addendum the
+        // agent receives via MCP/REST — otherwise this debug view silently diverges from real context.
+        var looseEndSvc = new LooseEndService(
+            new RavenLooseEndStore(store), new MemoryServicePromotionAdapter(memorySvc), TimeProvider.System);
+        memorySvc.LooseEnds = looseEndSvc;
 
         var repoId = settings.Repo ?? Directory.GetCurrentDirectory();
         var maxTokens = settings.MaxTokens ?? 600;

@@ -1,6 +1,8 @@
 using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
 using Eidet.Core.Enrichment;
+using Eidet.Core.LooseEnds;
+using Eidet.Core.LooseEnds.Promotion;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
@@ -91,6 +93,15 @@ public sealed class EidetHost : IDisposable
             ? new HookRunner(config.Hooks) : NullHookRunner.Instance;
 
         var memorySvc = new MemoryService(eidetStore, layerSvc, hookRunner);
+
+        // Loose Ends wire AFTER memorySvc: the promotion adapter wraps memorySvc, and memorySvc
+        // needs looseEndSvc for the wake-up slice — so the slice is a settable property, not a
+        // ctor edge, to break that construction cycle.
+        var looseEndStore = new RavenLooseEndStore(store);
+        var promotion = new MemoryServicePromotionAdapter(memorySvc);
+        var looseEndSvc = new LooseEndService(looseEndStore, promotion, TimeProvider.System);
+        memorySvc.LooseEnds = looseEndSvc;
+
         var intakeSvc = new IntakeService(eidetStore, memory: memorySvc);
         var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memory: memorySvc);
         IMaintenanceRunner maintenanceRunner = new MaintenanceOrchestrator(
@@ -100,7 +111,7 @@ public sealed class EidetHost : IDisposable
         var qualitySvc = new QualityService(eidetStore);
         var usageTracker = new UsageTracker(store);
         var layerSyncSvc = new LayerSyncService(eidetStore, layerSvc, memory: memorySvc);
-        var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationEngine, maintenanceRunner,
+        var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationEngine, maintenanceRunner, looseEndSvc,
             Directory.GetCurrentDirectory(), autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker,
             export: exportSvc, layers: layerSvc);
         var scheduler = new ScheduledTaskService(store, eidetStore, maintenanceRunner, consolidationEngine, config.Maintenance);
@@ -111,6 +122,7 @@ public sealed class EidetHost : IDisposable
             Consolidation = consolidationEngine,
             Maintenance = maintenanceRunner,
             Export = exportSvc,
+            LooseEnds = looseEndSvc,
             BindAddress = actualBind,
             Port = actualPort,
             Layers = layerSvc,

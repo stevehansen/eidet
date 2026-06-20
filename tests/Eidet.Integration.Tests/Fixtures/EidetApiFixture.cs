@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
 using Eidet.Core.Configuration;
+using Eidet.Core.LooseEnds;
+using Eidet.Core.LooseEnds.Promotion;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
@@ -46,6 +48,10 @@ public class EidetApiFixture : IAsyncLifetime
             var exportSvc = new ExportService(eidetStore, memory: memorySvc);
             var qualitySvc = new QualityService(eidetStore);
 
+            var looseEndSvc = new LooseEndService(
+                new RavenLooseEndStore(_store), new MemoryServicePromotionAdapter(memorySvc), TimeProvider.System);
+            memorySvc.LooseEnds = looseEndSvc;
+
             var port = GetFreePort();
             BaseUrl = $"http://127.0.0.1:{port}";
 
@@ -58,6 +64,7 @@ public class EidetApiFixture : IAsyncLifetime
                 Consolidation = consolidationEngine,
                 Maintenance = maintenanceRunner,
                 Export = exportSvc,
+                LooseEnds = looseEndSvc,
                 BindAddress = "127.0.0.1",
                 Port = port,
                 Layers = layerSvc,

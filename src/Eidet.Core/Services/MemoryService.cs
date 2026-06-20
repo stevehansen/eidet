@@ -34,6 +34,13 @@ public sealed class MemoryService
 
     public int StalenessWarningDays { get; set; } = 7;
 
+    /// <summary>
+    /// Optional Loose End surface for the wake-up slice in <see cref="GetContextAsync"/>. Settable
+    /// (not a ctor dependency) because the promotion adapter wraps this service, so a ctor edge
+    /// would be a construction cycle. When null the slice is empty (NullObject behavior).
+    /// </summary>
+    public LooseEnds.LooseEndService? LooseEnds { get; set; }
+
     public MemoryService(IEidetStore store, LayerService? layers = null, IHookRunner? hooks = null)
     {
         _store = store;
@@ -414,11 +421,33 @@ public sealed class MemoryService
             if (count > 0)
                 sb.Append($", {count} {type.ToString().ToLowerInvariant()}s");
         }
+
+        // Loose End wake-up slice: open work surfaces here *because it is open*, not by relevance.
+        // The L0 count addendum reflects the total open count; the slice itself is item- and
+        // token-capped within a sub-budget carved from L1 (never from L0/identity).
+        var openLooseEndCount = LooseEnds is not null
+            ? await LooseEnds.CountOpenAsync(normalizedRepoId, ct)
+            : 0;
+        if (openLooseEndCount > 0)
+            sb.Append($" | {openLooseEndCount} open loose ends");
+
         sb.AppendLine("]");
 
         var remainingTokens = maxTokens - RecallScoring.EstimateTokens(sb.Length);
         if (remainingTokens <= 0)
             return sb.ToString();
+
+        if (LooseEnds is not null && openLooseEndCount > 0)
+        {
+            const int looseEndSubBudget = 120;
+            var sliceBudget = Math.Max(0, Math.Min(looseEndSubBudget, remainingTokens));
+            var slice = await LooseEnds.RenderWakeupSliceAsync(normalizedRepoId, sliceBudget, ct);
+            if (slice.Length > 0)
+            {
+                sb.Append(slice);
+                remainingTokens -= RecallScoring.EstimateTokens(slice.Length);
+            }
+        }
 
         // L1: Top-K scored memories
         var candidates = await _store.GetTopScoredAsync(

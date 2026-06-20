@@ -1,10 +1,11 @@
+using Eidet.Core.LooseEnds;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Domain;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Mcp;
 using Eidet.Service.Tools;
-using Eidet.Service.Tools.Handlers;
+using Eidet.Service.Tests.Tools;
 
 namespace Eidet.Service.Tests.Mcp;
 
@@ -20,15 +21,23 @@ public class McpToolDefinitionsTests
         AllHandlers().Where(h => h.McpExposed).Select(h => h.Schema).ToList();
 
     [Fact]
-    public void All_Registers13Handlers()
+    public void All_Registers15Handlers()
     {
-        Assert.Equal(13, Tools.Count);
+        Assert.Equal(15, Tools.Count);
     }
 
     [Fact]
-    public void Exposed_Returns6Tools()
+    public void Exposed_Returns8Tools()
     {
-        Assert.Equal(6, Exposed.Count);
+        Assert.Equal(8, Exposed.Count);
+    }
+
+    [Theory]
+    [InlineData("eidet_park")]
+    [InlineData("eidet_resolve")]
+    public void Exposed_ContainsLooseEndTool(string toolName)
+    {
+        Assert.Contains(Exposed, t => t.Name == toolName);
     }
 
     [Theory]
@@ -99,6 +108,8 @@ public class McpToolDefinitionsTests
     [InlineData("eidet_edit")]
     [InlineData("eidet_pack_export")]
     [InlineData("eidet_pack_import")]
+    [InlineData("eidet_park")]
+    [InlineData("eidet_resolve")]
     public void All_ContainsTool(string toolName)
     {
         Assert.Contains(Tools, t => t.Name == toolName);
@@ -149,23 +160,11 @@ public class McpToolDefinitionsTests
         var consolidation = new ConsolidationEngine(store, enrichment: null, memory: svc);
         var intake = new IntakeService(store, svc);
         var maintenance = new StubMaintenanceRunner();
+        var looseEnds = new LooseEndService(new FakeLooseEndStore(), new FakePromotionPort(), TimeProvider.System);
 
-        return
-        [
-            new StoreToolHandler(svc),
-            new RecallToolHandler(svc),
-            new ForgetToolHandler(svc),
-            new FeedbackToolHandler(svc),
-            new HistoryToolHandler(svc),
-            new ContextToolHandler(svc),
-            new LinkToolHandler(svc),
-            new ConsolidateToolHandler(consolidation),
-            new MaintenanceToolHandler(maintenance),
-            new EditToolHandler(svc),
-            new IntakeToolHandler(intake),
-            new PackExportToolHandler(null),
-            new PackImportToolHandler(null, null),
-        ];
+        // Drive off the real factory so this test tracks the shipped dispatcher surface and can't
+        // silently drift from it (a hand-maintained list previously fell behind park/resolve).
+        return ToolDispatcherFactory.Create(svc, intake, consolidation, maintenance, looseEnds).Handlers;
     }
 
     private sealed class StubMaintenanceRunner : IMaintenanceRunner

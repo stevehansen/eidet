@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Eidet.Core.Domain;
+using Eidet.Core.LooseEnds;
 using Eidet.Core.Services;
 using Eidet.Service.Mcp;
 
@@ -13,10 +14,12 @@ namespace Eidet.Service.Tools.Handlers;
 public sealed class RecallToolHandler : IToolHandler
 {
     private readonly MemoryService _svc;
+    private readonly LooseEndService? _looseEnds;
 
-    public RecallToolHandler(MemoryService svc)
+    public RecallToolHandler(MemoryService svc, LooseEndService? looseEnds = null)
     {
         _svc = svc;
+        _looseEnds = looseEnds;
     }
 
     public string Name => "eidet_recall";
@@ -45,37 +48,63 @@ public sealed class RecallToolHandler : IToolHandler
 
         var results = await _svc.RecallAsync(request.RepoId, opts, request.Ct);
 
-        if (results.Count == 0)
+        // Recall ride-along: open Loose Ends whose tags overlap the query surface in a SEPARATE
+        // section, never mixed into the relevance-ranked memory list (LooseEndSpec §Surfacing mode 2).
+        IReadOnlyList<LooseEnd> looseEnds = _looseEnds is not null && opts.Tags is { Count: > 0 }
+            ? await _looseEnds.RideAlongAsync(request.RepoId, opts.Tags, request.Ct)
+            : [];
+        // Trim to a stable ride-along view — the raw LooseEnd carries internal lifecycle/source
+        // fields (State, Resolution, SourceSessionId, …) that don't belong on the recall wire.
+        var rideAlong = looseEnds
+            .Select(le => new RideAlongView(le.Id, le.Note, le.Priority, le.Tags))
+            .ToList();
+
+        if (results.Count == 0 && rideAlong.Count == 0)
             return ToolResult.Ok(
-                payload: new { repo = request.RepoId, query = queryText, results = Array.Empty<MemorySearchResult>() },
+                payload: new { repo = request.RepoId, query = queryText, results = Array.Empty<MemorySearchResult>(), looseEnds = rideAlong },
                 summary: "No memories found.",
                 count: 0);
 
-        var lines = new List<string> { $"{results.Count} memory(ies) found:" };
-        foreach (var r in results)
+        var lines = new List<string>();
+        if (results.Count > 0)
         {
-            var prefix = r.Type switch
+            lines.Add($"{results.Count} memory(ies) found:");
+            foreach (var r in results)
             {
-                MemoryType.Insight => "[I]",
-                MemoryType.Observation => "[O]",
-                MemoryType.Procedure => "[P]",
-                MemoryType.Heuristic => "[H]",
-                _ => "[?]",
-            };
-            var stale = r.StalenessWarning != null ? $" {r.StalenessWarning}" : "";
-            var display = r.OneLiner ?? r.Summary ?? Truncate(r.Content, 120);
-            lines.Add($"  {prefix} {display}{stale}");
-            lines.Add($"      id={r.Id} importance={r.Importance:F2} score={r.Score:F2}");
+                var prefix = r.Type switch
+                {
+                    MemoryType.Insight => "[I]",
+                    MemoryType.Observation => "[O]",
+                    MemoryType.Procedure => "[P]",
+                    MemoryType.Heuristic => "[H]",
+                    _ => "[?]",
+                };
+                var stale = r.StalenessWarning != null ? $" {r.StalenessWarning}" : "";
+                var display = r.OneLiner ?? r.Summary ?? Truncate(r.Content, 120);
+                lines.Add($"  {prefix} {display}{stale}");
+                lines.Add($"      id={r.Id} importance={r.Importance:F2} score={r.Score:F2}");
+            }
+        }
+
+        if (rideAlong.Count > 0)
+        {
+            lines.Add($"{rideAlong.Count} open loose end(s) matching your tags:");
+            foreach (var le in rideAlong)
+                lines.Add($"  [~] {le.Note} (id={le.Id}, priority={le.Priority})");
         }
 
         return ToolResult.Ok(
-            payload: new { repo = request.RepoId, query = queryText, results },
+            payload: new { repo = request.RepoId, query = queryText, results, looseEnds = rideAlong },
             summary: string.Join("\n", lines),
             count: results.Count);
     }
 
     private static string Truncate(string s, int max) =>
         s.Length <= max ? s : s[..max] + "…";
+
+    /// <summary>Trimmed recall ride-along projection — only the fields the agent needs to act on a
+    /// matching open Loose End, deliberately excluding internal lifecycle/source fields.</summary>
+    private sealed record RideAlongView(string Id, string Note, int Priority, IReadOnlyList<string> Tags);
 
     private static JsonObject BuildSchema()
     {
