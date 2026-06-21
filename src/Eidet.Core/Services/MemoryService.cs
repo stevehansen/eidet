@@ -361,20 +361,14 @@ public sealed class MemoryService
             return cached;
 
         var repoIds = scope.RepoIds.ToList();
-        var textTask = _store.FullTextSearchAsync(repoIds, query, ct);
-        var vectorTask = _store.VectorSearchAsync(repoIds, query, ct);
-        await Task.WhenAll(textTask, vectorTask);
-
-        var merged = new List<MemorySearchResult>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in textTask.Result)
-            if (seen.Add(entry.Id))
-                merged.Add(RecallScoring.ToSearchResult(entry, score: 1.0f));
-        foreach (var entry in vectorTask.Result)
-            if (seen.Add(entry.Id))
-                merged.Add(RecallScoring.ToSearchResult(entry, score: 0.9f));
+        var lexTask = _store.SearchScoredAsync(SearchArm.Lexical, repoIds, query, ct);
+        var vecTask = _store.SearchScoredAsync(SearchArm.Vector, repoIds, query, ct);
+        await Task.WhenAll(lexTask, vecTask);
 
         var now = DateTime.UtcNow;
+        var weights = RecallWeights.Default with { TotalN = ComputeTotalN(lexTask.Result, vecTask.Result) };
+        var merged = RecallScoring.FuseAndScore(lexTask.Result, vecTask.Result, weights, now);
+
         var staleAfter = StalenessWarningDays;
         foreach (var result in merged)
         {
@@ -402,6 +396,41 @@ public sealed class MemoryService
         _cache.Set(cacheKey, observed, budgeted);
 
         return budgeted;
+    }
+
+    /// <summary>
+    /// Diagnostic recall: runs the SAME fuse pipeline as <see cref="RecallInternalAsync"/> (resolve
+    /// scope → two scored arms → <see cref="RecallScoring.Fuse"/>) and returns the per-candidate
+    /// component breakdown instead of budgeted results. Bypasses the recall cache and fires no hooks —
+    /// it must not perturb live recall state.
+    /// </summary>
+    public async Task<RecallExplanation> ExplainRecallAsync(
+        string repoId, RecallOptions opts, CancellationToken ct = default)
+    {
+        var query = ToMemoryQuery(opts);
+        var scope = await ResolveScopeAsync(repoId, opts.CrossRepo, ct);
+        var repoIds = scope.RepoIds.ToList();
+
+        var lexTask = _store.SearchScoredAsync(SearchArm.Lexical, repoIds, query, ct);
+        var vecTask = _store.SearchScoredAsync(SearchArm.Vector, repoIds, query, ct);
+        await Task.WhenAll(lexTask, vecTask);
+
+        var weights = RecallWeights.Default with { TotalN = ComputeTotalN(lexTask.Result, vecTask.Result) };
+        var fused = RecallScoring.Fuse(lexTask.Result, vecTask.Result, weights, DateTime.UtcNow);
+
+        var rows = fused
+            .Select(c => new RecallExplanationRow(c.Entry.Id, c.Lex, c.Vec, c.Recency, c.Ucb, c.Fused))
+            .ToList();
+        return new RecallExplanation(rows, weights.Alpha, rows.Count);
+    }
+
+    /// <summary>Σ (Echo+Fizzle) over the lex∪vec union (dedup by id) — the UCB exploration denominator base.</summary>
+    private static long ComputeTotalN(IReadOnlyList<ScoredHit> lex, IReadOnlyList<ScoredHit> vec)
+    {
+        var seen = new Dictionary<string, MemoryEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var hit in lex) seen.TryAdd(hit.Entry.Id, hit.Entry);
+        foreach (var hit in vec) seen.TryAdd(hit.Entry.Id, hit.Entry);
+        return seen.Values.Sum(e => (long)e.EchoCount + e.FizzleCount);
     }
 
     public async Task<string> GetContextAsync(string repoId, int maxTokens = 600, CancellationToken ct = default)
@@ -515,7 +544,9 @@ public sealed class MemoryService
     private async Task BumpAccessCountsAsync(List<MemorySearchResult> results, string repoId, CancellationToken ct)
     {
         // Access tracking is a justified exemption from cache invalidation: AccessCount /
-        // LastAccessedAt are not in the cache key and do not affect recall scoring.
+        // LastAccessedAt are not in the recall cache key. LastAccessedAt does feed dual-clock
+        // recency (#33), so a cached recall can be marginally stale on recency — bounded and
+        // acceptable within the cache's short TTL; invalidating on every recall would defeat it.
         // The dedicated patch-only ctx prevents this path from accidentally writing other fields.
         var ctx = new AccessTrackingCtx(_store);
         try
@@ -828,8 +859,8 @@ public readonly struct BulkMutationCtx
 /// Access-tracking gate. Exposes only the patch-only <c>BumpAsync</c> method — the API
 /// itself cannot be tricked into writing fields other than <c>AccessCount</c> and
 /// <c>LastAccessedAt</c>. Used by the recall path's access-count side-effect, which is a
-/// justified exemption from cache invalidation (the patched fields are not in the cache key
-/// and do not affect recall scoring).
+/// justified exemption from cache invalidation (the patched fields are not in the recall cache
+/// key; the recency staleness LastAccessedAt can introduce is bounded by the short cache TTL).
 /// </summary>
 internal readonly struct AccessTrackingCtx
 {

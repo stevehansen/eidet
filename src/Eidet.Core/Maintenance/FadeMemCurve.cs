@@ -30,4 +30,24 @@ public static class FadeMemCurve
         var decayFactor = Math.Pow(2, -shapedAge);
         return Math.Max(Floor, (float)(importance * decayFactor));
     }
+
+    /// <summary>
+    /// Dual-clock recency in 0..1 using the per-type curve: a memory is "fresh" if it was either
+    /// created or last accessed recently, so the more-recent clock dominates. When
+    /// <paramref name="lastAccessedAt"/> is null only creation age is considered.
+    /// Deterministic, no decay floor (this is a recency signal, not decayed importance).
+    /// </summary>
+    public static double Recency(DateTime createdAt, DateTime? lastAccessedAt, DateTime now, MemoryType type)
+    {
+        var (halfLife, shape) = Defaults[type];
+        var createdRecency = DecayUnit(Math.Max(0, (now - createdAt).TotalDays), halfLife, shape);
+        if (lastAccessedAt is not { } accessed)
+            return createdRecency;
+        var accessRecency = DecayUnit(Math.Max(0, (now - accessed).TotalDays), halfLife, shape);
+        return Math.Max(createdRecency, accessRecency);
+    }
+
+    /// <summary>Bare 0..1 decay (no importance scale, no floor) shared by <see cref="Recency"/>.</summary>
+    private static double DecayUnit(double ageDays, double halfLifeDays, double shape) =>
+        Math.Pow(2, -Math.Pow(ageDays / halfLifeDays, shape));
 }

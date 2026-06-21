@@ -71,7 +71,21 @@ public class RavenEidetStore : IEidetStore
     }
 
     public async Task<List<MemoryEntry>> FullTextSearchAsync(
-        IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
+        IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) =>
+        (await SearchScoredAsync(SearchArm.Lexical, repoIds, query, ct)).Select(h => h.Entry).ToList();
+
+    public async Task<List<MemoryEntry>> VectorSearchAsync(
+        IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) =>
+        (await SearchScoredAsync(SearchArm.Vector, repoIds, query, ct)).Select(h => h.Entry).ToList();
+
+    public Task<IReadOnlyList<ScoredHit>> SearchScoredAsync(
+        SearchArm arm, IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) =>
+        arm == SearchArm.Lexical
+            ? LexicalScoredAsync(repoIds, query, ct)
+            : VectorScoredAsync(repoIds, query, ct);
+
+    private async Task<IReadOnlyList<ScoredHit>> LexicalScoredAsync(
+        IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct)
     {
         using var session = _store.OpenAsyncSession();
         // WhereIn MUST come before Search to ensure AND semantics.
@@ -81,14 +95,16 @@ public class RavenEidetStore : IEidetStore
             .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
             .WhereIn("RepoId", repoIds)
             .AndAlso()
-            .Search("SearchText", query.Text);
+            .Search("SearchText", query.Text)
+            .OrderByScore();
 
         documentQuery = ApplyFilters(documentQuery, query);
-        return await documentQuery.Take(query.Limit * 2).ToListAsync(ct); // Over-fetch 2× for merge quality
+        var hits = await documentQuery.Take(query.Limit * 2).ToListAsync(ct); // Over-fetch 2× for merge quality
+        return ToScoredHits(session, hits);
     }
 
-    public async Task<List<MemoryEntry>> VectorSearchAsync(
-        IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
+    private async Task<IReadOnlyList<ScoredHit>> VectorScoredAsync(
+        IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct)
     {
         try
         {
@@ -103,12 +119,40 @@ public class RavenEidetStore : IEidetStore
                     numberOfCandidates: 30);
 
             documentQuery = ApplyFilters(documentQuery, query);
-            return await documentQuery.Take(query.Limit).ToListAsync(ct);
+            var hits = await documentQuery.Take(query.Limit).ToListAsync(ct);
+            return ToScoredHits(session, hits);
         }
         catch
         {
             return []; // Vector search may fail if embeddings not configured
         }
+    }
+
+    /// <summary>
+    /// Reads each hit's raw relevance from the already-materialized session metadata
+    /// (<c>@index-score</c>). Falls back to rank-decay (<c>1, 1/2, 1/3, …</c>) for any hit whose
+    /// score the backend doesn't surface (e.g. the vector arm), so an arm never throws over a
+    /// missing score. A missing key is the expected case and is handled without an exception (no
+    /// per-hit throw cost); the narrow catch covers only a present-but-unconvertible value.
+    /// </summary>
+    private static IReadOnlyList<ScoredHit> ToScoredHits(IAsyncDocumentSession session, List<MemoryEntry> hits)
+    {
+        var scored = new List<ScoredHit>(hits.Count);
+        for (var rank = 0; rank < hits.Count; rank++)
+        {
+            var entry = hits[rank];
+            var rankDecay = 1.0 / (rank + 1);
+            var metadata = session.Advanced.GetMetadataFor(entry);
+            double score;
+            if (!metadata.ContainsKey("@index-score"))
+                score = rankDecay;
+            else
+                try { score = metadata.GetDouble("@index-score"); }
+                catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException)
+                { score = rankDecay; }
+            scored.Add(new ScoredHit(entry, score));
+        }
+        return scored;
     }
 
     public async Task<MemoryEntry?> FindDuplicateAsync(
