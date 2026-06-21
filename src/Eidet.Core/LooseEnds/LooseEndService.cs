@@ -18,6 +18,11 @@ public sealed class LooseEndService
     private const int WakeupItemCap = 3;
     private const string WakeupPrefix = "[~] ";
 
+    // Bounded claim retries: a peer that won the claim then released it (failed promote) leaves the
+    // end Open again, so a lost claim that re-reads as Open is retried rather than falsely reported
+    // in-progress. Bounded so a pathological Open↔Resolving flip can never livelock.
+    private const int MaxClaimAttempts = 3;
+
     private readonly ILooseEndStore _store;
     private readonly IPromotionPort _promote;
     private readonly TimeProvider _clock;
@@ -70,31 +75,40 @@ public sealed class LooseEndService
     public async Task<ResolveResult> ResolveAsync(
         string id, ResolutionKind kind, ResolveOptions? o = null, CancellationToken ct = default)
     {
-        var end = await _store.GetAsync(id, ct);
-        if (end is null)
-            return ResolveResult.NotFound(id);
-
-        if (end.State == LooseEndState.Resolved)
-            return ResolveResult.From(end); // idempotent no-op (sequential re-resolve)
+        var opts = o ?? new ResolveOptions();
 
         // Atomically claim the end (Open→Resolving) BEFORE promoting, so a concurrent or retried
-        // resolve can never both pass the Open check and double-mint. Exactly one caller wins.
-        var won = await _store.TryClaimForResolveAsync(id, ct);
-        if (!won)
+        // resolve can never both pass the Open check and double-mint. Exactly one caller wins; a
+        // lost claim re-reads to tell a finished peer (idempotent success) from one mid-flight
+        // (reject) from one a peer claimed-then-released back to Open (retry, bounded).
+        for (var attempt = 1; ; attempt++)
         {
-            // Lost the race, or it was already Resolving/Resolved. Re-read to distinguish a peer that
-            // finished (idempotent success) from one still mid-flight (reject — no second mint).
+            var end = await _store.GetAsync(id, ct);
+            if (end is null)
+                return ResolveResult.NotFound(id);
+            if (end.State == LooseEndState.Resolved)
+                return ResolveResult.From(end); // idempotent no-op (already resolved)
+
+            if (await _store.TryClaimForResolveAsync(id, ct))
+                return await CompleteClaimedResolveAsync(end, id, kind, opts, ct);
+
             var after = await _store.GetAsync(id, ct);
             if (after is null)
                 return ResolveResult.NotFound(id);
             if (after.State == LooseEndState.Resolved)
-                return ResolveResult.From(after);
-            return ResolveResult.Rejected(id, "resolve already in progress");
+                return ResolveResult.From(after);               // a peer finished it
+            if (after.State == LooseEndState.Open && attempt < MaxClaimAttempts)
+                continue;                                       // a peer released it — claim it ourselves
+            return ResolveResult.Rejected(id, "resolve already in progress");  // a peer is mid-flight
         }
+    }
 
-        // Claim won: the store doc is now Resolving, but local `end` is still Open — so the release
-        // path (UpdateAsync(end)) naturally restores the store to Open on any failure below.
-        var opts = o ?? new ResolveOptions();
+    // Claim won: the store doc is now Resolving, but local `end` is still Open — so ReleaseAsync's
+    // UpdateAsync(end) naturally restores the store to Open on any failure below. Promote (if asked),
+    // finalize, and release the claim on any error so the end is never left wedged in Resolving.
+    private async Task<ResolveResult> CompleteClaimedResolveAsync(
+        LooseEnd end, string id, ResolutionKind kind, ResolveOptions opts, CancellationToken ct)
+    {
         try
         {
             if (kind == ResolutionKind.Promoted)
@@ -103,7 +117,7 @@ public sealed class LooseEndService
                     end, new PromoteOptions(opts.PromoteType, opts.PromoteImportance, opts.ExternalRef), ct);
                 if (!promotion.Success)
                 {
-                    await ReleaseAsync(end, ct);
+                    await ReleaseAsync(end);
                     return ResolveResult.Rejected(id, promotion.Reason ?? "promotion rejected");
                 }
 
@@ -121,8 +135,9 @@ public sealed class LooseEndService
         }
         catch
         {
-            // Promote threw, or the final UpdateAsync threw — never leave the end wedged in Resolving.
-            try { await ReleaseAsync(end, ct); } catch { /* best-effort; store likely down */ }
+            // Promote threw, or the final UpdateAsync threw (including cancellation) — never leave the
+            // end wedged in Resolving. ReleaseAsync runs even when `ct` is already cancelled.
+            try { await ReleaseAsync(end); } catch { /* best-effort; store likely down */ }
             throw;
         }
     }
@@ -133,8 +148,10 @@ public sealed class LooseEndService
     // PromotedToMemoryId/Resolution/ResolvedAt set: without this the re-Opened doc would carry a
     // dangling resolution. Clearing makes a released end indistinguishable from never-resolved
     // (the orphaned memory is absorbed by the ≥0.92 dedup on retry); a no-op on the rejected-promote
-    // path, where none of these were set yet.
-    private Task ReleaseAsync(LooseEnd end, CancellationToken ct)
+    // path, where none of these were set yet. Uses CancellationToken.None: a release is a compensating
+    // write for a side effect already committed (Open→Resolving), so it must run to completion even
+    // when the caller's token is cancelled — otherwise a cancelled resolve leaves the end wedged.
+    private Task ReleaseAsync(LooseEnd end)
     {
         end.State = LooseEndState.Open;
         end.Resolution = null;
@@ -142,7 +159,7 @@ public sealed class LooseEndService
         end.ResolvedAt = null;
         end.PromotedToMemoryId = null;
         end.ExternalRef = null;
-        return _store.UpdateAsync(end, ct);
+        return _store.UpdateAsync(end, CancellationToken.None);
     }
 
     // ─── Surfacing ──────────────────────────────────────────────────────

@@ -142,6 +142,54 @@ internal sealed class GatedPromotionAdapter : IPromotionPort
     }
 }
 
+/// <summary>Promotion port that always throws — drives the promote-throws release path.</summary>
+internal sealed class ThrowingPromotionAdapter(Exception toThrow) : IPromotionPort
+{
+    public Task<PromotionResult> PromoteAsync(LooseEnd e, PromoteOptions opts, CancellationToken ct = default) =>
+        throw toThrow;
+}
+
+/// <summary>
+/// Wraps an inner store and HONORS the cancellation token on <see cref="UpdateAsync"/> (throws if the
+/// token is cancelled before delegating), like a real RavenDB session. Proves the claim-release runs
+/// even when the caller's token is already cancelled — i.e. that release uses CancellationToken.None.
+/// </summary>
+internal sealed class CancellationHonoringStore(ILooseEndStore inner) : ILooseEndStore
+{
+    public Task UpdateAsync(LooseEnd e, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        return inner.UpdateAsync(e, ct);
+    }
+
+    public Task<string> StoreAsync(LooseEnd e, CancellationToken ct = default) => inner.StoreAsync(e, ct);
+    public Task<LooseEnd?> GetAsync(string id, CancellationToken ct = default) => inner.GetAsync(id, ct);
+    public Task<bool> TryClaimForResolveAsync(string id, CancellationToken ct = default) => inner.TryClaimForResolveAsync(id, ct);
+    public Task<IReadOnlyList<LooseEnd>> ListOpenAsync(string repoId, int max, CancellationToken ct = default) => inner.ListOpenAsync(repoId, max, ct);
+    public Task<IReadOnlyList<LooseEnd>> FindOpenByTagsAsync(string repoId, IReadOnlyList<string> tags, int max, CancellationToken ct = default) => inner.FindOpenByTagsAsync(repoId, tags, max, ct);
+    public Task<int> CountOpenAsync(string repoId, CancellationToken ct = default) => inner.CountOpenAsync(repoId, ct);
+}
+
+/// <summary>
+/// Wraps an inner store and forces the FIRST <see cref="TryClaimForResolveAsync"/> to lose (returns
+/// false without changing state), delegating afterward — simulates a peer that won the claim then
+/// released the end back to Open, so the service's bounded retry should re-claim and resolve.
+/// </summary>
+internal sealed class ClaimFailsOnceStore(ILooseEndStore inner) : ILooseEndStore
+{
+    private int _claimCalls;
+
+    public Task<bool> TryClaimForResolveAsync(string id, CancellationToken ct = default) =>
+        ++_claimCalls == 1 ? Task.FromResult(false) : inner.TryClaimForResolveAsync(id, ct);
+
+    public Task<string> StoreAsync(LooseEnd e, CancellationToken ct = default) => inner.StoreAsync(e, ct);
+    public Task<LooseEnd?> GetAsync(string id, CancellationToken ct = default) => inner.GetAsync(id, ct);
+    public Task UpdateAsync(LooseEnd e, CancellationToken ct = default) => inner.UpdateAsync(e, ct);
+    public Task<IReadOnlyList<LooseEnd>> ListOpenAsync(string repoId, int max, CancellationToken ct = default) => inner.ListOpenAsync(repoId, max, ct);
+    public Task<IReadOnlyList<LooseEnd>> FindOpenByTagsAsync(string repoId, IReadOnlyList<string> tags, int max, CancellationToken ct = default) => inner.FindOpenByTagsAsync(repoId, tags, max, ct);
+    public Task<int> CountOpenAsync(string repoId, CancellationToken ct = default) => inner.CountOpenAsync(repoId, ct);
+}
+
 /// <summary>
 /// Wraps an inner <see cref="ILooseEndStore"/> and throws on the Nth <see cref="UpdateAsync"/> call
 /// (1-based), delegating everything else (including the atomic claim). Exercises the partial-failure

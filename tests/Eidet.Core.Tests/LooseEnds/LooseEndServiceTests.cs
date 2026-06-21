@@ -314,6 +314,53 @@ public class LooseEndServiceTests
     }
 
     [Fact]
+    public async Task Resolve_TokenCancelled_StillReleasesClaim_NotWedgedInResolving()
+    {
+        var clock = new FakeTimeProvider(T0);
+        var inner = new InMemoryLooseEndStore();
+        var endStore = new CancellationHonoringStore(inner);   // UpdateAsync honors ct, like RavenDB
+        var promote = new ThrowingPromotionAdapter(new OperationCanceledException());
+        var svc = new LooseEndService(endStore, promote, clock);
+
+        var parked = await svc.ParkAsync("repo-a", "track the upstream fix for the retry backoff race");
+        Assert.True(parked.Success);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();   // the caller's token is already cancelled when the resolve fails
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => svc.ResolveAsync(parked.Id!, ResolutionKind.Promoted, null, cts.Token));
+
+        // The release used CancellationToken.None, so it ran despite the cancelled caller token —
+        // the claim was undone and the end is Open, NOT wedged in Resolving.
+        var stored = await inner.GetAsync(parked.Id!);
+        Assert.Equal(LooseEndState.Open, stored!.State);
+    }
+
+    [Fact]
+    public async Task Resolve_LostClaimThenEndReleasedToOpen_RetriesAndResolves()
+    {
+        var clock = new FakeTimeProvider(T0);
+        var inner = new InMemoryLooseEndStore();
+        var endStore = new ClaimFailsOnceStore(inner);   // first claim loses; end stays Open
+        var promote = new InMemoryPromotionAdapter();
+        var svc = new LooseEndService(endStore, promote, clock);
+
+        var parked = await svc.ParkAsync("repo-a", "track the upstream fix for the retry backoff race");
+        Assert.True(parked.Success);
+
+        // The first claim loses to a peer that then released the end back to Open; the bounded retry
+        // re-claims and resolves rather than falsely reporting "resolve already in progress".
+        var resolved = await svc.ResolveAsync(parked.Id!, ResolutionKind.Promoted);
+
+        Assert.True(resolved.Success);
+        Assert.Equal(LooseEndState.Resolved, resolved.State);
+        Assert.Equal(ResolutionKind.Promoted, resolved.Kind);
+        Assert.Equal(1, promote.CallCount);
+        Assert.Equal(LooseEndState.Resolved, (await inner.GetAsync(parked.Id!))!.State);
+    }
+
+    [Fact]
     public async Task TryClaimForResolve_OpenEnd_WinsOnce_ThenLoses_AndLosesForResolvedOrUnknown()
     {
         var clock = new FakeTimeProvider(T0);
