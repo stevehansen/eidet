@@ -208,6 +208,183 @@ public class LooseEndServiceTests
         Assert.Equal(firstResolvedAt, stored.ResolvedAt);
     }
 
+    // ─── 5b. Concurrency / claim-before-promote saga (issue #46) ─────────
+
+    [Fact]
+    public async Task Resolve_TwoConcurrentPromotes_ClaimSerializes_PromotesExactlyOnce_NoDoubleMint()
+    {
+        var clock = new FakeTimeProvider(T0);
+        var endStore = new InMemoryLooseEndStore();   // its TryClaimForResolveAsync is atomic under lock
+        var promote = new GatedPromotionAdapter();
+        var svc = new LooseEndService(endStore, promote, clock);
+
+        var parked = await svc.ParkAsync("repo-a", "Possible race in the retry backoff path, revisit later");
+        Assert.True(parked.Success);
+
+        // Resolver A wins the claim then suspends inside PromoteAsync (gate held).
+        var a = svc.ResolveAsync(parked.Id!, ResolutionKind.Promoted);
+
+        // Wait until A is parked mid-promote (store doc is now Resolving) before launching B —
+        // this deterministically forces B's claim to lose against the in-flight resolve.
+        await promote.Entered;
+
+        // Resolver B runs while A is still mid-promote. The end is Resolving, so B's claim must lose,
+        // B must NOT call promote, and B must be rejected ("resolve already in progress").
+        var b = await svc.ResolveAsync(parked.Id!, ResolutionKind.Promoted);
+        Assert.False(b.Success);
+        Assert.Equal("resolve already in progress", b.Reason);
+        Assert.Equal(1, promote.CallCount);   // B never entered PromoteAsync
+
+        // Release A; it finishes Resolved with the single minted id.
+        promote.Release();
+        var resolved = await a;
+
+        Assert.True(resolved.Success);
+        Assert.Equal(LooseEndState.Resolved, resolved.State);
+        Assert.Equal(ResolutionKind.Promoted, resolved.Kind);
+        Assert.Equal("memories/fake/insight/abc123", resolved.PromotedToMemoryId);
+
+        // Promote was invoked EXACTLY once across both resolvers — no double-mint.
+        Assert.Equal(1, promote.CallCount);
+
+        // The single minted id is persisted; no orphan.
+        var stored = await endStore.GetAsync(parked.Id!);
+        Assert.Equal(LooseEndState.Resolved, stored!.State);
+        Assert.Equal("memories/fake/insight/abc123", stored.PromotedToMemoryId);
+    }
+
+    [Fact]
+    public async Task Resolve_RejectedPromote_ReleasesClaim_LeavesEndOpen_NotResolving()
+    {
+        var clock = new FakeTimeProvider(T0);
+        var endStore = new InMemoryLooseEndStore();
+        var promote = new InMemoryPromotionAdapter { Next = new PromotionResult(false, null, null, "promotion rejected") };
+        var svc = new LooseEndService(endStore, promote, clock);
+
+        var parked = await svc.ParkAsync("repo-a", "track the upstream fix for the retry backoff race");
+        Assert.True(parked.Success);
+
+        var resolved = await svc.ResolveAsync(parked.Id!, ResolutionKind.Promoted);
+
+        Assert.False(resolved.Success);
+        Assert.Equal("promotion rejected", resolved.Reason);
+        Assert.Null(resolved.PromotedToMemoryId);
+
+        // The claim was released: the end is back Open (NOT wedged in Resolving), unresolved.
+        var stored = await endStore.GetAsync(parked.Id!);
+        Assert.NotNull(stored);
+        Assert.Equal(LooseEndState.Open, stored!.State);
+        Assert.Null(stored.Resolution);
+        Assert.Null(stored.ResolvedAt);
+
+        // And it therefore reappears in the open surfaces.
+        var slice = await svc.RenderWakeupSliceAsync("repo-a", 600);
+        Assert.Contains("track the upstream fix for the retry backoff race", slice);
+    }
+
+    [Fact]
+    public async Task Resolve_PromoteSucceedsButFinalWriteThrows_ReleasesCleanOpenEnd()
+    {
+        var clock = new FakeTimeProvider(T0);
+        var inner = new InMemoryLooseEndStore();
+        // Throw on the FIRST UpdateAsync (the final resolve write); the release write (2nd) succeeds.
+        var endStore = new ThrowOnNthUpdateStore(inner, throwOnCall: 1);
+        var promote = new InMemoryPromotionAdapter();   // default: promote succeeds, mints a memory id
+        var svc = new LooseEndService(endStore, promote, clock);
+
+        var parked = await svc.ParkAsync("repo-a", "track the upstream fix for the retry backoff race");
+        Assert.True(parked.Success);
+
+        // Promote succeeds, then the final write throws — the exception propagates (never swallowed).
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => svc.ResolveAsync(parked.Id!, ResolutionKind.Promoted));
+
+        // The memory was minted exactly once (the orphan the ≥0.92 dedup absorbs on a later retry).
+        Assert.Equal(1, promote.CallCount);
+
+        // The claim was released to a CLEAN Open end — not wedged in Resolving, and carrying no
+        // dangling resolution metadata despite the promote having succeeded before the write failed.
+        var stored = await inner.GetAsync(parked.Id!);
+        Assert.NotNull(stored);
+        Assert.Equal(LooseEndState.Open, stored!.State);
+        Assert.Null(stored.Resolution);
+        Assert.Null(stored.ResolvedAt);
+        Assert.Null(stored.PromotedToMemoryId);
+        Assert.Null(stored.ExternalRef);
+    }
+
+    [Fact]
+    public async Task Resolve_TokenCancelled_StillReleasesClaim_NotWedgedInResolving()
+    {
+        var clock = new FakeTimeProvider(T0);
+        var inner = new InMemoryLooseEndStore();
+        var endStore = new CancellationHonoringStore(inner);   // UpdateAsync honors ct, like RavenDB
+        var promote = new ThrowingPromotionAdapter(new OperationCanceledException());
+        var svc = new LooseEndService(endStore, promote, clock);
+
+        var parked = await svc.ParkAsync("repo-a", "track the upstream fix for the retry backoff race");
+        Assert.True(parked.Success);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();   // the caller's token is already cancelled when the resolve fails
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => svc.ResolveAsync(parked.Id!, ResolutionKind.Promoted, null, cts.Token));
+
+        // The release used CancellationToken.None, so it ran despite the cancelled caller token —
+        // the claim was undone and the end is Open, NOT wedged in Resolving.
+        var stored = await inner.GetAsync(parked.Id!);
+        Assert.Equal(LooseEndState.Open, stored!.State);
+    }
+
+    [Fact]
+    public async Task Resolve_LostClaimThenEndReleasedToOpen_RetriesAndResolves()
+    {
+        var clock = new FakeTimeProvider(T0);
+        var inner = new InMemoryLooseEndStore();
+        var endStore = new ClaimFailsOnceStore(inner);   // first claim loses; end stays Open
+        var promote = new InMemoryPromotionAdapter();
+        var svc = new LooseEndService(endStore, promote, clock);
+
+        var parked = await svc.ParkAsync("repo-a", "track the upstream fix for the retry backoff race");
+        Assert.True(parked.Success);
+
+        // The first claim loses to a peer that then released the end back to Open; the bounded retry
+        // re-claims and resolves rather than falsely reporting "resolve already in progress".
+        var resolved = await svc.ResolveAsync(parked.Id!, ResolutionKind.Promoted);
+
+        Assert.True(resolved.Success);
+        Assert.Equal(LooseEndState.Resolved, resolved.State);
+        Assert.Equal(ResolutionKind.Promoted, resolved.Kind);
+        Assert.Equal(1, promote.CallCount);
+        Assert.Equal(LooseEndState.Resolved, (await inner.GetAsync(parked.Id!))!.State);
+    }
+
+    [Fact]
+    public async Task TryClaimForResolve_OpenEnd_WinsOnce_ThenLoses_AndLosesForResolvedOrUnknown()
+    {
+        var clock = new FakeTimeProvider(T0);
+        var svc = NewService(out var endStore, out _, clock);
+
+        var parked = await svc.ParkAsync("repo-a", "some open work to claim for resolution");
+        Assert.True(parked.Success);
+
+        // First claim on an Open end wins (Open→Resolving); a second claim loses (now Resolving).
+        Assert.True(await endStore.TryClaimForResolveAsync(parked.Id!));
+        Assert.Equal(LooseEndState.Resolving, (await endStore.GetAsync(parked.Id!))!.State);
+        Assert.False(await endStore.TryClaimForResolveAsync(parked.Id!));
+
+        // A Resolved end can never be claimed.
+        var resolvedPark = await svc.ParkAsync("repo-a", "other open work that gets fully resolved");
+        var done = await svc.ResolveAsync(resolvedPark.Id!, ResolutionKind.Done);
+        Assert.True(done.Success);
+        Assert.Equal(LooseEndState.Resolved, (await endStore.GetAsync(resolvedPark.Id!))!.State);
+        Assert.False(await endStore.TryClaimForResolveAsync(resolvedPark.Id!));
+
+        // An unknown id can never be claimed.
+        Assert.False(await endStore.TryClaimForResolveAsync("looseends/repo-a/deadbeefdead"));
+    }
+
     // ─── 6. Wake-up cap & budget ────────────────────────────────────────
 
     [Fact]

@@ -14,4 +14,16 @@ public interface ILooseEndStore
 
     /// <summary>Count of open Loose Ends for a repo — bounded server-side, never materializes the set.</summary>
     Task<int> CountOpenAsync(string repoId, CancellationToken ct = default);
+
+    /// <summary>Atomically claim an Open end for resolution (Open→Resolving). Returns true iff THIS caller won the
+    /// claim; false if the end was not Open (already Resolving/Resolved, or gone). The Raven adapter makes this atomic
+    /// with optimistic concurrency; the default impl is a non-atomic read-check-write sufficient for single-threaded fakes.</summary>
+    async Task<bool> TryClaimForResolveAsync(string id, CancellationToken ct = default)
+    {
+        var end = await GetAsync(id, ct);
+        if (end is null || end.State != LooseEndState.Open) return false;
+        end.State = LooseEndState.Resolving;
+        await UpdateAsync(end, ct);
+        return true;
+    }
 }
