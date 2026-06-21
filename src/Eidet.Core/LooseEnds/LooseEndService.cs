@@ -75,28 +75,74 @@ public sealed class LooseEndService
             return ResolveResult.NotFound(id);
 
         if (end.State == LooseEndState.Resolved)
-            return ResolveResult.From(end); // idempotent no-op
+            return ResolveResult.From(end); // idempotent no-op (sequential re-resolve)
 
-        var opts = o ?? new ResolveOptions();
-
-        if (kind == ResolutionKind.Promoted)
+        // Atomically claim the end (Open→Resolving) BEFORE promoting, so a concurrent or retried
+        // resolve can never both pass the Open check and double-mint. Exactly one caller wins.
+        var won = await _store.TryClaimForResolveAsync(id, ct);
+        if (!won)
         {
-            var promotion = await _promote.PromoteAsync(
-                end, new PromoteOptions(opts.PromoteType, opts.PromoteImportance, opts.ExternalRef), ct);
-            if (!promotion.Success)
-                return ResolveResult.Rejected(id, promotion.Reason ?? "promotion rejected");
-
-            end.PromotedToMemoryId = promotion.MemoryId;
-            end.ExternalRef = promotion.ExternalRef;
+            // Lost the race, or it was already Resolving/Resolved. Re-read to distinguish a peer that
+            // finished (idempotent success) from one still mid-flight (reject — no second mint).
+            var after = await _store.GetAsync(id, ct);
+            if (after is null)
+                return ResolveResult.NotFound(id);
+            if (after.State == LooseEndState.Resolved)
+                return ResolveResult.From(after);
+            return ResolveResult.Rejected(id, "resolve already in progress");
         }
 
-        end.State = LooseEndState.Resolved;
-        end.Resolution = kind;
-        end.ResolutionNote = opts.Note;
-        end.ResolvedAt = _clock.GetUtcNow();
-        await _store.UpdateAsync(end, ct);
+        // Claim won: the store doc is now Resolving, but local `end` is still Open — so the release
+        // path (UpdateAsync(end)) naturally restores the store to Open on any failure below.
+        var opts = o ?? new ResolveOptions();
+        try
+        {
+            if (kind == ResolutionKind.Promoted)
+            {
+                var promotion = await _promote.PromoteAsync(
+                    end, new PromoteOptions(opts.PromoteType, opts.PromoteImportance, opts.ExternalRef), ct);
+                if (!promotion.Success)
+                {
+                    await ReleaseAsync(end, ct);
+                    return ResolveResult.Rejected(id, promotion.Reason ?? "promotion rejected");
+                }
 
-        return ResolveResult.From(end);
+                end.PromotedToMemoryId = promotion.MemoryId;
+                end.ExternalRef = promotion.ExternalRef;
+            }
+
+            end.State = LooseEndState.Resolved;
+            end.Resolution = kind;
+            end.ResolutionNote = opts.Note;
+            end.ResolvedAt = _clock.GetUtcNow();
+            await _store.UpdateAsync(end, ct);
+
+            return ResolveResult.From(end);
+        }
+        catch
+        {
+            // Promote threw, or the final UpdateAsync threw — never leave the end wedged in Resolving.
+            try { await ReleaseAsync(end, ct); } catch { /* best-effort; store likely down */ }
+            throw;
+        }
+    }
+
+    // Restore a claimed end to a CLEAN Open state, writing the store from Resolving→Open so the end
+    // reappears in the open surfaces. Also clears any resolution metadata already staged on `end` —
+    // matters on the rare path where promote succeeded but the final write threw, leaving
+    // PromotedToMemoryId/Resolution/ResolvedAt set: without this the re-Opened doc would carry a
+    // dangling resolution. Clearing makes a released end indistinguishable from never-resolved
+    // (the orphaned memory is absorbed by the ≥0.92 dedup on retry); a no-op on the rejected-promote
+    // path, where none of these were set yet.
+    private Task ReleaseAsync(LooseEnd end, CancellationToken ct)
+    {
+        end.State = LooseEndState.Open;
+        end.Resolution = null;
+        end.ResolutionNote = null;
+        end.ResolvedAt = null;
+        end.PromotedToMemoryId = null;
+        end.ExternalRef = null;
+        return _store.UpdateAsync(end, ct);
     }
 
     // ─── Surfacing ──────────────────────────────────────────────────────

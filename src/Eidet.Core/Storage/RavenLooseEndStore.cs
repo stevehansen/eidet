@@ -64,6 +64,27 @@ public sealed class RavenLooseEndStore : ILooseEndStore
             .CountAsync(ct);
     }
 
+    public async Task<bool> TryClaimForResolveAsync(string id, CancellationToken ct = default)
+    {
+        // Optimistic concurrency scoped to THIS session only (codebase's first use) so two concurrent
+        // claims race on the change vector: exactly one SaveChanges wins Open→Resolving, the loser sees
+        // ConcurrencyException and returns false — the atomic gate that stops a double-mint promote.
+        using var session = _store.OpenAsyncSession();
+        session.Advanced.UseOptimisticConcurrency = true;
+        var end = await session.LoadAsync<LooseEnd>(id, ct);
+        if (end is null || end.State != LooseEndState.Open) return false;
+        end.State = LooseEndState.Resolving;
+        try
+        {
+            await session.SaveChangesAsync(ct);
+            return true;
+        }
+        catch (Raven.Client.Exceptions.ConcurrencyException)
+        {
+            return false;
+        }
+    }
+
     public async Task<IReadOnlyList<LooseEnd>> FindOpenByTagsAsync(
         string repoId, IReadOnlyList<string> tags, int max, CancellationToken ct = default)
     {

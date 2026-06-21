@@ -1,6 +1,6 @@
 namespace Eidet.Core.LooseEnds;
 
-public enum LooseEndState { Open, Resolved }
+public enum LooseEndState { Open, Resolving, Resolved }
 public enum ResolutionKind { Done, Dropped, Promoted, Superseded }
 
 /// <summary>

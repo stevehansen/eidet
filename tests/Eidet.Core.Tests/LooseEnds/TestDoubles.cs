@@ -75,6 +75,19 @@ internal sealed class InMemoryLooseEndStore : ILooseEndStore
         }
     }
 
+    public Task<bool> TryClaimForResolveAsync(string id, CancellationToken ct = default)
+    {
+        // Genuinely atomic check-and-set under the same lock as every other mutation, so concurrent
+        // claims serialize and exactly one observes Open and flips it to Resolving.
+        lock (_lock)
+        {
+            if (!_ends.TryGetValue(id, out var e) || e.State != LooseEndState.Open)
+                return Task.FromResult(false);
+            e.State = LooseEndState.Resolving;
+            return Task.FromResult(true);
+        }
+    }
+
     private static IEnumerable<LooseEnd> Order(IEnumerable<LooseEnd> ends) =>
         ends.OrderBy(e => e.Priority).ThenBy(e => e.CreatedAt);
 }
@@ -98,6 +111,65 @@ internal sealed class InMemoryPromotionAdapter : IPromotionPort
         LastOptions = opts;
         return Task.FromResult(Next);
     }
+}
+
+/// <summary>
+/// Gated <see cref="IPromotionPort"/> test double for deterministic concurrency tests. The first
+/// caller into <see cref="PromoteAsync"/> signals <see cref="Entered"/> then suspends until the test
+/// releases <see cref="Gate"/>, so a second resolver can run its claim while the first is still
+/// mid-promote — reproducing the FM1 double-mint window without timing races.
+/// </summary>
+internal sealed class GatedPromotionAdapter : IPromotionPort
+{
+    private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public PromotionResult Next { get; set; } = new(true, "memories/fake/insight/abc123", null, null);
+    public int CallCount;
+
+    /// <summary>Completes once a caller has entered <see cref="PromoteAsync"/> and is parked on the gate.</summary>
+    public Task Entered => _entered.Task;
+
+    /// <summary>Release the suspended promote so it can finish.</summary>
+    public void Release() => _gate.TrySetResult();
+
+    public async Task<PromotionResult> PromoteAsync(LooseEnd e, PromoteOptions opts, CancellationToken ct = default)
+    {
+        Interlocked.Increment(ref CallCount);
+        _entered.TrySetResult();
+        await _gate.Task;
+        return Next;
+    }
+}
+
+/// <summary>
+/// Wraps an inner <see cref="ILooseEndStore"/> and throws on the Nth <see cref="UpdateAsync"/> call
+/// (1-based), delegating everything else (including the atomic claim). Exercises the partial-failure
+/// path where the final resolve write throws AFTER a successful promote — the claim-release must then
+/// still leave a clean Open end. Throwing on call 1 (the final write) lets the release write (call 2) succeed.
+/// </summary>
+internal sealed class ThrowOnNthUpdateStore(ILooseEndStore inner, int throwOnCall) : ILooseEndStore
+{
+    private int _updateCalls;
+
+    public Task<string> StoreAsync(LooseEnd e, CancellationToken ct = default) => inner.StoreAsync(e, ct);
+    public Task<LooseEnd?> GetAsync(string id, CancellationToken ct = default) => inner.GetAsync(id, ct);
+
+    public Task UpdateAsync(LooseEnd e, CancellationToken ct = default)
+    {
+        if (++_updateCalls == throwOnCall)
+            throw new InvalidOperationException("simulated store write failure");
+        return inner.UpdateAsync(e, ct);
+    }
+
+    public Task<bool> TryClaimForResolveAsync(string id, CancellationToken ct = default) =>
+        inner.TryClaimForResolveAsync(id, ct);
+    public Task<IReadOnlyList<LooseEnd>> ListOpenAsync(string repoId, int max, CancellationToken ct = default) =>
+        inner.ListOpenAsync(repoId, max, ct);
+    public Task<IReadOnlyList<LooseEnd>> FindOpenByTagsAsync(string repoId, IReadOnlyList<string> tags, int max, CancellationToken ct = default) =>
+        inner.FindOpenByTagsAsync(repoId, tags, max, ct);
+    public Task<int> CountOpenAsync(string repoId, CancellationToken ct = default) =>
+        inner.CountOpenAsync(repoId, ct);
 }
 
 /// <summary>
