@@ -7,5 +7,6 @@
     <Project Path="tests/Eidet.Core.Tests/Eidet.Core.Tests.csproj" />
     <Project Path="tests/Eidet.Service.Tests/Eidet.Service.Tests.csproj" />
     <Project Path="tests/Eidet.Integration.Tests/Eidet.Integration.Tests.csproj" />
+    <Project Path="tests/Eidet.Benchmark.Tests/Eidet.Benchmark.Tests.csproj" />
   </Folder>
 </Solution>
