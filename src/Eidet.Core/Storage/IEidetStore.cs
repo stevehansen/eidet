@@ -8,6 +8,15 @@ public readonly record struct ScoredHit(MemoryEntry Entry, double Score);
 /// <summary>The two arms of hybrid search — lexical (full-text) and semantic (vector).</summary>
 public enum SearchArm { Lexical, Vector }
 
+/// <summary>
+/// One EWMA step for a repo's learned lexical-vs-vector alpha. The new value is computed
+/// <i>server-side</i> from the document's current alpha so concurrent feedback can't lose an update:
+/// <c>next = clamp((1-Lambda)·(current ?? Fallback) + Lambda·Target, Min, Max)</c>. The caller supplies
+/// only the relevance label (<see cref="Target"/>) and the recall-domain constants; the store owns the
+/// atomic apply.
+/// </summary>
+public readonly record struct AlphaEwmaUpdate(double Target, double Lambda, double Min, double Max, double Fallback);
+
 public interface IEidetStore
 {
     Task<MemoryEntry?> GetAsync(string id, CancellationToken ct = default);
@@ -16,14 +25,30 @@ public interface IEidetStore
     Task<bool> ForgetAsync(string id, CancellationToken ct = default);
 
     /// <summary>
-    /// Patch the access-tracking fields (<c>AccessCount</c>, <c>LastAccessedAt</c>) without
-    /// touching any other field. These fields are not in the recall cache key, so writes through
-    /// this path do not invalidate the recall cache; <c>LastAccessedAt</c> does feed dual-clock
-    /// recency, so a cached recall may be marginally stale on recency — bounded by the short cache
-    /// TTL. The default implementation is a no-op so test fakes don't have to opt in unless they
-    /// care about access tracking.
+    /// Patch the access-tracking fields (<c>AccessCount</c>, <c>LastAccessedAt</c>, and — when
+    /// <paramref name="lexShare"/> is supplied — <c>LastLexShare</c>) without touching any other field.
+    /// These fields are not in the recall cache key, so writes through this path do not invalidate the
+    /// recall cache; <c>LastAccessedAt</c> does feed dual-clock recency, so a cached recall may be
+    /// marginally stale on recency — bounded by the short cache TTL. The default implementation is a
+    /// no-op so test fakes don't have to opt in unless they care about access tracking.
     /// </summary>
-    Task PatchAccessAsync(string entryId, DateTime lastAccessedAt, CancellationToken ct = default) =>
+    Task PatchAccessAsync(string entryId, DateTime lastAccessedAt, double? lexShare = null, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    /// <summary>
+    /// The per-repo learned lexical-vs-vector blend weight (<c>RepoUsage.AlphaLex</c>), or null when
+    /// unlearned (caller falls back to <c>RecallWeights.Default.Alpha</c>). Default null so fakes need
+    /// not opt in.
+    /// </summary>
+    Task<double?> GetRepoAlphaAsync(string repoId, CancellationToken ct = default) =>
+        Task.FromResult<double?>(null);
+
+    /// <summary>
+    /// Apply one EWMA step to the per-repo alpha (and bump the sample count) on the repo's usage anchor,
+    /// computing the new value server-side from the stored alpha so concurrent feedback can't lose an
+    /// update. Never disturbs the anchor's usage time series or original-path mapping. Default no-op for fakes.
+    /// </summary>
+    Task UpdateRepoAlphaAsync(string repoId, AlphaEwmaUpdate update, CancellationToken ct = default) =>
         Task.CompletedTask;
     Task<List<MemoryEntry>> FullTextSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default);
     Task<List<MemoryEntry>> VectorSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default);

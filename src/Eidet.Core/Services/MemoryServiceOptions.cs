@@ -21,6 +21,12 @@ public sealed record RecallOptions(string Query)
     public IReadOnlyList<string>? Tags { get; init; }
     public bool IncludeExpired { get; init; }
     public bool CrossRepo { get; init; } = true;
+
+    /// <summary>Bounded graph-neighbor expansion of the candidate pool (default on; opt out for raw fusion).</summary>
+    public bool ExpandGraph { get; init; } = true;
+
+    /// <summary>Pins the lexical-vs-vector blend weight, bypassing the per-repo learned alpha. Null = use learned/default.</summary>
+    public double? AlphaOverride { get; init; }
 }
 
 /// <summary>20% surface for <see cref="MemoryService.EditAsync(string, EditOptions, CancellationToken)"/>.</summary>

@@ -188,7 +188,7 @@ public class PortalRendererTests
         public Task<string> StoreAsync(MemoryEntry entry, CancellationToken ct = default) => Task.FromResult(entry.Id);
         public Task UpdateAsync(MemoryEntry entry, CancellationToken ct = default) => Task.CompletedTask;
         public Task<bool> ForgetAsync(string id, CancellationToken ct = default) => Task.FromResult(false);
-        public Task PatchAccessAsync(string entryId, DateTime lastAccessedAt, CancellationToken ct = default) => Task.CompletedTask;
+        public Task PatchAccessAsync(string entryId, DateTime lastAccessedAt, double? lexShare = null, CancellationToken ct = default) => Task.CompletedTask;
         public Task<List<MemoryEntry>> FullTextSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) => Task.FromResult(new List<MemoryEntry>());
         public Task<List<MemoryEntry>> VectorSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) => Task.FromResult(new List<MemoryEntry>());
         public Task<MemoryEntry?> FindDuplicateAsync(string repoId, string content, float threshold, CancellationToken ct = default) => Task.FromResult<MemoryEntry?>(null);

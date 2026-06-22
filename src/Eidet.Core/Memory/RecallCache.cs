@@ -85,9 +85,9 @@ internal sealed class RecallCache
         foreach (var scope in scopes) Invalidate(scope);
     }
 
-    public static string ComputeKey(string repoId, MemoryQuery query)
+    public static string ComputeKey(string repoId, MemoryQuery query, double alphaBucket)
     {
-        var raw = $"{repoId}|{query.Text}|{query.Type}|{string.Join(",", query.Tags)}|{query.Limit}|{query.IncludeExpired}|{query.CrossRepo}";
+        var raw = $"{repoId}|{query.Text}|{query.Type}|{string.Join(",", query.Tags)}|{query.Limit}|{query.IncludeExpired}|{query.CrossRepo}|{alphaBucket}";
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
         return Convert.ToHexString(hash)[..16];
     }

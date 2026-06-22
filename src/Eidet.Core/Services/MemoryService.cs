@@ -26,6 +26,13 @@ public sealed class MemoryService
 {
     private const float DuplicateThreshold = 0.92f;
 
+    // Alpha learning (#33 item 6): the EWMA smoothing factor and the clamp band that keeps the learned
+    // lexical-vs-vector blend from ever collapsing to a single arm (the compensating control for shipping
+    // alpha-learning alongside UCB). Applied at both learn-time and read-time.
+    private const double EwmaLambda = 0.1;
+    private const double AlphaMin = 0.15;
+    private const double AlphaMax = 0.85;
+
     private readonly IEidetStore _store;
     private readonly IHookRunner _hooks;
     private readonly LayerService? _layers;
@@ -192,7 +199,7 @@ public sealed class MemoryService
         entry.LastAccessedAt = DateTime.UtcNow;
         entry.AccessCount++;
 
-        return await RunMutationAsync(
+        var written = await RunMutationAsync(
             scope: entry.RepoId,
             pre: null, preCtx: null,
             post: null, postCtxFactory: null,
@@ -203,6 +210,29 @@ public sealed class MemoryService
             },
             denied: _ => false,
             ct: ct);
+
+        // Per-repo alpha learning (#33 item 6): each echo/fizzle is a free relevance label for the
+        // lexical-vs-vector blend. We nudge the learned alpha toward the lexical share that produced
+        // this hit on an echo (the mix worked), and away from it on a fizzle (the mix misled). Runs
+        // OUTSIDE the entry-write mutation — it patches RepoUsage, not a MemoryEntry, and must not
+        // interfere with the entry-write cache invalidation. Best-effort; skips if this memory was
+        // never surfaced under v2 (no LastLexShare attribution yet).
+        if (written && entry.LastLexShare is { } lastLexShare)
+        {
+            try
+            {
+                // Echo nudges alpha toward the lexical share that surfaced this hit (the mix worked);
+                // fizzle nudges away. The EWMA fold itself is applied server-side from the live stored
+                // alpha (see UpdateRepoAlphaAsync) so concurrent feedback can't lose a step.
+                var target = wasUsed ? lastLexShare : 1 - lastLexShare;
+                await _store.UpdateRepoAlphaAsync(
+                    entry.RepoId,
+                    new AlphaEwmaUpdate(target, EwmaLambda, AlphaMin, AlphaMax, RecallWeights.Default.Alpha), ct);
+            }
+            catch { /* Non-critical — feedback already recorded; alpha tuning is an enhancement. */ }
+        }
+
+        return written;
     }
 
     public Task<bool> UpdateMemoryAsync(
@@ -356,7 +386,12 @@ public sealed class MemoryService
         }, ct);
         if (!preHook.Allowed) return [];
 
-        var cacheKey = RecallCache.ComputeKey(scope.PrimaryRepoId, query);
+        // The learned alpha is part of the cache key, so it must be resolved BEFORE TryGet — a learned
+        // shift then invalidates cleanly via the bucket. One tiny Raven-cached doc load (the RepoUsage
+        // anchor) on the recall path; cheap and bounded.
+        var effectiveAlpha = await ResolveAlphaAsync(query, scope.PrimaryRepoId, ct);
+
+        var cacheKey = RecallCache.ComputeKey(scope.PrimaryRepoId, query, Math.Round(effectiveAlpha, 1));
         if (_cache.TryGet(cacheKey, scope.RepoIds, out var observed, out var cached))
             return cached;
 
@@ -366,8 +401,16 @@ public sealed class MemoryService
         await Task.WhenAll(lexTask, vecTask);
 
         var now = DateTime.UtcNow;
-        var weights = RecallWeights.Default with { TotalN = ComputeTotalN(lexTask.Result, vecTask.Result) };
+        var weights = RecallWeights.Default with
+        {
+            TotalN = ComputeTotalN(lexTask.Result, vecTask.Result),
+            Alpha = effectiveAlpha,
+        };
         var fused = RecallScoring.Fuse(lexTask.Result, vecTask.Result, weights, now);
+
+        // Graph-neighbor expansion (#33 item 7) runs BEFORE trust gating / de-boost / budgeting so
+        // link-reachable neighbors flow through exactly the same downstream policy as direct arm hits.
+        fused = await ExpandNeighborsAsync(fused, scope, query, weights, now, ct);
 
         // Trust gating is a production-recall policy layered on top of Fuse, NOT folded into it:
         // the benchmark scorecard calls Fuse directly and would be unfairly penalized on its
@@ -375,6 +418,9 @@ public sealed class MemoryService
         // retrieval time alongside the non-local de-boost.
         var staleAfter = StalenessWarningDays;
         var merged = new List<MemorySearchResult>(fused.Count);
+        // The lexical share of each candidate's surfacing mix — stamped onto the budgeted local results
+        // so each future echo/fizzle becomes a free relevance label for alpha learning (#33 item 6).
+        var lexShares = new Dictionary<string, double>(fused.Count, StringComparer.OrdinalIgnoreCase);
         foreach (var candidate in fused)
         {
             var entry = candidate.Entry;
@@ -391,11 +437,17 @@ public sealed class MemoryService
             else if (result.AgeDays >= staleAfter)
                 result.StalenessWarning = $"[stale: {result.AgeDays}d ago — verify before acting]";
             merged.Add(result);
+
+            // Lexical share of the surfacing mix. 0.5 = deliberate no-arm-info prior — used when neither
+            // arm scored the candidate (a graph neighbor enters with Lex=Vec=0), so a later echo on it
+            // pulls alpha toward neutral rather than toward a phantom arm preference.
+            var lv = candidate.Lex + candidate.Vec;
+            lexShares[entry.Id] = lv > 0 ? candidate.Lex / lv : 0.5;
         }
 
         var budgeted = RecallScoring.ApplyTypeBudgets(merged, query.Limit);
 
-        _ = BumpAccessCountsAsync(budgeted, scope.PrimaryRepoId, ct);
+        _ = BumpAccessCountsAsync(budgeted, scope.PrimaryRepoId, lexShares, ct);
 
         _ = _hooks.RunPostHooksAsync(HookEvent.PostRecall, new HookContext
         {
@@ -411,10 +463,85 @@ public sealed class MemoryService
     }
 
     /// <summary>
-    /// Diagnostic recall: runs the SAME fuse pipeline as <see cref="RecallInternalAsync"/> (resolve
-    /// scope → two scored arms → <see cref="RecallScoring.Fuse"/>) and returns the per-candidate
-    /// component breakdown instead of budgeted results. Bypasses the recall cache and fires no hooks —
-    /// it must not perturb live recall state.
+    /// Effective lexical-vs-vector blend weight: an explicit <see cref="RecallOptions.AlphaOverride"/>
+    /// wins, else the per-repo EWMA-learned <c>RepoUsage.AlphaLex</c>, else the cold-start default.
+    /// Clamped to [<see cref="AlphaMin"/>, <see cref="AlphaMax"/>] so neither arm is ever fully muted.
+    /// </summary>
+    private async Task<double> ResolveAlphaAsync(MemoryQuery query, string primaryRepoId, CancellationToken ct)
+    {
+        var learned = query.AlphaOverride ?? await _store.GetRepoAlphaAsync(primaryRepoId, ct);
+        return Math.Clamp(learned ?? RecallWeights.Default.Alpha, AlphaMin, AlphaMax);
+    }
+
+    /// <summary>
+    /// Pulls link-reachable neighbors of the top fused candidates into the pool so they compete on the
+    /// (damped) fused score. Best-effort: a failed neighbor load can't fail the whole recall (mirrors
+    /// access tracking). Neighbor entries are loaded only if in scope and latest; the pure damped-
+    /// inheritance math lives in <see cref="RecallScoring.ExpandNeighbors"/>.
+    /// </summary>
+    private async Task<List<FusedCandidate>> ExpandNeighborsAsync(
+        List<FusedCandidate> fused, LayerScope scope, MemoryQuery query, RecallWeights weights, DateTime now, CancellationToken ct)
+    {
+        if (!query.ExpandGraph || fused.Count == 0) return fused;
+
+        try
+        {
+            const int parentTopK = 10;
+            const int maxNeighbors = 5;
+            var present = new HashSet<string>(fused.Select(c => c.Entry.Id), StringComparer.OrdinalIgnoreCase);
+
+            // In-scope = a repo this recall already searches (RepoIds always contains the primary, plus
+            // any mounted layers). The de-boost loop downstream still de-boosts non-primary hits.
+            bool InScope(string repoId) => scope.RepoIds.Contains(repoId, StringComparer.OrdinalIgnoreCase);
+
+            // Gather neighbor ids from the strongest parents, deduped against the pool. Bounded by
+            // maxNeighbors here too so we never over-fetch (the pure helper enforces the same cap).
+            var toLoad = new List<string>();
+            foreach (var parent in fused.Take(parentTopK))
+            {
+                if (toLoad.Count >= maxNeighbors) break;
+                foreach (var link in parent.Entry.Links)
+                {
+                    if (toLoad.Count >= maxNeighbors) break;
+                    var targetId = link.TargetMemoryId;
+                    if (string.IsNullOrEmpty(targetId) || !present.Add(targetId)) continue;
+                    // Cheap pre-filter on the link's declared target repo; the loaded entry's REAL repo
+                    // is re-checked below (a stale/wrong TargetRepoId must not pull in an out-of-scope memory).
+                    if (!InScope(link.TargetRepoId)) continue;
+                    toLoad.Add(targetId);
+                }
+            }
+
+            if (toLoad.Count == 0) return fused;
+
+            var resolved = new Dictionary<string, MemoryEntry>(StringComparer.OrdinalIgnoreCase);
+            foreach (var id in toLoad)
+            {
+                var entry = await _store.GetAsync(id, ct);
+                // Authoritative scope check on the entry's actual RepoId — the link's declared
+                // TargetRepoId is untrusted; never admit a memory from a repo this recall isn't searching.
+                if (entry is { IsLatest: true } && InScope(entry.RepoId))
+                    resolved[id] = entry;
+            }
+
+            return RecallScoring.ExpandNeighbors(
+                fused, id => resolved.GetValueOrDefault(id), weights, now, parentTopK, maxNeighbors);
+        }
+        catch
+        {
+            // Expansion is an enhancement, not a correctness requirement — never fail recall over it.
+            return fused;
+        }
+    }
+
+    /// <summary>
+    /// Diagnostic recall: runs the fuse pipeline (resolve scope → two scored arms →
+    /// <see cref="RecallScoring.Fuse"/>) and returns the per-candidate component breakdown instead of
+    /// budgeted results. Bypasses the recall cache and fires no hooks — it must not perturb live recall
+    /// state. Uses the effective learned/overridden alpha so <see cref="RecallExplanation.AlphaUsed"/>
+    /// reflects what production recall ranks with. NOTE: this is a PRE-EXPANSION view — graph-neighbor
+    /// expansion (<see cref="ExpandNeighborsAsync"/>) is intentionally not run here, so link-reachable
+    /// candidates that production recall would surface do not appear; the rows show the arm-fusion math only.
     /// </summary>
     public async Task<RecallExplanation> ExplainRecallAsync(
         string repoId, RecallOptions opts, CancellationToken ct = default)
@@ -422,12 +549,17 @@ public sealed class MemoryService
         var query = ToMemoryQuery(opts);
         var scope = await ResolveScopeAsync(repoId, opts.CrossRepo, ct);
         var repoIds = scope.RepoIds.ToList();
+        var effectiveAlpha = await ResolveAlphaAsync(query, scope.PrimaryRepoId, ct);
 
         var lexTask = _store.SearchScoredAsync(SearchArm.Lexical, repoIds, query, ct);
         var vecTask = _store.SearchScoredAsync(SearchArm.Vector, repoIds, query, ct);
         await Task.WhenAll(lexTask, vecTask);
 
-        var weights = RecallWeights.Default with { TotalN = ComputeTotalN(lexTask.Result, vecTask.Result) };
+        var weights = RecallWeights.Default with
+        {
+            TotalN = ComputeTotalN(lexTask.Result, vecTask.Result),
+            Alpha = effectiveAlpha,
+        };
         var fused = RecallScoring.Fuse(lexTask.Result, vecTask.Result, weights, DateTime.UtcNow);
 
         var rows = fused
@@ -558,12 +690,15 @@ public sealed class MemoryService
         return sb.ToString();
     }
 
-    private async Task BumpAccessCountsAsync(List<MemorySearchResult> results, string repoId, CancellationToken ct)
+    private async Task BumpAccessCountsAsync(
+        List<MemorySearchResult> results, string repoId, IReadOnlyDictionary<string, double> lexShares, CancellationToken ct)
     {
         // Access tracking is a justified exemption from cache invalidation: AccessCount /
         // LastAccessedAt are not in the recall cache key. LastAccessedAt does feed dual-clock
         // recency (#33), so a cached recall can be marginally stale on recency — bounded and
         // acceptable within the cache's short TTL; invalidating on every recall would defeat it.
+        // We also stamp LastLexShare here (the surfacing mix that produced this hit) so a later
+        // echo/fizzle on this memory can attribute a free relevance label to alpha learning (#33 item 6).
         // The dedicated patch-only ctx prevents this path from accidentally writing other fields.
         var ctx = new AccessTrackingCtx(_store);
         try
@@ -572,7 +707,7 @@ public sealed class MemoryService
             {
                 if (!string.Equals(result.RepoId, repoId, StringComparison.OrdinalIgnoreCase))
                     continue;
-                await ctx.BumpAsync(result.Id, ct);
+                await ctx.BumpAsync(result.Id, lexShares.TryGetValue(result.Id, out var s) ? s : null, ct);
             }
         }
         catch { /* Non-critical — don't fail recall for access tracking */ }
@@ -743,6 +878,8 @@ public sealed class MemoryService
         Limit = opts.Limit,
         IncludeExpired = opts.IncludeExpired,
         CrossRepo = opts.CrossRepo,
+        ExpandGraph = opts.ExpandGraph,
+        AlphaOverride = opts.AlphaOverride,
     };
 
     private async Task<T> RunMutationAsync<T>(
@@ -874,10 +1011,11 @@ public readonly struct BulkMutationCtx
 
 /// <summary>
 /// Access-tracking gate. Exposes only the patch-only <c>BumpAsync</c> method — the API
-/// itself cannot be tricked into writing fields other than <c>AccessCount</c> and
-/// <c>LastAccessedAt</c>. Used by the recall path's access-count side-effect, which is a
-/// justified exemption from cache invalidation (the patched fields are not in the recall cache
-/// key; the recency staleness LastAccessedAt can introduce is bounded by the short cache TTL).
+/// itself cannot be tricked into writing fields other than <c>AccessCount</c>,
+/// <c>LastAccessedAt</c>, and <c>LastLexShare</c>. Used by the recall path's access-count
+/// side-effect, which is a justified exemption from cache invalidation (the patched fields are
+/// not in the recall cache key; the recency staleness LastAccessedAt can introduce is bounded by
+/// the short cache TTL).
 /// </summary>
 internal readonly struct AccessTrackingCtx
 {
@@ -885,6 +1023,6 @@ internal readonly struct AccessTrackingCtx
 
     internal AccessTrackingCtx(IEidetStore store) => _store = store;
 
-    public Task BumpAsync(string entryId, CancellationToken ct) =>
-        _store.PatchAccessAsync(entryId, DateTime.UtcNow, ct);
+    public Task BumpAsync(string entryId, double? lexShare, CancellationToken ct) =>
+        _store.PatchAccessAsync(entryId, DateTime.UtcNow, lexShare, ct);
 }

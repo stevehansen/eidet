@@ -54,20 +54,71 @@ public class RavenEidetStore : IEidetStore
         return true;
     }
 
-    public async Task PatchAccessAsync(string entryId, DateTime lastAccessedAt, CancellationToken ct = default)
+    public async Task PatchAccessAsync(string entryId, DateTime lastAccessedAt, double? lexShare = null, CancellationToken ct = default)
     {
-        // Patch only AccessCount + LastAccessedAt — never load or replace the full entry.
-        // Keeps this path narrow so it cannot accidentally clobber other fields on a race.
+        // Patch only AccessCount + LastAccessedAt (+ LastLexShare when provided) — never load or replace
+        // the full entry. Keeps this path narrow so it cannot accidentally clobber other fields on a race.
+        // LastLexShare is set only when a share is supplied so a non-attributed bump leaves it untouched.
         var patchOp = new Raven.Client.Documents.Operations.PatchOperation(
             entryId,
             changeVector: null,
             new Raven.Client.Documents.Operations.PatchRequest
             {
-                Script = "this.AccessCount = (this.AccessCount || 0) + 1; this.LastAccessedAt = args.At;",
-                Values = { { "At", lastAccessedAt } },
+                Script = "this.AccessCount = (this.AccessCount || 0) + 1; this.LastAccessedAt = args.At;"
+                    + " if (args.LexShare !== null) this.LastLexShare = args.LexShare;",
+                Values = { { "At", lastAccessedAt }, { "LexShare", lexShare } },
             });
         try { await _store.Operations.SendAsync(patchOp, token: ct); }
         catch { /* Non-critical — access tracking is best-effort */ }
+    }
+
+    public async Task<double?> GetRepoAlphaAsync(string repoId, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+        var usage = await session.LoadAsync<RepoUsage>(RepoUsage.MakeId(repoId), ct);
+        return usage?.AlphaLex;
+    }
+
+    public async Task UpdateRepoAlphaAsync(string repoId, AlphaEwmaUpdate update, CancellationToken ct = default)
+    {
+        // Patch ONLY AlphaLex + AlphaSamples on the usage anchor so we never clobber UsageTracker's
+        // time series or OriginalPath. The EWMA is computed SERVER-SIDE from the document's current
+        // AlphaLex (the patch reads this.AlphaLex at apply time), so two concurrent feedbacks each fold
+        // into the latest value — no read-compute-write race that a C#-side computed value would have.
+        // patchIfMissing upserts the doc (folding from Fallback) the first time alpha is learned for a
+        // repo with no usage anchor yet. Surfaces failures (no swallow) — the caller treats alpha tuning
+        // as best-effort, but a silent storage fault here would hide a real regression in learning.
+        var normalized = RepoIdNormalizer.Normalize(repoId);
+        var docId = RepoUsage.MakeId(repoId);
+        const string ewma =
+            "var cur = (this.AlphaLex === null || this.AlphaLex === undefined) ? args.Fallback : this.AlphaLex;"
+            + " var next = (1 - args.Lambda) * cur + args.Lambda * args.Target;"
+            + " if (next < args.Min) next = args.Min; if (next > args.Max) next = args.Max;"
+            + " this.AlphaLex = next;";
+        var patchOp = new Raven.Client.Documents.Operations.PatchOperation(
+            docId,
+            changeVector: null,
+            patch: new Raven.Client.Documents.Operations.PatchRequest
+            {
+                Script = ewma + " this.AlphaSamples = (this.AlphaSamples || 0) + 1;",
+                Values =
+                {
+                    { "Target", update.Target }, { "Lambda", update.Lambda },
+                    { "Min", update.Min }, { "Max", update.Max }, { "Fallback", update.Fallback },
+                },
+            },
+            patchIfMissing: new Raven.Client.Documents.Operations.PatchRequest
+            {
+                Script = "this.Id = args.Id; this.RepoId = args.RepoId; this.CreatedAt = args.Now;"
+                    + " " + ewma + " this.AlphaSamples = 1;",
+                Values =
+                {
+                    { "Id", docId }, { "RepoId", normalized }, { "Now", DateTime.UtcNow },
+                    { "Target", update.Target }, { "Lambda", update.Lambda },
+                    { "Min", update.Min }, { "Max", update.Max }, { "Fallback", update.Fallback },
+                },
+            });
+        await _store.Operations.SendAsync(patchOp, token: ct);
     }
 
     public async Task<List<MemoryEntry>> FullTextSearchAsync(

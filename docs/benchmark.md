@@ -16,18 +16,18 @@ that is a deferred epic. This is a deterministic, no-LLM, CI regression guard.
 
 | Capability | Cases | Metric | v2 Fusion | Flat Baseline | Delta |
 |---|---|---|---|---|---|
-| Recall | 12 | Recall@k | 0.833 | 0.375 | +0.458 |
-|  |  | MRR | 0.889 | 0.472 | +0.417 |
-|  |  | nDCG@k | 0.833 | 0.286 | +0.547 |
-|  |  | Gold survival | 0.792 | 0.417 | +0.375 |
+| Recall | 14 | Recall@k | 0.857 | 0.321 | +0.536 |
+|  |  | MRR | 0.833 | 0.405 | +0.429 |
+|  |  | nDCG@k | 0.804 | 0.246 | +0.559 |
+|  |  | Gold survival | 0.750 | 0.357 | +0.393 |
 | StateUpdating | 1 | Recall@k | 1.000 | 1.000 | +0.000 |
 |  |  | MRR | 1.000 | 1.000 | +0.000 |
 |  |  | nDCG@k | 1.000 | 1.000 | +0.000 |
 |  |  | Gold survival | 1.000 | 1.000 | +0.000 |
-| **Overall** | 13 | Recall@k | 0.846 | 0.423 | +0.423 |
-|  |  | MRR | 0.897 | 0.513 | +0.385 |
-|  |  | nDCG@k | 0.846 | 0.341 | +0.505 |
-|  |  | Gold survival | 0.808 | 0.462 | +0.346 |
+| **Overall** | 15 | Recall@k | 0.867 | 0.367 | +0.500 |
+|  |  | MRR | 0.844 | 0.444 | +0.400 |
+|  |  | nDCG@k | 0.817 | 0.296 | +0.522 |
+|  |  | Gold survival | 0.767 | 0.400 | +0.367 |
 
 ## Capabilities not evaluated
 

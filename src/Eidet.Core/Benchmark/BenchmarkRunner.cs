@@ -35,13 +35,20 @@ public static class BenchmarkRunner
         return new BenchmarkReport(Aggregate(fused), Aggregate(baseline));
     }
 
-    /// <summary>v2 ranking: real min-max fusion + UCB + recency, then the type-budget truncation.</summary>
+    /// <summary>
+    /// v2 ranking: real min-max fusion + UCB + recency, then bounded graph-neighbor expansion (when the
+    /// case ships neighbors), then the type-budget truncation. With no neighbors the expansion pass is a
+    /// no-op, so the ranking is byte-identical to fusion-only — the baseline never expands, so a gold
+    /// reachable only as a link-neighbor is a clean, honest lift for fusion.
+    /// </summary>
     private static (IReadOnlyList<string> Ranked, IReadOnlyList<string> Budgeted) RankFused(
         BenchmarkCase c, DateTime now)
     {
         var weights = RecallWeights.Default with { TotalN = ComputeTotalN(c.Lex, c.Vec) };
         // Fuse once; derive both the full ranking and the post-budget projection from it.
         var fused = RecallScoring.Fuse(c.Lex, c.Vec, weights, now);
+        if (c.Neighbors.Count > 0)
+            fused = RecallScoring.ExpandNeighbors(fused, id => c.Neighbors.GetValueOrDefault(id), weights, now);
         var ranked = fused.Select(f => f.Entry.Id).ToList();
         var results = fused.Select(f => RecallScoring.ToSearchResult(f.Entry, (float)f.Fused)).ToList();
         var budgeted = RecallScoring.ApplyTypeBudgets(results, c.K).Select(r => r.Id).ToList();

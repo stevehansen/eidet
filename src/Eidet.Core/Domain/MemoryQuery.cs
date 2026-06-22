@@ -8,6 +8,10 @@ public class MemoryQuery
     public int Limit { get; set; } = 10;
     public bool IncludeExpired { get; set; }
     public bool CrossRepo { get; set; }
+    public bool ExpandGraph { get; set; } = true;
+
+    /// <summary>Pins the lexical-vs-vector blend weight, bypassing the per-repo learned alpha. Null = learned/default.</summary>
+    public double? AlphaOverride { get; set; }
 }
 
 public class MemorySearchResult
