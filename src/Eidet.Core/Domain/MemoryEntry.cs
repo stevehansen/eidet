@@ -48,6 +48,13 @@ public class MemoryEntry
     public int AccessCount { get; set; }
     public DateTime? LastAccessedAt { get; set; }
 
+    /// <summary>
+    /// Lexical share — normLex/(normLex+normVec), 0.5 when both 0 — of this memory at its most recent
+    /// recall. Drives per-repo alpha learning: a later echo/fizzle attributes a free relevance label
+    /// for the lexical-vs-vector blend back to this share. Null = never recalled under the v2 pipeline.
+    /// </summary>
+    public double? LastLexShare { get; set; }
+
     // Echo/Fizzle feedback
     public int EchoCount { get; set; }
     public int FizzleCount { get; set; }

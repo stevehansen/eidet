@@ -40,7 +40,7 @@ public class BenchmarkScorecardTests
         var fused = Recall(RunRecall().Fused);
 
         // Conservative floors below the current Fused numbers — a guard against ranking regressions,
-        // not a tight pin. (Current: recall 0.833, survival 0.792, MRR 0.889, nDCG 0.833.)
+        // not a tight pin. (Current: recall 0.857, survival 0.750, MRR 0.833, nDCG 0.804.)
         Assert.True(fused.RecallAtK >= 0.75, $"fused recall@k was {fused.RecallAtK}");
         Assert.True(fused.GoldSurvival >= 0.70, $"fused gold survival was {fused.GoldSurvival}");
         Assert.True(fused.Mrr >= 0.80, $"fused MRR was {fused.Mrr}");

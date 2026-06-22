@@ -75,7 +75,7 @@ public static class RecallScoring
         {
             var l = normLex.GetValueOrDefault(id);
             var v = normVec.GetValueOrDefault(id);
-            var ucb = w.Kappa * Math.Sqrt(lnN / (entry.EchoCount + entry.FizzleCount + 1));
+            var ucb = Ucb(entry, w, lnN);
             var recency = FadeMemCurve.Recency(entry.CreatedAt, entry.LastAccessedAt, now, entry.Type);
             var score = w.Alpha * l + (1 - w.Alpha) * v + ucb + recency;
             fused.Add(new FusedCandidate(entry, l, v, recency, ucb, score));
@@ -83,6 +83,65 @@ public static class RecallScoring
 
         fused.Sort((a, b) => b.Fused.CompareTo(a.Fused));
         return fused;
+    }
+
+    /// <summary>UCB exploration bonus: <c>Kappa·sqrt(ln(TotalN+1)/(Echo+Fizzle+1))</c>, the single home of
+    /// the exploration math shared by <see cref="Fuse"/> and <see cref="ExpandNeighbors"/>.</summary>
+    private static double Ucb(MemoryEntry entry, RecallWeights w, double lnN) =>
+        w.Kappa * Math.Sqrt(lnN / (entry.EchoCount + entry.FizzleCount + 1));
+
+    /// <summary>
+    /// Expands the fused pool with link-reachable neighbors that compete via damped inheritance:
+    /// a neighbor not already in the pool inherits parentFused * <paramref name="neighborDecay"/> plus
+    /// its own recency+UCB, so related-but-unsurfaced memories get a real shot at the budget without
+    /// swamping direct hits. Bounded: only the top <paramref name="parentTopK"/> candidates spread, total
+    /// new neighbors capped at <paramref name="maxNeighbors"/>, one hop. <paramref name="resolve"/> returns
+    /// the neighbor entry for a link target id (null if out of scope / missing). Neighbors enter with
+    /// normalized Lex/Vec = 0 (they are in neither arm); their inherited association is carried in the
+    /// <see cref="FusedCandidate.Fused"/> total. Pure, deterministic, re-sorted by fused descending.
+    /// </summary>
+    public static List<FusedCandidate> ExpandNeighbors(
+        IReadOnlyList<FusedCandidate> fused, Func<string, MemoryEntry?> resolve,
+        RecallWeights w, DateTime now, int parentTopK = 10, int maxNeighbors = 5, double neighborDecay = 0.5)
+    {
+        var lnN = Math.Log(w.TotalN + 1);
+        var present = new HashSet<string>(fused.Select(c => c.Entry.Id), StringComparer.OrdinalIgnoreCase);
+        var added = new List<FusedCandidate>();
+
+        // Parents are already sorted by fused descending (Fuse re-sorts); take the strongest few so the
+        // spreading activation flows from the most-relevant hits, not from low-ranked noise.
+        foreach (var parent in fused.Take(parentTopK))
+        {
+            if (added.Count >= maxNeighbors) break;
+            foreach (var link in parent.Entry.Links)
+            {
+                if (added.Count >= maxNeighbors) break;
+                var targetId = link.TargetMemoryId;
+                if (string.IsNullOrEmpty(targetId) || present.Contains(targetId)) continue;
+
+                var neighbor = resolve(targetId);
+                if (neighbor is null) continue;
+
+                var ucb = Ucb(neighbor, w, lnN);
+                var recency = FadeMemCurve.Recency(neighbor.CreatedAt, neighbor.LastAccessedAt, now, neighbor.Type);
+                var score = parent.Fused * neighborDecay + ucb + recency;
+                added.Add(new FusedCandidate(neighbor, Lex: 0, Vec: 0, recency, ucb, score));
+                present.Add(targetId); // dedup neighbors against each other, not just against the pool
+            }
+        }
+
+        if (added.Count == 0)
+        {
+            var copy = new List<FusedCandidate>(fused);
+            copy.Sort((a, b) => b.Fused.CompareTo(a.Fused));
+            return copy;
+        }
+
+        var expanded = new List<FusedCandidate>(fused.Count + added.Count);
+        expanded.AddRange(fused);
+        expanded.AddRange(added);
+        expanded.Sort((a, b) => b.Fused.CompareTo(a.Fused));
+        return expanded;
     }
 
     /// <summary>Convenience projection: fuse, then map to <see cref="MemorySearchResult"/> carrying the fused score.</summary>

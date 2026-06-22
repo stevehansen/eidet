@@ -19,9 +19,13 @@ namespace Eidet.Benchmark.Tests;
 /// is simply more relevant than gold (case 12) — plus a both-arms-strong sanity anchor (case 9) the
 /// baseline also wins. So the scorecard reports a real, non-perfect number, not a self-drawn curve.
 ///
+/// Cases 13-14 exercise graph-neighbor expansion (#33 item 7): the gold is in <b>neither</b> arm, reachable
+/// only as a link-neighbor of a top-ranked parent. Fusion-with-expansion rescues it via damped inheritance;
+/// the baseline never expands and scores recall 0 — an honest lift attributable purely to the graph signal.
+///
 /// All entries share a fixed <see cref="Now"/> creation time, so recency is a constant 1.0 and the
-/// fused ranking is driven purely by the normalized lexical+vector blend. Memory types are varied so
-/// the type-budget pass genuinely engages.
+/// fused ranking is driven purely by the normalized lexical+vector blend (plus the damped link
+/// inheritance on cases 13-14). Memory types are varied so the type-budget pass genuinely engages.
 /// </summary>
 public static class GoldDataset
 {
@@ -42,6 +46,19 @@ public static class GoldDataset
     };
 
     private static ScoredHit Hit(string id, MemoryType type, double score) => new(Entry(id, type), score);
+
+    /// <summary>A scored hit whose entry carries an outbound link to <paramref name="linkTo"/> — the
+    /// parent that lets graph expansion reach an off-pool gold.</summary>
+    private static ScoredHit HitLinkedTo(string id, MemoryType type, double score, string linkTo)
+    {
+        var entry = Entry(id, type);
+        entry.Links.Add(new MemoryLink { TargetRepoId = "bench-repo", TargetMemoryId = linkTo, Relation = "refines" });
+        return new ScoredHit(entry, score);
+    }
+
+    /// <summary>Off-pool neighbors keyed by id, for a case's <see cref="BenchmarkCase.Neighbors"/> map.</summary>
+    private static IReadOnlyDictionary<string, MemoryEntry> Neighbors(params (string Id, MemoryType Type)[] entries) =>
+        entries.ToDictionary(e => e.Id, e => Entry(e.Id, e.Type), StringComparer.OrdinalIgnoreCase);
 
     private static IReadOnlySet<string> Gold(params string[] ids) =>
         ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -269,5 +286,47 @@ public static class GoldDataset
                 Hit("v1", MemoryType.Insight, 1.0),
             ],
             GoldIds: Gold("gold"), K: 1),
+
+        // ── 13. GRAPH: gold reachable ONLY as a link-neighbor of a strong parent (k=2) ──
+        // Gold is in NEITHER arm — fusion alone never sees it. But the top both-arms parent links to it
+        // (refines), so graph expansion pulls it in with damped inheritance (parentFused·0.5 + recency),
+        // outranking the single-arm distractor and landing inside k=2. The baseline never expands, so it
+        // scores recall 0 on this case — a clean lift attributable purely to graph expansion.
+        new("recall-graph-neighbor-rescue", AmaCapability.Recall,
+            Lex:
+            [
+                HitLinkedTo("parent", MemoryType.Insight, 10.0, linkTo: "gold"),
+                Hit("lexOnly", MemoryType.Insight, 4.0),
+            ],
+            Vec:
+            [
+                Hit("parent", MemoryType.Insight, 10.0),
+                Hit("vecOnly", MemoryType.Observation, 3.0),
+            ],
+            GoldIds: Gold("gold"), K: 2)
+        {
+            Neighbors = Neighbors(("gold", MemoryType.Insight)),
+        },
+
+        // ── 14. GRAPH: link-neighbor gold of a Procedure parent, deeper pool (k=3) ──
+        // A second graph rescue with a different parent type and a noisier pool: the gold sits behind a
+        // procedure parent that tops both arms. Expansion inherits the parent's strength and seats gold
+        // ahead of the lexical/vector noise tail; the baseline, blind to the link, misses it entirely.
+        new("recall-graph-neighbor-deeper-pool", AmaCapability.Recall,
+            Lex:
+            [
+                HitLinkedTo("proc", MemoryType.Procedure, 10.0, linkTo: "gold"),
+                Hit("n1", MemoryType.Insight, 6.0),
+                Hit("n2", MemoryType.Observation, 3.0),
+            ],
+            Vec:
+            [
+                Hit("proc", MemoryType.Procedure, 10.0),
+                Hit("n3", MemoryType.Insight, 5.0),
+            ],
+            GoldIds: Gold("gold"), K: 3)
+        {
+            Neighbors = Neighbors(("gold", MemoryType.Heuristic)),
+        },
     ];
 }

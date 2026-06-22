@@ -16,6 +16,15 @@ public class RepoUsage
     /// </summary>
     public string? OriginalPath { get; set; }
 
+    /// <summary>
+    /// Per-repo learned lexical-vs-vector blend weight (the recall <c>alpha</c>), EWMA-updated from
+    /// echo/fizzle feedback. Null = unlearned → callers fall back to <c>RecallWeights.Default.Alpha</c>.
+    /// </summary>
+    public double? AlphaLex { get; set; }
+
+    /// <summary>Count of EWMA alpha updates applied — diagnostics / warmup signal.</summary>
+    public long AlphaSamples { get; set; }
+
     public static string MakeId(string repoId) =>
         $"usage/{RepoIdNormalizer.Normalize(repoId).Replace('\\', '-').Replace('/', '-').Replace(':', '-')}";
 
