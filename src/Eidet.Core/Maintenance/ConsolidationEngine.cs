@@ -1,5 +1,6 @@
 using Eidet.Core.Domain;
 using Eidet.Core.Enrichment;
+using Eidet.Core.Memory;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 
@@ -74,9 +75,16 @@ public sealed class ConsolidationEngine
             var existingInsight = await _store.FindDuplicateAsync(repoId, representative.Content, 0.85f, ct);
             if (existingInsight is not null && existingInsight.Type == MemoryType.Insight)
             {
-                existingInsight.Importance = Math.Min(1.0f, existingInsight.Importance + 0.05f * group.Count);
+                // Anti-laundering (boost path): only trusted sources may lift a trusted insight. An
+                // attacker must not be able to raise a good insight's importance — or contaminate its
+                // lineage — by injecting low-trust (Pack/Intake) observations that happen to match it.
+                // No trusted contributors → skip the boost entirely (a "compression-amplified toxin").
+                var trusted = group.Where(IsTrustedSource).ToList();
+                if (trusted.Count == 0) continue;
+
+                existingInsight.Importance = Math.Min(1.0f, existingInsight.Importance + 0.05f * trusted.Count);
                 existingInsight.DerivedFrom = existingInsight.DerivedFrom
-                    .Concat(candidate.ObservationIds)
+                    .Concat(trusted.Select(o => o.Id))
                     .Distinct()
                     .ToList();
                 await ctx.WriteAsync(existingInsight, ct);
@@ -93,6 +101,16 @@ public sealed class ConsolidationEngine
                         mergedContent = merged;
                 }
 
+                // Anti-laundering (create path): if ANY contributing observation is untrusted
+                // (Pack/Intake), stamp the new insight with the least-trusted contributor's
+                // provenance instead of Consolidation, so MemoryTrust.Factor keeps demoting it at
+                // recall. This stops an attacker laundering a poisoned observation into a fully
+                // trusted insight ("compression-amplified toxin"). The audit trail — Source and
+                // DerivedFrom — is preserved untouched.
+                var provenance = group.Any(o => !IsTrustedSource(o))
+                    ? group.OrderBy(o => MemoryTrust.ProvenanceTrust(o.Provenance)).First().Provenance
+                    : MemoryProvenance.Consolidation;
+
                 var now = DateTime.UtcNow;
                 var insight = new MemoryEntry
                 {
@@ -103,7 +121,7 @@ public sealed class ConsolidationEngine
                     Tags = unionTags,
                     Importance = proposedImportance,
                     Source = "consolidation",
-                    Provenance = MemoryProvenance.Consolidation,
+                    Provenance = provenance,
                     Confidence = 0.7f,
                     CreatedAt = now,
                     Validity = new Validity { ValidFrom = now },
@@ -117,6 +135,11 @@ public sealed class ConsolidationEngine
         }
         return 0;
     }
+
+    /// <summary>An observation counts as a trusted source unless its origin is a known poisoning
+    /// surface (Pack/Intake), i.e. its provenance trust floor is the full 1.0.</summary>
+    private static bool IsTrustedSource(MemoryEntry obs) =>
+        MemoryTrust.ProvenanceTrust(obs.Provenance) >= 1.0;
 
     public async Task<int> ApplyImportanceDecayAsync(
         string repoId, bool isRepoActive = true, CancellationToken ct = default, BulkMutationCtx? write = null)

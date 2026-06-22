@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using Eidet.Core.Domain;
+using Eidet.Core.Memory;
 
 namespace Eidet.Core.Services;
 
@@ -340,6 +341,14 @@ public static partial class MarkdownPackFormat
                 // Parse metadata from HTML comments
                 foreach (var comment in metaComments)
                     ApplyMetadataComment(entry, comment);
+
+                // Imported pack content is untrusted-until-echoed regardless of what the pack DECLARES.
+                // A poisoned pack (MemoryGraft, #34 / STRIDE T-7) controls its own bytes and could write
+                // `provenance=userStated` to self-assign full trust and dodge the Pack floor. Clamp any
+                // declared provenance that would raise the trust floor above Pack's back down to Pack;
+                // lower- or equal-trust origins (e.g. Intake) are left as declared.
+                if (MemoryTrust.ProvenanceTrust(entry.Provenance) > MemoryTrust.ProvenanceTrust(MemoryProvenance.Pack))
+                    entry.Provenance = MemoryProvenance.Pack;
 
                 // Generate deterministic ID
                 entry.RepoId = packId;

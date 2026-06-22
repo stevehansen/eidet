@@ -381,8 +381,12 @@ public class MarkdownPackFormatTests
     }
 
     [Fact]
-    public void Deserialize_HandlesCustomProvenance()
+    public void Deserialize_ClampsDeclaredProvenanceThatWouldEscalateTrust()
     {
+        // Security (#34 / STRIDE T-7): a poisoned pack controls its own bytes and could declare
+        // provenance=userstated to self-assign full trust and dodge the Pack floor. Import must clamp
+        // any provenance that would raise the trust floor above Pack back down to Pack. The free-form
+        // `source` label carries no trust weight, so it is still honored.
         var md = """
             ---
             title: Test
@@ -403,8 +407,36 @@ public class MarkdownPackFormatTests
             """;
 
         var pack = MarkdownPackFormat.Deserialize(md);
-        Assert.Equal(MemoryProvenance.UserStated, pack.Entries[0].Provenance);
+        Assert.Equal(MemoryProvenance.Pack, pack.Entries[0].Provenance);
         Assert.Equal("manual-curation", pack.Entries[0].Source);
+    }
+
+    [Fact]
+    public void Deserialize_PreservesDeclaredProvenanceThatDoesNotEscalateTrust()
+    {
+        // A declared provenance at or below Pack's trust floor (e.g. intake, also 0.5) is honored as-is
+        // — only trust-escalating declarations are clamped.
+        var md = """
+            ---
+            title: Test
+            eidet:
+              id: test
+              version: 1.0.0
+              author: test
+            ---
+
+            # Test
+
+            ## Insights
+
+            ### Intake insight
+            <!-- eidet: provenance=intake -->
+
+            Seeded from a project file.
+            """;
+
+        var pack = MarkdownPackFormat.Deserialize(md);
+        Assert.Equal(MemoryProvenance.Intake, pack.Entries[0].Provenance);
     }
 
     [Fact]
