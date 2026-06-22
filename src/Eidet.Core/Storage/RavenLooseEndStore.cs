@@ -70,7 +70,7 @@ public sealed class RavenLooseEndStore : ILooseEndStore
         // claims race on the change vector: exactly one SaveChanges wins Open→Resolving, the loser sees
         // ConcurrencyException and returns false — the atomic gate that stops a double-mint promote.
         using var session = _store.OpenAsyncSession();
-        session.Advanced.UseOptimisticConcurrency = true;
+        session.Advanced.OptimisticConcurrencyMode = Raven.Client.Documents.Session.OptimisticConcurrencyMode.Writes;
         var end = await session.LoadAsync<LooseEnd>(id, ct);
         if (end is null || end.State != LooseEndState.Open) return false;
         end.State = LooseEndState.Resolving;
