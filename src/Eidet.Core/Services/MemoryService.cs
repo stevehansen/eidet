@@ -367,18 +367,30 @@ public sealed class MemoryService
 
         var now = DateTime.UtcNow;
         var weights = RecallWeights.Default with { TotalN = ComputeTotalN(lexTask.Result, vecTask.Result) };
-        var merged = RecallScoring.FuseAndScore(lexTask.Result, vecTask.Result, weights, now);
+        var fused = RecallScoring.Fuse(lexTask.Result, vecTask.Result, weights, now);
 
+        // Trust gating is a production-recall policy layered on top of Fuse, NOT folded into it:
+        // the benchmark scorecard calls Fuse directly and would be unfairly penalized on its
+        // Procedure/Heuristic gold cases. Here we hold poisoned/provisional memories down at
+        // retrieval time alongside the non-local de-boost.
         var staleAfter = StalenessWarningDays;
-        foreach (var result in merged)
+        var merged = new List<MemorySearchResult>(fused.Count);
+        foreach (var candidate in fused)
         {
-            if (!scope.IsLocalRepo(result.RepoId))
-                result.Score *= LayerScope.NonLocalDeBoost;
+            var entry = candidate.Entry;
+            var trust = MemoryTrust.Factor(entry);
+            var score = candidate.Fused * trust;
+            if (!scope.IsLocalRepo(entry.RepoId))
+                score *= LayerScope.NonLocalDeBoost;
+
+            var result = RecallScoring.ToSearchResult(entry, (float)score);
+            result.TrustFactor = (float)trust;
             result.AgeDays = (int)(now - result.CreatedAt).TotalDays;
             if (result.Drift is { Verdict: DriftVerdictKind.Stale or DriftVerdictKind.Contradicted } drift)
                 result.StalenessWarning = $"[drift: {drift.Reason ?? drift.Verdict.ToString().ToLowerInvariant()}]";
             else if (result.AgeDays >= staleAfter)
                 result.StalenessWarning = $"[stale: {result.AgeDays}d ago — verify before acting]";
+            merged.Add(result);
         }
 
         var budgeted = RecallScoring.ApplyTypeBudgets(merged, query.Limit);
@@ -419,7 +431,12 @@ public sealed class MemoryService
         var fused = RecallScoring.Fuse(lexTask.Result, vecTask.Result, weights, DateTime.UtcNow);
 
         var rows = fused
-            .Select(c => new RecallExplanationRow(c.Entry.Id, c.Lex, c.Vec, c.Recency, c.Ucb, c.Fused))
+            .Select(c =>
+            {
+                var trust = MemoryTrust.Factor(c.Entry);
+                return new RecallExplanationRow(
+                    c.Entry.Id, c.Lex, c.Vec, c.Recency, c.Ucb, c.Fused, trust, c.Fused * trust);
+            })
             .ToList();
         return new RecallExplanation(rows, weights.Alpha, rows.Count);
     }

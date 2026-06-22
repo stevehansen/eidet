@@ -7,5 +7,10 @@ namespace Eidet.Core.Memory;
 /// </summary>
 public sealed record RecallExplanation(IReadOnlyList<RecallExplanationRow> Rows, double AlphaUsed, int CandidatePool);
 
-/// <summary>One candidate's fusion components: normalized arm scores plus recency + UCB contributions and the total.</summary>
-public sealed record RecallExplanationRow(string Id, double Lex, double Vec, double Recency, double Ucb, double Fused);
+/// <summary>
+/// One candidate's fusion components: normalized arm scores plus recency + UCB contributions and the
+/// total. <see cref="Trust"/> is the derived trust factor and <see cref="Gated"/> = Fused·Trust is the
+/// production-recall score after trust gating, so the diagnostic mirrors what live recall actually ranks.
+/// </summary>
+public sealed record RecallExplanationRow(
+    string Id, double Lex, double Vec, double Recency, double Ucb, double Fused, double Trust, double Gated);

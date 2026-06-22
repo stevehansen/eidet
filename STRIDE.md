@@ -1,6 +1,6 @@
 # Eidet - STRIDE Threat Model
 
-**Version:** 1.0
+**Version:** 1.1
 **Created:** 2026-04-12
 **Author:** Steve Hansen
 **Next Review:** 2027-04-12
@@ -113,10 +113,14 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 | T-4 | Backup tampering | Attacker modifies .eidetbackup manifest or contents | 1 | 3 | 3 | SHA256 checksum verified on restore (BackupService.cs:115). Tampering both data and manifest checksum in a consistent way requires understanding the format. |
 | T-5 | Environment variable injection | Attacker sets `EIDET_RAVEN_URL` to redirect database traffic to attacker-controlled server | 1 | 4 | 4 | Requires process-level env var access. No URL validation on config load. |
 | T-6 | Memory content manipulation via API | Authenticated attacker stores misleading memories to poison agent knowledge | 2 | 2 | 4 | Write gate blocks secrets and low-signal content. Scope model limits write access. Quality dashboard detects anomalies. |
+| T-7 | Single-shot memory poisoning via pack import | Attacker crafts one Pack/Intake memory — especially a Procedure or Heuristic — that an agent recalls and acts on without it ever being echoed (MemoryGraft, trigger-free, single-shot — arXiv:2512.16962) | 2 | 4 | **8** | **Provenance/trust tier** (`MemoryTrust`) — derived, never-stored trust factor gates retrieval weight. Pack/Intake float at 0.5, Procedure/Heuristic at 0.7 (floors combine as `min`); only earned echoes lift a memory toward 1.0. A freshly-injected, never-echoed pack Procedure is held at 0.5 in recall scoring, below trusted first-party memories. Import hardening: a pack's self-declared `provenance=` cannot escalate trust above the Pack floor — `MarkdownPackFormat` clamps any trust-raising declaration back to `Pack`, so an attacker controlling the pack bytes cannot self-assign first-party trust. |
+| T-8 | Provenance laundering via consolidation | Attacker injects a poisoned Pack/Intake observation, then relies on consolidation to fold it into a high-trust Insight (`Provenance=Consolidation`), erasing the low-trust origin (compression-amplified toxin) | 2 | 3 | 6 | **Consolidation carry-through** — a new insight derived from any untrusted source inherits the *least-trusted* contributor's provenance (not `Consolidation`), so the trust tier keeps demoting it. The boost path admits only trusted sources: untrusted matches can neither raise a trusted insight's importance nor contaminate its lineage. |
 
 **Countermeasures in place:**
 - Write gate with SecretScanner (13 patterns) and SignalGate (WriteGate.cs)
 - Pack imports isolated to read-only layers with de-boost scoring
+- Provenance/trust tier (`MemoryTrust`, MemoryTrust.cs) — derived per-recall trust factor gating retrieval weight; deterministic, local, always-on; no stored field to forge
+- Consolidation provenance carry-through (ConsolidationEngine.cs) — prevents laundering a poisoned source into a trusted insight
 - Backup SHA256 checksum verification
 - API key scopes restrict write access
 - Quality dashboard detects low-confidence and conflicting memories
@@ -186,6 +190,23 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 - RavenDB access via strongly-typed LINQ API (no injection)
 - System.Text.Json for serialization (no type-based deserialization attacks)
 
+### 2.7 Memory-Lifecycle Security Taxonomy
+
+The STRIDE tables above are categorized by attacker action. Because Eidet's core asset is a *memory* that flows through a lifecycle, this taxonomy cross-cuts that view: the 6-phase × 4-objective grid from the Mnemonic Sovereignty survey (arXiv:2604.16548) maps where each security objective is enforced as a memory moves from ingestion to sharing. It exists to surface gaps — a blank cell is an unguarded phase/objective pair.
+
+Objectives: **Confidentiality** (who may read it), **Integrity** (it is not tampered with), **Availability** (it survives and is retrievable), **Provenance** (its origin and trust are known and honest).
+
+| Phase | Confidentiality | Integrity | Availability | Provenance |
+|-------|-----------------|-----------|--------------|------------|
+| **Ingest** | SecretScanner blocks credential storage; API scopes gate writes | SignalGate rejects low-signal content; strongly-typed deserialization | — | `MemoryProvenance` stamped on every write; pack/intake tagged at the import surface |
+| **Store** | OS file permissions on RavenDB data dir; localhost-only binding | Append-only model with validity intervals | Maintenance TTL + retention; backups | Provenance + `Source` + `DerivedFrom` persisted; never mutated in place |
+| **Retrieve** | API key scopes on read endpoints | Non-local de-boost (0.8×) on mounted layers | Hybrid lexical+vector recall; type budgets | **Trust tier (`MemoryTrust`) gates retrieval weight** — pack/intake & procedure/heuristic held provisional until echoed |
+| **Consolidate** | Runs in-process, no new exposure | Dedup + supersession chains | Importance boost keeps salient insights alive | **Provenance carry-through** — untrusted sources cannot launder into a trusted insight; boost admits trusted sources only |
+| **Forget** | Soft-delete hides content from recall | Forget audit observation with reason + `DerivedFrom` | Soft-delete preserves history (recoverable) | Audit trail records who/why; version chain via `eidet_history` |
+| **Share** | Packs are read-only layers; no auto-share | No pack signature verification *(residual — T-1)* | Pack export/import portability | Provenance survives export (markdown frontmatter); imported packs stay provisional via trust tier |
+
+Known gaps (tracked above): no pack signature verification (T-1, T-7 attack surface), no per-request read audit (R-1), no encryption at rest for backups (I-4).
+
 ---
 
 ## 3. Risk Summary
@@ -198,6 +219,7 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 | T-2 | Config file modification (add hooks, change RavenDB URL, disable auth) | 8 | Accepted — attacker with config write access already has equivalent system access. Improve startup logging to show configured hooks and connection targets. |
 | T-3 | Unverified binary update from GitHub | 8 | Accepted — immutable releases enabled on GitHub, HTTPS transport, public repo/actions. Improve update command to show full download URI. |
 | I-1 | Exception message leakage in API 500 responses | 9 | To fix — return generic error messages instead of raw exception details. |
+| T-7 | Single-shot memory poisoning via pack import | 8 | Mitigated — provenance/trust tier holds never-echoed pack/procedure memories below trusted first-party recall weight. Residual: no pack signature verification (T-1). |
 | E-1 | Arbitrary command execution via hook config | 8 | Accepted — same trust boundary as T-2. Hooks run at same privilege as user. Log configured hooks at startup. |
 
 ### 3.2 Residual Risks
@@ -220,6 +242,7 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 | **Secret Prevention** | SecretScanner with 13 regex patterns (AWS, GitHub, JWT, private keys, etc.), runs before all writes |
 | **Input Validation** | SignalGate rejects low-signal content, entity extraction length/format validation, System.Text.Json strongly-typed deserialization |
 | **Data Integrity** | Append-only model with validity intervals, backup SHA256 checksums, soft-delete with audit trail |
+| **Provenance & Trust** | `MemoryProvenance` stamped on every write; derived `MemoryTrust` factor gates retrieval weight (pack/intake & procedure/heuristic provisional until echoed); consolidation carry-through blocks provenance laundering — deterministic, local, always-on |
 | **XSS Prevention** | escHtml() in Web UI for all user content, path traversal protection for embedded file serving |
 | **Process Isolation** | Hook execution with UseShellExecute=false, configurable timeout, process tree kill |
 | **Quality Monitoring** | QualityService with 8 checks (stale, high-fizzle, conflicts, orphans, tag concentration, type imbalance, low-confidence, missing entities) |
@@ -232,6 +255,7 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-04-12 | Steve Hansen | Initial STRIDE analysis covering all 10 implementation phases |
+| 1.1 | 2026-06-22 | Steve Hansen | Added provenance/trust tier (T-7 single-shot poisoning, T-8 consolidation laundering) and the 6-phase × 4-objective memory-lifecycle security taxonomy (§2.7) |
 
 ---
 
@@ -241,3 +265,5 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/) — Web Application Security Risks
 - [RavenDB Security](https://ravendb.net/docs/article-page/7.0/csharp/server/security/overview) — RavenDB Documentation
 - [MCP Specification](https://modelcontextprotocol.io/) — Model Context Protocol
+- [MemoryGraft: Trigger-Free Single-Shot Memory Poisoning](https://arxiv.org/abs/2512.16962) — arXiv:2512.16962
+- [Mnemonic Sovereignty: A Memory-Lifecycle Security Survey](https://arxiv.org/abs/2604.16548) — arXiv:2604.16548
