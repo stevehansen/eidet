@@ -59,6 +59,11 @@ public class MemoryEntry
     public int EchoCount { get; set; }
     public int FizzleCount { get; set; }
 
+    /// Most-recent fizzle's reason; null = never fizzled with a reason. Drives the steeper
+    /// content-invalidating penalty tier at fizzle time. A later echo intentionally leaves this
+    /// untouched — it records the last <i>fizzle's</i> reason, not the last feedback event.
+    public FizzleReason? LastFizzleReason { get; set; }
+
     // Enrichment
     public string? ForesightHint { get; set; }
 

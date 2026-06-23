@@ -35,6 +35,63 @@ public class FeedbackToolHandlerTests
         Assert.Contains("Fizzle feedback", result.HumanSummary);
     }
 
+    // ─── snake_case reason → FizzleReason mapping (issue #35) ────────────────
+    // The FakeStore's UpdateAsync is a no-op and GetAsync hands back the same instance, so the
+    // reason that FeedbackAsync stamped onto LastFizzleReason is observable on the seeded entry.
+
+    [Theory]
+    [InlineData("version_drift", FizzleReason.VersionDrift)]
+    [InlineData("wrong_context", FizzleReason.WrongContext)]
+    [InlineData("incorrect", FizzleReason.Incorrect)]
+    [InlineData("other", FizzleReason.Other)]
+    public async Task Fizzle_KnownReason_MapsToEnum(string wire, FizzleReason expected)
+    {
+        var handler = NewHandler(out var store);
+        var entry = new MemoryEntry { Id = "memories/r/insight/abc", RepoId = "r", Type = MemoryType.Insight, Content = "x" };
+        store.Entries.Add(entry);
+
+        await Invoke(handler, new { id = entry.Id, used = false, reason = wire });
+
+        Assert.Equal(expected, entry.LastFizzleReason);
+    }
+
+    [Fact]
+    public async Task Fizzle_UnknownReason_FallsBackToOther()
+    {
+        var handler = NewHandler(out var store);
+        var entry = new MemoryEntry { Id = "memories/r/insight/abc", RepoId = "r", Type = MemoryType.Insight, Content = "x" };
+        store.Entries.Add(entry);
+
+        await Invoke(handler, new { id = entry.Id, used = false, reason = "garbage-not-a-reason" });
+
+        Assert.Equal(FizzleReason.Other, entry.LastFizzleReason);
+    }
+
+    [Fact]
+    public async Task Echo_IgnoresReason_LeavesLastFizzleReasonNull()
+    {
+        var handler = NewHandler(out var store);
+        var entry = new MemoryEntry { Id = "memories/r/insight/abc", RepoId = "r", Type = MemoryType.Insight, Content = "x" };
+        store.Entries.Add(entry);
+
+        // A reason on an echo is meaningless — it must not reach FeedbackAsync (stays null).
+        await Invoke(handler, new { id = entry.Id, used = true, reason = "version_drift" });
+
+        Assert.Null(entry.LastFizzleReason);
+    }
+
+    [Fact]
+    public async Task Fizzle_NoReasonArgument_LeavesLastFizzleReasonNull()
+    {
+        var handler = NewHandler(out var store);
+        var entry = new MemoryEntry { Id = "memories/r/insight/abc", RepoId = "r", Type = MemoryType.Insight, Content = "x" };
+        store.Entries.Add(entry);
+
+        await Invoke(handler, new { id = entry.Id, used = false });
+
+        Assert.Null(entry.LastFizzleReason);
+    }
+
     [Fact]
     public async Task UnknownMemory_ReturnsNotFound()
     {

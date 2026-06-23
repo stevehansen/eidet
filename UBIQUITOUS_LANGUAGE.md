@@ -55,6 +55,8 @@ Every **Memory** has exactly one of the following types. Each type has its own r
 | **Echo**         | Positive feedback: a recalled **Memory** was useful; boosts future **Recall** score                  | Upvote, thumbs-up                      |
 | **Fizzle**       | Negative feedback: a recalled **Memory** was irrelevant; dampens future **Recall** score             | Downvote, reject                       |
 | **FadeMem**      | The decay model that reduces a **Memory**'s influence over time unless reinforced by **Echoes**      | Decay, aging                           |
+| **ROI**          | Realized net benefit of an action-shaped **Memory** (**Procedure**/**Heuristic**), derived from **Echoes** minus **Fizzles**; net-negative **ROI** demotes the **Memory** at **Recall** and via **FadeMem**. Reversible; distinct from **Forget** (no soft-delete) | Value, payoff, utility |
+| **Fizzle reason** | Optional taxonomy on a **Fizzle** (WrongContext / Incorrect / VersionDrift / Other); content-invalidating reasons (VersionDrift, Incorrect) penalize harder | Fizzle category, downvote reason |
 | **Access count** | Number of times a **Memory** has been surfaced by **Recall**                                         | Views, hits                            |
 
 ## Write path

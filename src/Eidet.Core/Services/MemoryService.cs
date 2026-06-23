@@ -176,10 +176,12 @@ public sealed class MemoryService
         return outcome;
     }
 
-    public Task<bool> ApplyFeedbackAsync(string memoryId, bool wasUsed, CancellationToken ct = default) =>
-        FeedbackAsync(memoryId, wasUsed, ct);
+    public Task<bool> ApplyFeedbackAsync(string memoryId, bool wasUsed, FizzleReason? reason = null, CancellationToken ct = default) =>
+        FeedbackAsync(memoryId, wasUsed, reason, ct);
 
-    public async Task<bool> FeedbackAsync(string memoryId, bool wasUsed, CancellationToken ct = default)
+    // A fizzle optionally carries a reason: content-invalidating reasons (VersionDrift/Incorrect) cut
+    // importance and confidence harder, since the memory's substance — not just its recall context — is wrong.
+    public async Task<bool> FeedbackAsync(string memoryId, bool wasUsed, FizzleReason? reason = null, CancellationToken ct = default)
     {
         var entry = await _store.GetAsync(memoryId, ct);
         if (entry is null) return false;
@@ -193,8 +195,17 @@ public sealed class MemoryService
         else
         {
             entry.FizzleCount++;
-            entry.Importance = Math.Max(0.05f, entry.Importance - 0.1f);
-            entry.Confidence = Math.Max(0.0f, entry.Confidence - 0.15f);
+            entry.LastFizzleReason = reason;
+            if (FizzleReasons.IsContentInvalidating(reason))
+            {
+                entry.Importance = Math.Max(0.05f, entry.Importance - 0.2f);
+                entry.Confidence = Math.Max(0.0f, entry.Confidence - 0.3f);
+            }
+            else
+            {
+                entry.Importance = Math.Max(0.05f, entry.Importance - 0.1f);
+                entry.Confidence = Math.Max(0.0f, entry.Confidence - 0.15f);
+            }
         }
         entry.LastAccessedAt = DateTime.UtcNow;
         entry.AccessCount++;
@@ -425,12 +436,16 @@ public sealed class MemoryService
         {
             var entry = candidate.Entry;
             var trust = MemoryTrust.Factor(entry);
-            var score = candidate.Fused * trust;
+            // ROI demotes proven net-negative Procedure/Heuristic memories below the trust floor —
+            // it's a performance gate orthogonal to trust's anti-poisoning floor (1.0 otherwise).
+            var roi = MemoryRoi.Factor(entry);
+            var score = candidate.Fused * trust * roi;
             if (!scope.IsLocalRepo(entry.RepoId))
                 score *= LayerScope.NonLocalDeBoost;
 
             var result = RecallScoring.ToSearchResult(entry, (float)score);
             result.TrustFactor = (float)trust;
+            result.RoiFactor = (float)roi;
             result.AgeDays = (int)(now - result.CreatedAt).TotalDays;
             if (result.Drift is { Verdict: DriftVerdictKind.Stale or DriftVerdictKind.Contradicted } drift)
                 result.StalenessWarning = $"[drift: {drift.Reason ?? drift.Verdict.ToString().ToLowerInvariant()}]";
@@ -641,9 +656,14 @@ public sealed class MemoryService
             .ToList();
 
         const int maxItems = 20;
-        var insightBudget = (int)Math.Ceiling(maxItems * 0.50);
-        var procedureBudget = (int)Math.Ceiling(maxItems * 0.30);
-        var heuristicBudget = maxItems - insightBudget - procedureBudget;
+        const int procedureWakeupCap = 3; // hard cap (SWE-Skills-Bench: a wrongly-recalled procedure is net-negative; bound procedure pollution in the wake-up regardless of the soft type budget)
+        var uncappedProcedureBudget = (int)Math.Ceiling(maxItems * 0.30);
+        var procedureBudget = Math.Min(uncappedProcedureBudget, procedureWakeupCap);
+        // The slots the cap frees from procedures backfill insights — fully trusted (floor 1.0) — rather
+        // than inflating heuristics, which are action-shaped and net-negative-if-wrong just like procedures.
+        // Heuristics keep their own uncapped share; total wake-up item count is unchanged (maxItems).
+        var heuristicBudget = maxItems - (int)Math.Ceiling(maxItems * 0.50) - uncappedProcedureBudget;
+        var insightBudget = maxItems - procedureBudget - heuristicBudget;
 
         var insightCount = 0;
         var procedureCount = 0;
