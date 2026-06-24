@@ -28,6 +28,7 @@ public class MemorySearchResult
     public DateTime CreatedAt { get; set; }
     public float Score { get; set; }
     public float TrustFactor { get; set; } = 1.0f;
+    public float RoiFactor { get; set; } = 1.0f;
     public string? LayerSource { get; set; }
     public int AgeDays { get; set; }
     public string? StalenessWarning { get; set; }

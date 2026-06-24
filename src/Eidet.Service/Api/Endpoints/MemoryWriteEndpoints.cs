@@ -72,6 +72,7 @@ internal sealed class MemoryWriteEndpoints
         {
             id = req.MemoryId,
             used = req.WasUsed,
+            reason = req.Reason,
         }, HttpJson.Options);
 
         var repo = ExtractRepoFromMemoryId(req.MemoryId) ?? "";

@@ -40,6 +40,7 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
         new ObservationRetentionStage(),
         new DedupSweepStage(),
         new ImportanceDecayStage(),
+        new RoiDecayStage(),
         new OrphanCleanupStage(),
         new EnrichmentCleanupStage(),
         new HeuristicEnrichmentBackfillStage(),

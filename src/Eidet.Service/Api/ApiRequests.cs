@@ -18,6 +18,7 @@ public record FeedbackRequest
 {
     public string MemoryId { get; init; } = "";
     public bool WasUsed { get; init; }
+    public string? Reason { get; init; }
 }
 
 public record PackExportRequest

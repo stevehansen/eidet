@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Eidet.Core.Domain;
 using Eidet.Core.Services;
 using Eidet.Service.Mcp;
 
@@ -27,8 +28,10 @@ public sealed class FeedbackToolHandler : IToolHandler
     {
         var id = ToolArgs.RequireString(request.Arguments, "id");
         var used = ToolArgs.RequireBool(request.Arguments, "used");
+        // A fizzle reason only carries meaning on a fizzle; ignore it on an echo.
+        var reason = used ? null : ParseReason(ToolArgs.GetString(request.Arguments, "reason"));
 
-        var ok = await _svc.ApplyFeedbackAsync(id, used, request.Ct);
+        var ok = await _svc.ApplyFeedbackAsync(id, used, reason, request.Ct);
         if (!ok)
             return ToolResult.NotFound($"Memory not found: {id}");
 
@@ -54,7 +57,23 @@ public sealed class FeedbackToolHandler : IToolHandler
                 ["type"] = "boolean",
                 ["description"] = "true = echo (memory was useful), false = fizzle (memory was irrelevant).",
             },
+            ["reason"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["description"] = "optional fizzle reason: wrong_context | incorrect | version_drift | other — version_drift/incorrect demote harder.",
+            },
         },
         ["required"] = new JsonArray { "id", "used" },
+    };
+
+    /// <summary>Maps the snake_case wire reason to <see cref="FizzleReason"/>; null stays null,
+    /// any unrecognized non-null value falls back to <see cref="FizzleReason.Other"/>.</summary>
+    private static FizzleReason? ParseReason(string? raw) => raw?.Trim().ToLowerInvariant() switch
+    {
+        null or "" => null,
+        "wrong_context" => FizzleReason.WrongContext,
+        "incorrect" => FizzleReason.Incorrect,
+        "version_drift" => FizzleReason.VersionDrift,
+        _ => FizzleReason.Other,
     };
 }

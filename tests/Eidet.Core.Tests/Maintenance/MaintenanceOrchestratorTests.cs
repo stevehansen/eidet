@@ -140,7 +140,7 @@ public class MaintenanceOrchestratorTests
         var stageNames = MaintenanceOrchestrator.DefaultStages().Select(s => s.Name).ToHashSet();
         var enumNames = Enum.GetNames<MaintenanceStep>().ToHashSet();
 
-        Assert.Equal(10, stageNames.Count);
+        Assert.Equal(11, stageNames.Count);
         Assert.Equal(enumNames, stageNames);
     }
 

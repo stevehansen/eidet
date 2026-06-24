@@ -60,10 +60,10 @@ public sealed class EidetClient : IDisposable
         return data.Forgotten;
     }
 
-    public async Task<bool> FeedbackAsync(string memoryId, bool wasUsed, CancellationToken ct = default)
+    public async Task<bool> FeedbackAsync(string memoryId, bool wasUsed, string? reason = null, CancellationToken ct = default)
     {
         var res = await _http.PostAsJsonAsync("api/eidet/feedback",
-            new { memoryId, wasUsed }, JsonOptions, ct);
+            new { memoryId, wasUsed, reason }, JsonOptions, ct);
         var data = await ReadAsync<FeedbackResponse>(res, ct);
         return data.Applied;
     }
