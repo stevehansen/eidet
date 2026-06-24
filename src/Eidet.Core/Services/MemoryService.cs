@@ -657,12 +657,13 @@ public sealed class MemoryService
 
         const int maxItems = 20;
         const int procedureWakeupCap = 3; // hard cap (SWE-Skills-Bench: a wrongly-recalled procedure is net-negative; bound procedure pollution in the wake-up regardless of the soft type budget)
+        var uncappedInsightBudget = (int)Math.Ceiling(maxItems * 0.50);
         var uncappedProcedureBudget = (int)Math.Ceiling(maxItems * 0.30);
+        var heuristicBudget = maxItems - uncappedInsightBudget - uncappedProcedureBudget;
         var procedureBudget = Math.Min(uncappedProcedureBudget, procedureWakeupCap);
         // The slots the cap frees from procedures backfill insights — fully trusted (floor 1.0) — rather
         // than inflating heuristics, which are action-shaped and net-negative-if-wrong just like procedures.
         // Heuristics keep their own uncapped share; total wake-up item count is unchanged (maxItems).
-        var heuristicBudget = maxItems - (int)Math.Ceiling(maxItems * 0.50) - uncappedProcedureBudget;
         var insightBudget = maxItems - procedureBudget - heuristicBudget;
 
         var insightCount = 0;

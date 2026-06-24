@@ -1,6 +1,6 @@
 # Eidet - STRIDE Threat Model
 
-**Version:** 1.1
+**Version:** 1.2
 **Created:** 2026-04-12
 **Author:** Steve Hansen
 **Next Review:** 2027-04-12
@@ -115,11 +115,13 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 | T-6 | Memory content manipulation via API | Authenticated attacker stores misleading memories to poison agent knowledge | 2 | 2 | 4 | Write gate blocks secrets and low-signal content. Scope model limits write access. Quality dashboard detects anomalies. |
 | T-7 | Single-shot memory poisoning via pack import | Attacker crafts one Pack/Intake memory — especially a Procedure or Heuristic — that an agent recalls and acts on without it ever being echoed (MemoryGraft, trigger-free, single-shot — arXiv:2512.16962) | 2 | 4 | **8** | **Provenance/trust tier** (`MemoryTrust`) — derived, never-stored trust factor gates retrieval weight. Pack/Intake float at 0.5, Procedure/Heuristic at 0.7 (floors combine as `min`); only earned echoes lift a memory toward 1.0. A freshly-injected, never-echoed pack Procedure is held at 0.5 in recall scoring, below trusted first-party memories. Import hardening: a pack's self-declared `provenance=` cannot escalate trust above the Pack floor — `MarkdownPackFormat` clamps any trust-raising declaration back to `Pack`, so an attacker controlling the pack bytes cannot self-assign first-party trust. |
 | T-8 | Provenance laundering via consolidation | Attacker injects a poisoned Pack/Intake observation, then relies on consolidation to fold it into a high-trust Insight (`Provenance=Consolidation`), erasing the low-trust origin (compression-amplified toxin) | 2 | 3 | 6 | **Consolidation carry-through** — a new insight derived from any untrusted source inherits the *least-trusted* contributor's provenance (not `Consolidation`), so the trust tier keeps demoting it. The boost path admits only trusted sources: untrusted matches can neither raise a trusted insight's importance nor contaminate its lineage. |
+| T-9 | Feedback-driven memory suppression | Caller with feedback access (or any localhost caller when auth is off) repeatedly fizzles a *legitimate* Procedure/Heuristic — preferentially with `reason=incorrect`/`version_drift`, which triggers the steeper content-invalidating penalty (Importance −0.2 / Confidence −0.3 per fizzle) — to drive the ROI gate's recall de-boost and `RoiDecay` Importance demotion, suppressing a useful memory below recall threshold (the downward dual of T-7's poison-upward) | 2 | 2 | 4 | **Reversible by design** — `MemoryRoi` is derived (never stored), never forgets, and never mutates content; Importance floors at 0.05 (never zero) and `RoiDecay` only engages after `MinFeedback=3`, so suppression is gradual, not single-shot. A single echo back to parity restores full ROI and the next maintenance pass leaves the memory alone. Requires the same write/feedback trust boundary as T-6; append-only echo/fizzle counts feed the quality dashboard's high-fizzle check. |
 
 **Countermeasures in place:**
 - Write gate with SecretScanner (13 patterns) and SignalGate (WriteGate.cs)
 - Pack imports isolated to read-only layers with de-boost scoring
 - Provenance/trust tier (`MemoryTrust`, MemoryTrust.cs) — derived per-recall trust factor gating retrieval weight; deterministic, local, always-on; no stored field to forge
+- Realized-benefit ROI gate (`MemoryRoi`, MemoryRoi.cs) — reversible, derived recall de-boost + `RoiDecay` Importance demotion for proven net-negative action memories; never forgets, content untouched, recoverable by a single echo (bounds T-9)
 - Consolidation provenance carry-through (ConsolidationEngine.cs) — prevents laundering a poisoned source into a trusted insight
 - Backup SHA256 checksum verification
 - API key scopes restrict write access
@@ -200,7 +202,7 @@ Objectives: **Confidentiality** (who may read it), **Integrity** (it is not tamp
 |-------|-----------------|-----------|--------------|------------|
 | **Ingest** | SecretScanner blocks credential storage; API scopes gate writes | SignalGate rejects low-signal content; strongly-typed deserialization | — | `MemoryProvenance` stamped on every write; pack/intake tagged at the import surface |
 | **Store** | OS file permissions on RavenDB data dir; localhost-only binding | Append-only model with validity intervals | Maintenance TTL + retention; backups | Provenance + `Source` + `DerivedFrom` persisted; never mutated in place |
-| **Retrieve** | API key scopes on read endpoints | Non-local de-boost (0.8×) on mounted layers | Hybrid lexical+vector recall; type budgets | **Trust tier (`MemoryTrust`) gates retrieval weight** — pack/intake & procedure/heuristic held provisional until echoed |
+| **Retrieve** | API key scopes on read endpoints | Non-local de-boost (0.8×) on mounted layers; reversible ROI de-boost of proven net-negative action memories *(T-9)* | Hybrid lexical+vector recall; type budgets | **Trust tier (`MemoryTrust`) gates retrieval weight** — pack/intake & procedure/heuristic held provisional until echoed |
 | **Consolidate** | Runs in-process, no new exposure | Dedup + supersession chains | Importance boost keeps salient insights alive | **Provenance carry-through** — untrusted sources cannot launder into a trusted insight; boost admits trusted sources only |
 | **Forget** | Soft-delete hides content from recall | Forget audit observation with reason + `DerivedFrom` | Soft-delete preserves history (recoverable) | Audit trail records who/why; version chain via `eidet_history` |
 | **Share** | Packs are read-only layers; no auto-share | No pack signature verification *(residual — T-1)* | Pack export/import portability | Provenance survives export (markdown frontmatter); imported packs stay provisional via trust tier |
@@ -256,6 +258,7 @@ Known gaps (tracked above): no pack signature verification (T-1, T-7 attack surf
 |---------|------|--------|---------|
 | 1.0 | 2026-04-12 | Steve Hansen | Initial STRIDE analysis covering all 10 implementation phases |
 | 1.1 | 2026-06-22 | Steve Hansen | Added provenance/trust tier (T-7 single-shot poisoning, T-8 consolidation laundering) and the 6-phase × 4-objective memory-lifecycle security taxonomy (§2.7) |
+| 1.2 | 2026-06-24 | Steve Hansen | Added T-9 feedback-driven memory suppression (downward dual of T-7) for the #35 ROI gate + tiered fizzle penalty; reversibility bounds it |
 
 ---
 
