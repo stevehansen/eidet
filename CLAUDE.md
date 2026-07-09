@@ -132,9 +132,34 @@ Base: `http://localhost:19380`
 
 Memory IDs are URL-encoded. `repo` param is the filesystem path. Memory IDs are `memories/{normalized-repo}/{type}/{hash}`.
 
-## Security
+## Security Documentation
 
-STRIDE threat model in `STRIDE.md`. Update when adding auth, changing storage/secrets handling, adding external integrations, modifying trust boundaries, or after incidents. Critical/High findings need linked GitHub issues with the `security` label. Review annually or after major releases.
+### STRIDE.md Threat Model
+
+This repository includes a STRIDE threat model (`STRIDE.md`) for security analysis.
+
+**When to update STRIDE.md:**
+- Adding new authentication/authorization mechanisms
+- Changing data storage, encryption, or secrets handling
+- Adding new external integrations, API endpoints, or MCP tools
+- Modifying trust boundaries (new external connections, database access)
+- After security incidents or penetration test findings
+- When addressing security recommendations from the document
+- **When a change mitigates or resolves an existing finding** — move it to Mitigated/Resolved (update the mitigation text, score/status, and risk-summary row)
+
+**Updates are bidirectional and ride in the same PR.** Whether a change *introduces/surfaces* a threat or *mitigates/resolves* one, the matching `STRIDE.md` edit ships in the **same PR** as the code/config change — never as a follow-up. A fix that closes a tracked finding is not done until `STRIDE.md` (and the linked issue's status) reflects it. Treat a security-relevant diff with no STRIDE.md change as incomplete.
+
+**How to update:**
+1. Add new threats to the relevant STRIDE category (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege)
+2. Assess Likelihood (1-4) × Impact (1-4) = Score; high priority = score ≥ 8
+3. Cite the OWASP ASVS 5.0 chapter (or infra control for Repudiation/DoS) in the Control column
+4. Document existing mitigations or add recommendations
+5. Link GitHub issues for unresolved findings
+6. Update the Review History table and version header
+
+**Tracking critical findings:**
+- Critical/High risk findings (score ≥ 8) need a linked GitHub issue with the `security` label
+- Review STRIDE.md annually or after major releases
 
 ## Links
 

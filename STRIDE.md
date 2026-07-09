@@ -1,6 +1,6 @@
 # Eidet - STRIDE Threat Model
 
-**Version:** 1.2
+**Version:** 1.3
 **Created:** 2026-04-12
 **Author:** Steve Hansen
 **Next Review:** 2027-04-12
@@ -17,7 +17,7 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 
 | User | Description | Access |
 |------|-------------|--------|
-| AI Agent (MCP) | Claude Code, Cursor, etc. connecting via MCP stdio or HTTP | Full tool access (13 MCP tools) |
+| AI Agent (MCP) | Claude Code, Cursor, etc. connecting via MCP stdio or HTTP | Full tool access (8 MCP tools: 6 core + park/resolve) |
 | AI Agent (REST) | Any HTTP client using the REST API | API key scoped (read/write/admin) |
 | Developer (CLI) | Local user running `eidet` commands | Full access via CLI |
 | Developer (Web UI) | Browser user at `http://localhost:19380/ui` | Read-only browse + admin actions |
@@ -82,20 +82,23 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 | Backup Files | Full RavenDB export in .eidetbackup ZIP | High — contains all memories |
 | Pack Files | Exported Packs in .eidet (markdown/JSON) | Medium — portable memory sets |
 | Enrichment Data | Ollama-generated summaries, foresight hints, entities | Low — derived from content |
+| Loose Ends | Parked open-work notes (`looseends/*` collection) | Medium — free-text notes injected into agent context; no trust tier, no decay |
 
 ---
 
 ## 2. STRIDE Analysis
 
+> **Controls:** each threat cites the OWASP ASVS 5.0 chapter (V1–V17) that addresses it, or the infrastructure control where ASVS coverage is thin (Repudiation, DoS). Target level: **L1** — Eidet is a local, single-user developer tool; its highest-classification data (API key hashes, backups) is protected by OS file permissions rather than multi-tenant controls.
+
 ### 2.1 Spoofing
 
-| ID | Threat | Attack Path | Likelihood | Impact | Score | Mitigation |
-|----|--------|-------------|:----------:|:------:|:-----:|------------|
-| S-1 | API key interception | Attacker sniffs Bearer token over unencrypted HTTP on non-localhost network | 2 | 4 | **8** | Auth only required for non-localhost by default. Localhost traffic not typically interceptable. For remote access, deploy behind TLS reverse proxy. |
-| S-2 | Unauthenticated localhost access | Any local process can call the API without auth when auth is disabled (default) | 3 | 2 | 6 | By design — localhost-only binding assumed trusted. Auth can be enabled via `eidet api-key create`. |
-| S-3 | MCP stdio spoofing | Malicious process hijacks stdio pipe to impersonate AI agent | 1 | 3 | 3 | MCP stdio is launched by the AI client itself. Process-level isolation is the OS responsibility. |
-| S-4 | CORS-based credential theft | Malicious website makes cross-origin API calls using user's browser session | 2 | 3 | 6 | API uses Bearer tokens (not cookies), so CORS `*` does not leak credentials. However, unauthenticated endpoints (health, status, UI) are accessible cross-origin. |
-| S-5 | Auth guard bypass via env var | Attacker sets `EIDET_AUTH_REQUIRE_NONLOCALHOST=false` to disable network auth requirement | 1 | 4 | 4 | Requires ability to set environment variables in the service process — implies existing system compromise. |
+| ID | Threat | Attack Path | Likelihood | Impact | Score | Control | Mitigation |
+|----|--------|-------------|:----------:|:------:|:-----:|---------|------------|
+| S-1 | API key interception | Attacker sniffs Bearer token over unencrypted HTTP on non-localhost network | 2 | 4 | **8** | V6, V12 | Auth only required for non-localhost by default. Localhost traffic not typically interceptable. For remote access, deploy behind TLS reverse proxy. |
+| S-2 | Unauthenticated localhost access | Any local process can call the API without auth when auth is disabled (default) | 3 | 2 | 6 | V6 | By design — localhost-only binding assumed trusted. Auth can be enabled via `eidet api-key create`. |
+| S-3 | MCP stdio spoofing | Malicious process hijacks stdio pipe to impersonate AI agent | 1 | 3 | 3 | V6; infra: OS process isolation | MCP stdio is launched by the AI client itself. Process-level isolation is the OS responsibility. Note: stdio transport bypasses `ApiAuthGate` entirely — auth applies to HTTP only. |
+| S-4 | CORS-based credential theft | Malicious website makes cross-origin API calls using user's browser session | 2 | 3 | 6 | V3, V4 | API uses Bearer tokens (not cookies), so CORS `*` does not leak credentials. However, unauthenticated endpoints (health, status, UI) are accessible cross-origin. |
+| S-5 | Auth guard bypass via env var | Attacker sets `EIDET_AUTH_REQUIRE_NONLOCALHOST=false` to disable network auth requirement | 1 | 4 | 4 | V13 | Requires ability to set environment variables in the service process — implies existing system compromise. |
 
 **Countermeasures in place:**
 - API key auth with SHA256 hashing and scope model (ApiKeyService.cs)
@@ -105,21 +108,27 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 
 ### 2.2 Tampering
 
-| ID | Threat | Attack Path | Likelihood | Impact | Score | Mitigation |
-|----|--------|-------------|:----------:|:------:|:-----:|------------|
-| T-1 | Malicious pack import | Attacker crafts .eidet pack with forged importance scores, fake lineage chains, or memories targeting other repos | 2 | 3 | 6 | Pack imports are assigned to `bundle:{packId}` layer (read-only), non-local memories de-boosted 0.8x in recall scoring. No signature verification on pack files. |
-| T-2 | Config file modification | Attacker modifies config.json to change RavenDB URL (exfiltrate data), add malicious hooks, or disable auth | 2 | 4 | **8** | Config file lives in user's AppData/home directory with OS-level file permissions. No integrity checking on config load. |
-| T-3 | Unverified binary update | `eidet update` downloads binary from GitHub Releases over HTTPS but does not verify cryptographic signature | 2 | 4 | **8** | HTTPS provides transport security. GitHub's CDN provides some integrity. No GPG or checksum verification of downloaded binary. |
-| T-4 | Backup tampering | Attacker modifies .eidetbackup manifest or contents | 1 | 3 | 3 | SHA256 checksum verified on restore (BackupService.cs:115). Tampering both data and manifest checksum in a consistent way requires understanding the format. |
-| T-5 | Environment variable injection | Attacker sets `EIDET_RAVEN_URL` to redirect database traffic to attacker-controlled server | 1 | 4 | 4 | Requires process-level env var access. No URL validation on config load. |
-| T-6 | Memory content manipulation via API | Authenticated attacker stores misleading memories to poison agent knowledge | 2 | 2 | 4 | Write gate blocks secrets and low-signal content. Scope model limits write access. Quality dashboard detects anomalies. |
-| T-7 | Single-shot memory poisoning via pack import | Attacker crafts one Pack/Intake memory — especially a Procedure or Heuristic — that an agent recalls and acts on without it ever being echoed (MemoryGraft, trigger-free, single-shot — arXiv:2512.16962) | 2 | 4 | **8** | **Provenance/trust tier** (`MemoryTrust`) — derived, never-stored trust factor gates retrieval weight. Pack/Intake float at 0.5, Procedure/Heuristic at 0.7 (floors combine as `min`); only earned echoes lift a memory toward 1.0. A freshly-injected, never-echoed pack Procedure is held at 0.5 in recall scoring, below trusted first-party memories. Import hardening: a pack's self-declared `provenance=` cannot escalate trust above the Pack floor — `MarkdownPackFormat` clamps any trust-raising declaration back to `Pack`, so an attacker controlling the pack bytes cannot self-assign first-party trust. |
-| T-8 | Provenance laundering via consolidation | Attacker injects a poisoned Pack/Intake observation, then relies on consolidation to fold it into a high-trust Insight (`Provenance=Consolidation`), erasing the low-trust origin (compression-amplified toxin) | 2 | 3 | 6 | **Consolidation carry-through** — a new insight derived from any untrusted source inherits the *least-trusted* contributor's provenance (not `Consolidation`), so the trust tier keeps demoting it. The boost path admits only trusted sources: untrusted matches can neither raise a trusted insight's importance nor contaminate its lineage. |
-| T-9 | Feedback-driven memory suppression | Caller with feedback access (or any localhost caller when auth is off) repeatedly fizzles a *legitimate* Procedure/Heuristic — preferentially with `reason=incorrect`/`version_drift`, which triggers the steeper content-invalidating penalty (Importance −0.2 / Confidence −0.3 per fizzle) — to drive the ROI gate's recall de-boost and `RoiDecay` Importance demotion, suppressing a useful memory below recall threshold (the downward dual of T-7's poison-upward) | 2 | 2 | 4 | **Reversible by design** — `MemoryRoi` is derived (never stored), never forgets, and never mutates content; Importance floors at 0.05 (never zero) and `RoiDecay` only engages after `MinFeedback=3`, so suppression is gradual, not single-shot. A single echo back to parity restores full ROI and the next maintenance pass leaves the memory alone. Requires the same write/feedback trust boundary as T-6; append-only echo/fizzle counts feed the quality dashboard's high-fizzle check. |
+| ID | Threat | Attack Path | Likelihood | Impact | Score | Control | Mitigation |
+|----|--------|-------------|:----------:|:------:|:-----:|---------|------------|
+| T-1 | Malicious pack import | Attacker crafts .eidet pack with forged importance scores, fake lineage chains, or memories targeting other repos | 2 | 3 | 6 | V2, V11 | Pack imports are assigned to `bundle:{packId}` layer (read-only), non-local memories de-boosted 0.8x in recall scoring. No signature verification on pack files. |
+| T-2 | Config file modification | Attacker modifies config.json to change RavenDB URL (exfiltrate data), add malicious hooks, or disable auth | 2 | 4 | **8** | V13; infra: OS file permissions | Config file lives in user's AppData/home directory with OS-level file permissions. No integrity checking on config load. |
+| T-3 | Unverified binary update | `eidet update` downloads binary from GitHub Releases over HTTPS but does not verify cryptographic signature | 2 | 4 | **8** | V11, V12 | HTTPS provides transport security. GitHub's CDN provides some integrity. No GPG or checksum verification of downloaded binary. |
+| T-4 | Backup tampering | Attacker modifies .eidetbackup manifest or contents | 1 | 3 | 3 | V11 | SHA256 checksum verified on restore (BackupService.cs:115). Tampering both data and manifest checksum in a consistent way requires understanding the format. |
+| T-5 | Environment variable injection | Attacker sets `EIDET_RAVEN_URL` to redirect database traffic to attacker-controlled server | 1 | 4 | 4 | V2, V13 | Requires process-level env var access. No URL validation on config load. |
+| T-6 | Memory content manipulation via API | Authenticated attacker stores misleading memories to poison agent knowledge | 2 | 2 | 4 | V2 | Write gate blocks secrets and low-signal content. Scope model limits write access. Quality dashboard detects anomalies. |
+| T-7 | Single-shot memory poisoning via pack import | Attacker crafts one Pack/Intake memory — especially a Procedure or Heuristic — that an agent recalls and acts on without it ever being echoed (MemoryGraft, trigger-free, single-shot — arXiv:2512.16962) | 2 | 4 | **8** | V2, V5 | **Provenance/trust tier** (`MemoryTrust`) — derived, never-stored trust factor gates retrieval weight. Pack/Intake float at 0.5, Procedure/Heuristic at 0.7 (floors combine as `min`); only earned echoes lift a memory toward 1.0. A freshly-injected, never-echoed pack Procedure is held at 0.5 in recall scoring, below trusted first-party memories. Import hardening: a pack's self-declared `provenance=` cannot escalate trust above the Pack floor — `MarkdownPackFormat` clamps any trust-raising declaration back to `Pack`, so an attacker controlling the pack bytes cannot self-assign first-party trust. |
+| T-8 | Provenance laundering via consolidation | Attacker injects a poisoned Pack/Intake observation, then relies on consolidation to fold it into a high-trust Insight (`Provenance=Consolidation`), erasing the low-trust origin (compression-amplified toxin) | 2 | 3 | 6 | V2 | **Consolidation carry-through** — a new insight derived from any untrusted source inherits the *least-trusted* contributor's provenance (not `Consolidation`), so the trust tier keeps demoting it. The boost path admits only trusted sources: untrusted matches can neither raise a trusted insight's importance nor contaminate its lineage. |
+| T-9 | Feedback-driven memory suppression | Caller with feedback access (or any localhost caller when auth is off) repeatedly fizzles a *legitimate* Procedure/Heuristic — preferentially with `reason=incorrect`/`version_drift`, which triggers the steeper content-invalidating penalty (Importance −0.2 / Confidence −0.3 per fizzle) — to drive the ROI gate's recall de-boost and `RoiDecay` Importance demotion, suppressing a useful memory below recall threshold (the downward dual of T-7's poison-upward) | 2 | 2 | 4 | V2 | **Reversible by design** — `MemoryRoi` is derived (never stored), never forgets, and never mutates content; Importance floors at 0.05 (never zero) and `RoiDecay` only engages after `MinFeedback=3`, so suppression is gradual, not single-shot. A single echo back to parity restores full ROI and the next maintenance pass leaves the memory alone. Requires the same write/feedback trust boundary as T-6; append-only echo/fizzle counts feed the quality dashboard's high-fizzle check. |
+| T-10 | Agent-context injection via loose ends | Attacker with `write:all` (or any localhost caller when auth is off) parks a malicious loose end. Park bypasses the signal gate (secret scan only — LooseEndService.cs:48), loose ends carry **no provenance/trust** (LooseEnd.cs has no `MemoryProvenance`/trust fields), and they surface **unconditionally**: wake-up slice injects the top-3 open ends by priority into every `eidet_context` call (MemoryService.cs:621-643), and recall ride-along matches by tag overlap (cap 3). `priority` is caller-controlled and unclamped (ParkToolHandler.cs:33), so the attacker's item sorts first. The entire T-7 trust-tier defense is sidestepped — a trigger-free instruction injection that renders at the top of agent context every session | 2 | 4 | **8** | V2 | Volume is bounded (wake-up cap 3 + 120-token sub-budget; ride-along cap 3) but content is not trust-gated. Secret scan runs on park (same `SecretScanRule` as the write gate). Promote-to-memory re-enters the full write gate (`MemoryServicePromotionAdapter` → `MemoryService.StoreAsync`). Same trust boundary as T-6. **Recommended**: apply the trust tier (or a provisional-until-touched hold) to ride-along/wake-up rendering; clamp `priority` to 1–3. |
+| T-11 | Retrieval-weight skew via alpha-learning feedback | Feedback-capable caller (same boundary as T-9) issues ~20–40 crafted echo/fizzle events to push the per-repo learned alpha (lexical-vs-vector blend) to a clamp, degrading **all** recall quality in that repo — broader blast radius than T-9's single-memory suppression | 2 | 2 | 4 | V2 | **Bounded by design** — EWMA λ=0.1 with alpha clamped to [0.15, 0.85] at both learn time and read time (MemoryService.cs:32-34, 485-489), so neither retrieval arm can ever be fully muted; worst case is quality degradation, not denial. Server-side atomic EWMA patch prevents lost updates. Reversible — normal genuine feedback re-converges alpha. |
+| T-12 | Recall injection via forged memory links | Attacker with `write:all` attaches a `MemoryLink` from a legitimate high-scoring memory to a poisoned low-trust one (`POST /api/eidet/{id}/links` validates neither target existence, nor same-repo, nor ownership — MemoryService.cs:313-340); graph-neighbor expansion then pulls the poisoned memory into the recall candidate pool riding the parent's fused score | 2 | 3 | 6 | V2, V8 | Neighbors pass the **same** trust × ROI × non-local de-boost loop as direct hits, judged on their **own** metadata — parent trust does not transfer (MemoryService.cs:435-461). Expansion capped at 5 neighbors, 1 hop. Recall-time scope recheck on the loaded entry's actual `RepoId` neutralizes forged cross-repo links (MemoryService.cs:536-539). Residual: trust is a multiplicative de-boost with **no absolute cutoff**, so a strongly-linked 0.5-trust neighbor can still rank into a small result pool. |
 
 **Countermeasures in place:**
 - Write gate with SecretScanner (13 patterns) and SignalGate (WriteGate.cs)
 - Pack imports isolated to read-only layers with de-boost scoring
+- Graph-neighbor expansion runs *before* the trust/ROI/de-boost loop so neighbors get identical downstream gating; scope recheck on actual `RepoId` blocks forged cross-repo links (bounds T-12)
+- Per-repo alpha clamped [0.15, 0.85] at learn and read time — the compensating control for shipping alpha-learning (bounds T-11)
+- Loose-end park runs the same `SecretScanRule` as the write gate; promote-to-memory re-enters the full gated funnel (partial bound on T-10)
 - Provenance/trust tier (`MemoryTrust`, MemoryTrust.cs) — derived per-recall trust factor gating retrieval weight; deterministic, local, always-on; no stored field to forge
 - Realized-benefit ROI gate (`MemoryRoi`, MemoryRoi.cs) — reversible, derived recall de-boost + `RoiDecay` Importance demotion for proven net-negative action memories; never forgets, content untouched, recoverable by a single echo (bounds T-9)
 - Consolidation provenance carry-through (ConsolidationEngine.cs) — prevents laundering a poisoned source into a trusted insight
@@ -129,11 +138,11 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 
 ### 2.3 Repudiation
 
-| ID | Threat | Attack Path | Likelihood | Impact | Score | Mitigation |
-|----|--------|-------------|:----------:|:------:|:-----:|------------|
-| R-1 | Unattributed API access | No request-level logging — cannot determine who called which endpoint or when | 3 | 2 | 6 | No HTTP request logging middleware. API key ID is available but not logged per-request. |
-| R-2 | Forget without audit | User forgets a memory and claims it never existed | 1 | 2 | 2 | Forget creates audit observation with reason and DerivedFrom link (MemoryService.cs:356-371). Soft-delete preserves ValidUntil timestamp. |
-| R-3 | Hook execution unlogged | Hooks execute external commands with no persistent record of what ran or its output | 2 | 2 | 4 | Post-hook failures are silently swallowed. No execution log for pre-hook or post-hook invocations. |
+| ID | Threat | Attack Path | Likelihood | Impact | Score | Control | Mitigation |
+|----|--------|-------------|:----------:|:------:|:-----:|---------|------------|
+| R-1 | Unattributed API access | No request-level logging — cannot determine who called which endpoint or when | 3 | 2 | 6 | V16; infra: request audit log | No HTTP request logging middleware. API key ID is available but not logged per-request. |
+| R-2 | Forget without audit | User forgets a memory and claims it never existed | 1 | 2 | 2 | V16 | Forget creates audit observation with reason and DerivedFrom link (MemoryService.cs:356-371). Soft-delete preserves ValidUntil timestamp. |
+| R-3 | Hook execution unlogged | Hooks execute external commands with no persistent record of what ran or its output | 2 | 2 | 4 | V16 | Post-hook failures are silently swallowed. No execution log for pre-hook or post-hook invocations. |
 
 **Countermeasures in place:**
 - Soft-delete with validity intervals (append-only model)
@@ -142,14 +151,14 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 
 ### 2.4 Information Disclosure
 
-| ID | Threat | Attack Path | Likelihood | Impact | Score | Mitigation |
-|----|--------|-------------|:----------:|:------:|:-----:|------------|
-| I-1 | Exception message leakage | API returns raw `ex.Message` in 500 responses, potentially exposing file paths, connection strings, or stack traces | 3 | 3 | **9** | Catch-all handler at EidetApi.cs:212-214 returns exception message directly. |
-| I-2 | Unauthenticated status info | `/api/status` reveals version, uptime, database type, and memory statistics without authentication | 3 | 2 | 6 | By design for operational monitoring. Information value is low but aids reconnaissance. |
-| I-3 | Memory content in Ollama prompts | User memory content sent to Ollama over plaintext HTTP for enrichment | 2 | 3 | 6 | Ollama runs locally (localhost:11434). Content not sent over network unless Ollama URL is changed. Enrichment is optional and can be disabled. |
-| I-4 | Unencrypted backup files | .eidetbackup files contain full database export without encryption | 2 | 3 | 6 | Backups stored in user's AppData directory. File system permissions are the only protection. |
-| I-5 | Config file contains service topology | config.json contains RavenDB URL, Ollama URL, bind address, API key hashes | 2 | 2 | 4 | Stored in user profile directory with OS-level file permissions. API key hashes cannot recover raw keys. |
-| I-6 | Cross-origin information via CORS | CORS `Access-Control-Allow-Origin: *` allows any website to read API responses from unauthenticated endpoints | 2 | 2 | 4 | Health, status, and UI endpoints are public. With auth enabled, all data endpoints require Bearer token which browsers cannot automatically attach cross-origin. |
+| ID | Threat | Attack Path | Likelihood | Impact | Score | Control | Mitigation |
+|----|--------|-------------|:----------:|:------:|:-----:|---------|------------|
+| I-1 | Exception message leakage | Endpoint-level handlers return raw `ex.Message` in error responses, potentially exposing file paths or connection details | 2 | 2 | 4 | V16 | **Partially fixed** — the API catch-all now returns generic `"Internal server error"` and logs details server-side (EidetApi.cs:120-124). Residual `ex.Message` leaks: `ToolDispatcher.cs:42,47` (REST + MCP tool errors), MCP JSON-RPC internal errors (McpEndpoint.cs:68, McpServer.cs:74), and `EnrichEndpoint.cs:51`. |
+| I-2 | Unauthenticated status info | `/api/status` reveals version, uptime, database type, and memory statistics without authentication | 3 | 2 | 6 | V4, V13 | By design for operational monitoring. Information value is low but aids reconnaissance. |
+| I-3 | Memory content in Ollama prompts | User memory content sent to Ollama over plaintext HTTP for enrichment | 2 | 3 | 6 | V12, V14 | Ollama runs locally (localhost:11434). Content not sent over network unless Ollama URL is changed. Enrichment is optional and can be disabled. |
+| I-4 | Unencrypted backup files | .eidetbackup files contain full database export without encryption | 2 | 3 | 6 | V11, V14 | Backups stored in user's AppData directory. File system permissions are the only protection. |
+| I-5 | Config file contains service topology | config.json contains RavenDB URL, Ollama URL, bind address, API key hashes | 2 | 2 | 4 | V13, V14 | Stored in user profile directory with OS-level file permissions. API key hashes cannot recover raw keys. |
+| I-6 | Cross-origin information via CORS | CORS `Access-Control-Allow-Origin: *` allows any website to read API responses from unauthenticated endpoints | 2 | 2 | 4 | V3, V14 | Health, status, and UI endpoints are public. With auth enabled, all data endpoints require Bearer token which browsers cannot automatically attach cross-origin. |
 
 **Countermeasures in place:**
 - API key auth with scope model for data endpoints
@@ -161,29 +170,31 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 
 ### 2.5 Denial of Service
 
-| ID | Threat | Attack Path | Likelihood | Impact | Score | Mitigation |
-|----|--------|-------------|:----------:|:------:|:-----:|------------|
-| D-1 | No rate limiting | Attacker floods API with requests, exhausting RavenDB connections or CPU | 2 | 3 | 6 | No rate limiting on any endpoint. Mitigated by localhost-only default binding. |
-| D-2 | Large request body | Attacker sends oversized JSON body to store endpoint, consuming memory | 2 | 2 | 4 | No explicit request size limit in HttpListener. RavenDB document size limits provide some protection. |
-| D-3 | Expensive vector search | Attacker issues many concurrent vector similarity searches | 2 | 2 | 4 | RavenDB handles query load. 2x over-fetch for hybrid retrieval adds overhead. |
-| D-4 | Hook process fork bomb | Malicious hook configuration spawns processes rapidly | 1 | 3 | 3 | Hooks have configurable timeout with process tree kill (HookRunner.cs:161). Only runs hooks configured by the user themselves. |
-| D-5 | Embedded RavenDB disk exhaustion | Continuous storage fills embedded RavenDB data directory | 2 | 2 | 4 | Maintenance pipeline provides TTL expiry and observation retention. No hard disk quota enforcement. |
+| ID | Threat | Attack Path | Likelihood | Impact | Score | Control | Mitigation |
+|----|--------|-------------|:----------:|:------:|:-----:|---------|------------|
+| D-1 | No rate limiting | Attacker floods API with requests, exhausting RavenDB connections or CPU | 2 | 3 | 6 | Infra: localhost bind; reverse-proxy rate limit for remote | No rate limiting on any endpoint. Mitigated by localhost-only default binding. |
+| D-2 | Large request body | Attacker sends oversized JSON body to store endpoint, consuming memory | 2 | 2 | 4 | V4; infra | No explicit request size limit in HttpListener. RavenDB document size limits provide some protection. |
+| D-3 | Expensive vector search | Attacker issues many concurrent vector similarity searches | 2 | 2 | 4 | Infra: localhost bind | RavenDB handles query load. 2x over-fetch for hybrid retrieval adds overhead. |
+| D-4 | Hook process fork bomb | Malicious hook configuration spawns processes rapidly | 1 | 3 | 3 | Infra: hook timeout + process-tree kill | Hooks have configurable timeout with process tree kill (HookRunner.cs:161). Only runs hooks configured by the user themselves. |
+| D-5 | Embedded RavenDB disk exhaustion | Continuous storage fills embedded RavenDB data directory | 2 | 2 | 4 | Infra: maintenance TTL/retention | Maintenance pipeline provides TTL expiry and observation retention. No hard disk quota enforcement. |
+| D-6 | Unbounded loose-end accumulation | Loose ends have no TTL, no per-repo cap, no dedup (IDs hash `note + createdAt`, so re-parking identical notes always mints new documents), no maximum note length, and resolved ends are kept forever — a `write:all` caller (or any localhost process when auth is off) can inflate the collection without limit | 2 | 2 | 4 | V4; infra: maintenance | Read-side caps only: wake-up slice 3, ride-along scans top-200/takes 3, list clamped to 100 — context stays bounded even if the collection grows. No write-side bound. **Recommended**: max note length on park, and a retention sweep for resolved ends. |
 
 **Countermeasures in place:**
 - Hook execution timeout with process tree kill
-- Maintenance pipeline with TTL expiry, dedup sweep, importance decay
+- Maintenance pipeline with TTL expiry, dedup sweep, importance decay (memories; loose ends excluded by design — see D-6)
 - Graceful shutdown on SIGTERM/Ctrl+C
 - Default localhost-only binding limits attack surface
+- Loose-end read paths hard-capped (wake-up 3 + 120-token sub-budget, ride-along 3) so stored volume cannot blow up agent context
 
 ### 2.6 Elevation of Privilege
 
-| ID | Threat | Attack Path | Likelihood | Impact | Score | Mitigation |
-|----|--------|-------------|:----------:|:------:|:-----:|------------|
-| E-1 | Arbitrary command execution via hooks | Attacker who gains config.json write access adds malicious hook commands | 2 | 4 | **8** | Hook commands execute arbitrary processes (HookRunner.cs:126). Requires config file write access, which implies existing local compromise. UseShellExecute=false prevents shell injection. |
-| E-2 | File path traversal in pack/export | API accepts user-controlled file paths for pack import (`path`) and export (`outputPath`) without directory restriction | 2 | 3 | 6 | Can read .eidet files from or write to arbitrary filesystem locations (within process permissions). No directory whitelist. |
-| E-3 | Prompt injection via Ollama | Malicious memory content manipulates Ollama prompt to produce crafted enrichment output | 2 | 2 | 4 | Ollama output stored as metadata (summaries, hints). Not executed. Write gate still validates enrichment-triggered stores. |
-| E-4 | Cross-repo memory pollution | Authenticated user stores memories for repos they don't own | 2 | 2 | 4 | RepoId is caller-specified with no ownership verification. Local-only scope makes this low risk (all repos belong to same user). |
-| E-5 | Install command runs system commands | `eidet install` executes schtasks.exe, launchctl, or systemctl | 1 | 3 | 3 | Commands are hardcoded (not user-controlled). Binary path is constructed from install directory. Runs at user privilege level, not elevated. |
+| ID | Threat | Attack Path | Likelihood | Impact | Score | Control | Mitigation |
+|----|--------|-------------|:----------:|:------:|:-----:|---------|------------|
+| E-1 | Arbitrary command execution via hooks | Attacker who gains config.json write access adds malicious hook commands | 2 | 4 | **8** | V13; infra: OS file permissions | Hook commands execute arbitrary processes (HookRunner.cs:126). Requires config file write access, which implies existing local compromise. UseShellExecute=false prevents shell injection. |
+| E-2 | File path traversal in pack/export | API accepts user-controlled file paths for pack import (`path`) and export (`outputPath`) without directory restriction | 2 | 3 | 6 | V5, V8 | Can read .eidet files from or write to arbitrary filesystem locations (within process permissions). No directory whitelist. |
+| E-3 | Prompt injection via Ollama | Malicious memory content manipulates Ollama prompt to produce crafted enrichment output | 2 | 2 | 4 | V1, V2 | Ollama output stored as metadata (summaries, hints). Not executed. Write gate still validates enrichment-triggered stores. |
+| E-4 | Cross-repo memory pollution | Authenticated user stores memories for repos they don't own | 2 | 2 | 4 | V8 | RepoId is caller-specified with no ownership verification. Local-only scope makes this low risk (all repos belong to same user). |
+| E-5 | Install command runs system commands | `eidet install` executes schtasks.exe, launchctl, or systemctl | 1 | 3 | 3 | V15 | Commands are hardcoded (not user-controlled). Binary path is constructed from install directory. Runs at user privilege level, not elevated. |
 
 **Countermeasures in place:**
 - Hook processes run without shell (UseShellExecute=false, no command injection)
@@ -207,7 +218,7 @@ Objectives: **Confidentiality** (who may read it), **Integrity** (it is not tamp
 | **Forget** | Soft-delete hides content from recall | Forget audit observation with reason + `DerivedFrom` | Soft-delete preserves history (recoverable) | Audit trail records who/why; version chain via `eidet_history` |
 | **Share** | Packs are read-only layers; no auto-share | No pack signature verification *(residual — T-1)* | Pack export/import portability | Provenance survives export (markdown frontmatter); imported packs stay provisional via trust tier |
 
-Known gaps (tracked above): no pack signature verification (T-1, T-7 attack surface), no per-request read audit (R-1), no encryption at rest for backups (I-4).
+Known gaps (tracked above): no pack signature verification (T-1, T-7 attack surface), no per-request read audit (R-1), no encryption at rest for backups (I-4). **Loose ends sit outside this taxonomy entirely** — they are open-work items, not memories, and bypass the signal gate, provenance/trust tier, decay, and consolidation by design; the only lifecycle controls they get are the park-time secret scan and the promote-time re-entry into the full write gate (T-10, D-6).
 
 ---
 
@@ -220,9 +231,11 @@ Known gaps (tracked above): no pack signature verification (T-1, T-7 attack surf
 | S-1 | API key interception over unencrypted HTTP | 8 | Accepted — localhost default. Improve startup logging to show bind address and auth status. |
 | T-2 | Config file modification (add hooks, change RavenDB URL, disable auth) | 8 | Accepted — attacker with config write access already has equivalent system access. Improve startup logging to show configured hooks and connection targets. |
 | T-3 | Unverified binary update from GitHub | 8 | Accepted — immutable releases enabled on GitHub, HTTPS transport, public repo/actions. Improve update command to show full download URI. |
-| I-1 | Exception message leakage in API 500 responses | 9 | To fix — return generic error messages instead of raw exception details. |
 | T-7 | Single-shot memory poisoning via pack import | 8 | Mitigated — provenance/trust tier holds never-echoed pack/procedure memories below trusted first-party recall weight. Residual: no pack signature verification (T-1). |
+| T-10 | Agent-context injection via loose ends | 8 | To fix — loose ends bypass the trust tier and render unconditionally in wake-up slice/ride-along; apply trust gating or provisional hold, clamp `priority`. |
 | E-1 | Arbitrary command execution via hook config | 8 | Accepted — same trust boundary as T-2. Hooks run at same privilege as user. Log configured hooks at startup. |
+
+*Resolved since v1.2:* I-1 (exception message leakage) dropped from 9 to 4 — the API catch-all now returns a generic error and logs details server-side (EidetApi.cs:120-124); residual endpoint-level `ex.Message` leaks tracked in §2.4.
 
 ### 3.2 Residual Risks
 
@@ -231,6 +244,9 @@ Known gaps (tracked above): no pack signature verification (T-1, T-7 attack surf
 - **No request audit log**: Cannot investigate after-the-fact who accessed what data.
 - **Pack file integrity**: .eidet pack files have no cryptographic verification, allowing memory injection if attacker can place files.
 - **Secret scanner coverage**: Regex-based patterns can be evaded with obfuscation, encoding, or unknown token formats.
+- **Trust is a de-boost, not a cutoff**: `MemoryTrust`/`MemoryRoi` multiply scores down but no absolute threshold excludes a candidate — in small result pools a heavily de-boosted poisoned memory can still rank in (T-7, T-12 residual).
+- **Loose ends outside the memory lifecycle**: no trust tier, no decay, no write-side caps; read-side caps and the park-time secret scan are the only controls (T-10, D-6).
+- **MCP stdio is unauthenticated**: `ApiAuthGate` wraps HTTP only; the stdio transport relies entirely on OS process trust (acceptable for the launched-by-client model, but worth remembering when auth is treated as the control).
 
 ---
 
@@ -244,7 +260,9 @@ Known gaps (tracked above): no pack signature verification (T-1, T-7 attack surf
 | **Secret Prevention** | SecretScanner with 13 regex patterns (AWS, GitHub, JWT, private keys, etc.), runs before all writes |
 | **Input Validation** | SignalGate rejects low-signal content, entity extraction length/format validation, System.Text.Json strongly-typed deserialization |
 | **Data Integrity** | Append-only model with validity intervals, backup SHA256 checksums, soft-delete with audit trail |
-| **Provenance & Trust** | `MemoryProvenance` stamped on every write; derived `MemoryTrust` factor gates retrieval weight (pack/intake & procedure/heuristic provisional until echoed); consolidation carry-through blocks provenance laundering — deterministic, local, always-on |
+| **Provenance & Trust** | `MemoryProvenance` stamped on every write; derived `MemoryTrust` factor gates retrieval weight (pack/intake & procedure/heuristic provisional until echoed); consolidation carry-through blocks provenance laundering; graph-neighbor expansion feeds the same trust × ROI × de-boost loop with a recall-time repo-scope recheck — deterministic, local, always-on |
+| **Retrieval Robustness** | Per-repo learned alpha clamped [0.15, 0.85] at learn and read time; neighbor expansion capped (5 neighbors, 1 hop); rerank-before-truncate applies all de-boosts before the token budget cuts |
+| **Loose Ends** | Park runs the write gate's `SecretScanRule`; promote re-enters the full gated funnel; read-side hard caps (wake-up 3 + 120-token sub-budget, ride-along 3). Gaps: no trust tier, no priority clamp, no write-side volume/length bounds (T-10, D-6) |
 | **XSS Prevention** | escHtml() in Web UI for all user content, path traversal protection for embedded file serving |
 | **Process Isolation** | Hook execution with UseShellExecute=false, configurable timeout, process tree kill |
 | **Quality Monitoring** | QualityService with 8 checks (stale, high-fizzle, conflicts, orphans, tag concentration, type imbalance, low-confidence, missing entities) |
@@ -259,12 +277,14 @@ Known gaps (tracked above): no pack signature verification (T-1, T-7 attack surf
 | 1.0 | 2026-04-12 | Steve Hansen | Initial STRIDE analysis covering all 10 implementation phases |
 | 1.1 | 2026-06-22 | Steve Hansen | Added provenance/trust tier (T-7 single-shot poisoning, T-8 consolidation laundering) and the 6-phase × 4-objective memory-lifecycle security taxonomy (§2.7) |
 | 1.2 | 2026-06-24 | Steve Hansen | Added T-9 feedback-driven memory suppression (downward dual of T-7) for the #35 ROI gate + tiered fizzle penalty; reversibility bounds it |
+| 1.3 | 2026-07-02 | Steve Hansen (Claude Code session) | Loose Ends coverage (#42/#48): T-10 agent-context injection, D-6 unbounded accumulation. Recall changes (#33/#47/#52): T-11 alpha-skew, T-12 link-based neighbor injection. I-1 downgraded 9→4 (catch-all fixed, endpoint leaks residual). Backfilled OWASP ASVS 5.0 Control column for all threats (target level L1). MCP tool count corrected 13→8. |
 
 ---
 
 ## 6. References
 
 - [STRIDE Threat Modeling](https://learn.microsoft.com/en-us/azure/security/develop/threat-modeling-tool-threats) — Microsoft Security
+- [OWASP ASVS 5.0](https://owasp.org/www-project-application-security-verification-standard/) — Control citations (V1–V17)
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/) — Web Application Security Risks
 - [RavenDB Security](https://ravendb.net/docs/article-page/7.0/csharp/server/security/overview) — RavenDB Documentation
 - [MCP Specification](https://modelcontextprotocol.io/) — Model Context Protocol
