@@ -86,6 +86,81 @@ public class StoreToolHandlerTests
         Assert.Contains("Blocked", result.HumanSummary, StringComparison.OrdinalIgnoreCase);
     }
 
+    // ─── Valence: one-line `negative` sugar (ValenceSpec) ─────────────
+
+    [Fact]
+    public async Task Store_NegativeTrue_NoType_StoresRefutingHeuristicWithDeadEndTag()
+    {
+        var handler = NewHandler(out var store);
+
+        var result = await Invoke(handler, new
+        {
+            content = "Tried Npgsql connection pooling under load — it deadlocks, so do not enable it here",
+            negative = true,
+        });
+
+        Assert.Equal(ToolStatus.Ok, result.Status);
+        var entry = Assert.Single(store.Entries);
+        Assert.Equal(Valence.Refuting, entry.Valence);
+        Assert.Equal(MemoryType.Heuristic, entry.Type);   // no type + non-neutral valence ⇒ near-immortal heuristic
+        Assert.Equal(0.7f, entry.Importance, precision: 5);
+        Assert.Contains("dead-end", entry.Tags, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Store_ExplicitValence_OverridesNegative()
+    {
+        var handler = NewHandler(out var store);
+
+        var result = await Invoke(handler, new
+        {
+            content = "Postgres advisory locks work but serialize the entire worker pool — use sparingly",
+            negative = true,
+            valence = "cautionary",
+        });
+
+        Assert.Equal(ToolStatus.Ok, result.Status);
+        var entry = Assert.Single(store.Entries);
+        // Explicit valence wins over the negative shorthand.
+        Assert.Equal(Valence.Cautionary, entry.Valence);
+        Assert.Equal(MemoryType.Heuristic, entry.Type);
+    }
+
+    [Fact]
+    public async Task Store_ExplicitRefuting_NoNegative_GetsSameDeadEndConveniencesAsSugar()
+    {
+        var handler = NewHandler(out var store);
+
+        // Full parity: recording a dead-end via explicit valence (no `negative`) must be as
+        // discoverable and long-lived as the negative:true one-liner — same tag, same importance.
+        var result = await Invoke(handler, new
+        {
+            content = "Tried a global static HttpClient for Ollama calls — socket exhaustion under burst, do not reuse it",
+            valence = "refuting",
+        });
+
+        Assert.Equal(ToolStatus.Ok, result.Status);
+        var entry = Assert.Single(store.Entries);
+        Assert.Equal(Valence.Refuting, entry.Valence);
+        Assert.Equal(MemoryType.Heuristic, entry.Type);
+        Assert.Equal(0.7f, entry.Importance, precision: 5);
+        Assert.Contains("dead-end", entry.Tags, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Store_NoType_NoNegative_NoValence_ReturnsBadRequestTypeRequired()
+    {
+        var handler = NewHandler(out _);
+
+        var result = await Invoke(handler, new
+        {
+            content = "Some sufficiently detailed content with no type and no valence set at all",
+        });
+
+        Assert.Equal(ToolStatus.BadRequest, result.Status);
+        Assert.Contains("type is required", result.HumanSummary);
+    }
+
     private static StoreToolHandler NewHandler(out CapturingStore store)
     {
         store = new CapturingStore();

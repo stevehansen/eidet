@@ -22,7 +22,7 @@ public sealed class StoreToolHandler : IToolHandler
     public McpToolDefinition Schema { get; } = new()
     {
         Name = "eidet_store",
-        Description = "Store a memory (observation, insight, procedure, or heuristic). Content is validated through secret scanning and signal gates before storage.",
+        Description = "Store a memory (observation, insight, procedure, or heuristic). Content is validated through secret scanning and signal gates before storage. To record a failure/dead-end (\"tried X, does not work\"), pass negative:true — it stores a refuting, long-lived memory (type defaults to heuristic) so a future session recalls the dead-end before repeating it.",
         InputSchema = BuildSchema(),
     };
 
@@ -31,12 +31,38 @@ public sealed class StoreToolHandler : IToolHandler
         var args = request.Arguments;
 
         var content = ToolArgs.RequireString(args, "content");
-        var typeStr = ToolArgs.RequireString(args, "type");
-        if (!Enum.TryParse<MemoryType>(typeStr, true, out var type))
-            return ToolResult.BadRequest($"Invalid type: {typeStr}. Use: observation, insight, procedure, heuristic.");
 
+        // Explicit valence wins over the negative shorthand; negative:true ⇒ Refuting.
+        var negative = ToolArgs.GetBool(args, "negative");
+        var valence = ToolArgs.GetEnum<Valence>(args, "valence")
+                      ?? (negative ? Valence.Refuting : Valence.Neutral);
+
+        var typeStr = ToolArgs.GetString(args, "type");
+        MemoryType type;
+        if (typeStr is not null)
+        {
+            if (!Enum.TryParse(typeStr, true, out type))
+                return ToolResult.BadRequest($"Invalid type: {typeStr}. Use: observation, insight, procedure, heuristic.");
+        }
+        else if (valence != Valence.Neutral)
+        {
+            // A dead-end/cautionary memory with no explicit type belongs on the near-immortal,
+            // L1-visible Heuristic lifecycle so it resurfaces before the failure is repeated.
+            type = MemoryType.Heuristic;
+        }
+        else
+        {
+            return ToolResult.BadRequest("Invalid type: type is required (or pass negative:true / valence). Use: observation, insight, procedure, heuristic.");
+        }
+
+        // Dead-end conveniences follow the resolved Refuting stance, not just the `negative`
+        // shorthand — so an explicit valence:"refuting" is as discoverable and long-lived as
+        // negative:true (same tag, same importance default).
+        var isDeadEnd = valence == Valence.Refuting;
         var tags = ToolArgs.GetStringArray(args, "tags");
-        var importance = ToolArgs.GetFloat(args, "importance", 0.5f);
+        if (isDeadEnd && !tags.Contains("dead-end", StringComparer.OrdinalIgnoreCase))
+            tags.Add("dead-end");
+        var importance = ToolArgs.GetFloat(args, "importance", isDeadEnd ? 0.7f : 0.5f);
         var supersedes = ToolArgs.GetString(args, "supersedes");
         var source = ToolArgs.GetString(args, "source") ?? "claude-session";
         var sessionId = ToolArgs.GetString(args, "sessionId");
@@ -58,6 +84,7 @@ public sealed class StoreToolHandler : IToolHandler
             SessionId = sessionId,
             Supersedes = supersedes,
             Provenance = provenance,
+            Valence = valence,
         }, request.Ct);
 
         if (result.DuplicateId != null)
@@ -86,7 +113,18 @@ public sealed class StoreToolHandler : IToolHandler
             ["type"] = new JsonObject
             {
                 ["type"] = "string",
-                ["description"] = "Memory type: observation, insight, procedure, or heuristic.",
+                ["description"] = "Memory type: observation, insight, procedure, or heuristic. Optional when negative:true or a non-neutral valence is set (defaults to heuristic).",
+            },
+            ["negative"] = new JsonObject
+            {
+                ["type"] = "boolean",
+                ["description"] = "Shorthand for a dead-end: sets valence=refuting, defaults type to heuristic, importance to 0.7, and adds the 'dead-end' tag. Use for 'tried X, does not work'.",
+            },
+            ["valence"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["enum"] = new JsonArray { "neutral", "affirming", "refuting", "cautionary" },
+                ["description"] = "Explicit stance toward the subject (overrides negative): refuting (dead-end), cautionary (works but has sharp edges), affirming (holds), or neutral (default).",
             },
             ["tags"] = new JsonObject
             {
@@ -115,7 +153,7 @@ public sealed class StoreToolHandler : IToolHandler
         {
             ["type"] = "object",
             ["properties"] = props,
-            ["required"] = new JsonArray { "content", "type" },
+            ["required"] = new JsonArray { "content" },
         };
     }
 }

@@ -116,11 +116,14 @@ public class McpToolDefinitionsTests
     }
 
     [Fact]
-    public void Store_RequiresContentAndType()
+    public void Store_RequiresOnlyContent()
     {
+        // ValenceSpec: `type` is dropped from `required` (only `content` stays required) so
+        // `{ content, negative: true }` is a legal one-line dead-end call. Type is inferred
+        // (heuristic) when a non-neutral valence is set.
         var required = RequiredFields("eidet_store");
         Assert.Contains("content", required);
-        Assert.Contains("type", required);
+        Assert.DoesNotContain("type", required);
     }
 
     [Fact]

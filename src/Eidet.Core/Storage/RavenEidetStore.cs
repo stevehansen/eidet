@@ -487,6 +487,9 @@ public class RavenEidetStore : IEidetStore
         if (query.Type.HasValue)
             documentQuery = documentQuery.AndAlso().WhereEquals("Type", query.Type.Value);
 
+        if (query.Valence.HasValue)
+            documentQuery = documentQuery.AndAlso().WhereEquals("Valence", query.Valence.Value);
+
         foreach (var tag in query.Tags)
             documentQuery = documentQuery.AndAlso().WhereIn("Tags", new[] { tag });
 

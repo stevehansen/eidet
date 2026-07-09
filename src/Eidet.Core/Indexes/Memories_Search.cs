@@ -19,6 +19,7 @@ public class Memories_Search : AbstractIndexCreationTask<MemoryEntry, Memories_S
         public object? SearchVector { get; set; }
         public string RepoId { get; set; } = "";
         public MemoryType Type { get; set; }
+        public Valence Valence { get; set; }
         public string[] Tags { get; set; } = [];
         public string[] Entities { get; set; } = [];
         public DateTime CreatedAt { get; set; }
@@ -47,6 +48,7 @@ public class Memories_Search : AbstractIndexCreationTask<MemoryEntry, Memories_S
                 SearchVector = CreateVector(searchText),
                 RepoId = e.RepoId,
                 Type = e.Type,
+                Valence = e.Valence,
                 Tags = e.Tags.ToArray(),
                 Entities = e.Entities.ToArray(),
                 CreatedAt = e.CreatedAt,

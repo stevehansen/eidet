@@ -17,6 +17,7 @@ Design decisions live in `docs/specs/`:
 | [IntegrationSpec.md](docs/specs/IntegrationSpec.md) | Claude Code, Claude Desktop, Cursor, TerminalHost, Docker, CI/CD, client SDKs |
 | [PortalSpec.md](docs/specs/PortalSpec.md) | Per-repo Portal — generated, audited Web UI state view (`/api/eidet/portal`); live render, source-traceable claims |
 | [LooseEndSpec.md](docs/specs/LooseEndSpec.md) | *(Designed)* Loose Ends — park/resolve open-work via `eidet_park`/`eidet_resolve`; separate `looseends/*` collection, no decay, wake-up slice + recall ride-along, promote-to-memory |
+| [ValenceSpec.md](docs/specs/ValenceSpec.md) | *(Designed)* Negative knowledge — `Valence` stance dimension (Neutral/Affirming/Refuting/Cautionary) orthogonal to `MemoryType`; `negative:true` sugar on `eidet_store`, polarity guards on dup-gate/dedup/consolidation, ✗/⚠ surfacing |
 
 - Architecture deep dive: [docs/deep-dive.md](docs/deep-dive.md)
 - Phase-by-phase implementation history: [docs/phases.md](docs/phases.md)

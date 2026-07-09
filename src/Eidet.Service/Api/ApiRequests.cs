@@ -6,12 +6,16 @@ public record StoreRequest
 {
     public string Repo { get; init; } = "";
     public string Content { get; init; } = "";
-    public MemoryType Type { get; init; }
+    // Nullable so a REST caller can omit type and let the store handler apply the same
+    // valence-driven default (negative/refuting ⇒ Heuristic) that the MCP surface does.
+    public MemoryType? Type { get; init; }
     public List<string>? Tags { get; init; }
     public float? Importance { get; init; }
     public string? Source { get; init; }
     public string? SessionId { get; init; }
     public string? Supersedes { get; init; }
+    public bool Negative { get; init; }
+    public string? Valence { get; init; }
 }
 
 public record FeedbackRequest
