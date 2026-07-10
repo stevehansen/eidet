@@ -25,6 +25,12 @@ public class RepoUsage
     /// <summary>Count of EWMA alpha updates applied — diagnostics / warmup signal.</summary>
     public long AlphaSamples { get; set; }
 
+    /// <summary>
+    /// UTC instant of the last live Reflector run for this repo; null = never reflected. The
+    /// Reflector's coverage cursor — residue mining only considers feedback newer than this.
+    /// </summary>
+    public DateTime? LastReflectedAt { get; set; }
+
     public static string MakeId(string repoId) =>
         $"usage/{RepoIdNormalizer.Normalize(repoId).Replace('\\', '-').Replace('/', '-').Replace(':', '-')}";
 

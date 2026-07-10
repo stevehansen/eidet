@@ -12,4 +12,5 @@ public enum MemoryProvenance
     Intake,
     Pack,
     System,
+    Reflection,
 }

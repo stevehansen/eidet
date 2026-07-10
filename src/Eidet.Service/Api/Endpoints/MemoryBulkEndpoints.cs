@@ -65,6 +65,27 @@ internal sealed class MemoryBulkEndpoints
         await RestFormatter.WriteAsync(ctx, result);
     }
 
+    public async Task Reflect(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var repo = ctx.Request.QueryString["repo"];
+        if (string.IsNullOrEmpty(repo))
+        {
+            await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
+            return;
+        }
+
+        var dryRun = ctx.Request.QueryString["dryRun"];
+        var source = ctx.Request.QueryString["source"];
+        var args = JsonSerializer.SerializeToElement(new
+        {
+            dry_run = string.Equals(dryRun, "true", StringComparison.OrdinalIgnoreCase),
+            source,
+        }, HttpJson.Options);
+
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_reflect", repo, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
+    }
+
     public async Task Export(HttpListenerContext ctx, CancellationToken ct)
     {
         var repo = ctx.Request.QueryString["repo"];

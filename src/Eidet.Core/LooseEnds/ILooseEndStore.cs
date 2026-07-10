@@ -15,6 +15,16 @@ public interface ILooseEndStore
     /// <summary>Count of open Loose Ends for a repo — bounded server-side, never materializes the set.</summary>
     Task<int> CountOpenAsync(string repoId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Resolved-as-Done ends not yet promoted to a memory — the Reflector's loose-end residue arm.
+    /// Filters <c>State==Resolved &amp;&amp; Resolution==Done &amp;&amp; PromotedToMemoryId==null</c>, optionally to
+    /// those resolved after <paramref name="since"/> (the reflection cursor), capped at <paramref name="max"/>.
+    /// Default no-op returning <c>[]</c> so in-memory fakes compile unchanged.
+    /// </summary>
+    Task<IReadOnlyList<LooseEnd>> ListResolvedUnpromotedAsync(
+        string repoId, DateTimeOffset? since, int max, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<LooseEnd>>([]);
+
     /// <summary>Atomically claim an Open end for resolution (Open→Resolving). Returns true iff THIS caller won the
     /// claim; false if the end was not Open (already Resolving/Resolved, or gone). The Raven adapter makes this atomic
     /// with optimistic concurrency; the default impl is a non-atomic read-check-write sufficient for single-threaded fakes.</summary>

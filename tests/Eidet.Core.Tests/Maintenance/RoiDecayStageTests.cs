@@ -67,6 +67,7 @@ public class RoiDecayStageTests
             Write = write,
             Enrichment = enrich,
             Consolidation = new ConsolidationEngine(store, enrich, memory),
+            Reflection = new ReflectionEngine(store, enrich, memory),
             Dedup = new DedupEngine(store, memory, enrich),
             RepoId = Repo,
             IsRepoActive = false,

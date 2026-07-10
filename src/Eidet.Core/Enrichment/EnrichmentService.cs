@@ -154,6 +154,20 @@ public sealed class EnrichmentService : IDisposable
         return review;
     }
 
+    /// <summary>
+    /// Asks the model to distil net-new memory candidates from feedback residue (the Reflector's one
+    /// LLM call). Returns <c>[]</c> when the port is unavailable or the residue is empty — the caller
+    /// mints nothing. Proposals carry advisory content only; the engine stamps all trust-bearing fields.
+    /// </summary>
+    public async Task<IReadOnlyList<ReflectionProposal>> ProposeReflectionsAsync(
+        ReflectionResidue residue, CancellationToken ct = default)
+    {
+        if (!IsAvailable || residue.IsEmpty) return [];
+
+        var raw = await GenerateAsync(EnrichmentPrompt.Reflect, EnrichmentPrompts.RenderResidue(residue), ct);
+        return ReflectionProposalParser.Parse(raw);
+    }
+
     public void Dispose()
     {
         if (_ownsPort && _port is IDisposable d) d.Dispose();

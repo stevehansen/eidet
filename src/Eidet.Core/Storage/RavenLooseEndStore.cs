@@ -85,6 +85,25 @@ public sealed class RavenLooseEndStore : ILooseEndStore
         }
     }
 
+    public async Task<IReadOnlyList<LooseEnd>> ListResolvedUnpromotedAsync(
+        string repoId, DateTimeOffset? since, int max, CancellationToken ct = default)
+    {
+        // Order + page server-side (matches the other queries here). Done + unpromoted only; the
+        // since-cursor is optional so a first-ever reflection run sees the whole completed backlog.
+        // Oldest-first (ascending) so the forward reflection cursor consumes the backlog in resolution
+        // order and never starves the oldest ends — and so prod matches the in-memory test double.
+        using var session = _store.OpenAsyncSession();
+        return await session.Query<LooseEnd>()
+            .Where(e => e.RepoId == repoId
+                && e.State == LooseEndState.Resolved
+                && e.Resolution == ResolutionKind.Done
+                && e.PromotedToMemoryId == null
+                && (since == null || e.ResolvedAt > since))
+            .OrderBy(e => e.ResolvedAt)
+            .Take(max)
+            .ToListAsync(ct);
+    }
+
     public async Task<IReadOnlyList<LooseEnd>> FindOpenByTagsAsync(
         string repoId, IReadOnlyList<string> tags, int max, CancellationToken ct = default)
     {

@@ -402,6 +402,7 @@ internal sealed class CountingHookRunner : IHookRunner
 internal class InMemoryEidetStore : IEidetStore
 {
     private readonly Dictionary<string, MemoryEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTime> _reflectionCursors = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _lock = new();
 
     public virtual Task<MemoryEntry?> GetAsync(string id, CancellationToken ct = default)
@@ -453,8 +454,22 @@ internal class InMemoryEidetStore : IEidetStore
     public Task<List<MemoryEntry>> VectorSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) =>
         Task.FromResult(new List<MemoryEntry>());
 
-    public Task<MemoryEntry?> FindDuplicateAsync(string repoId, string content, float threshold, CancellationToken ct = default) =>
+    public virtual Task<MemoryEntry?> FindDuplicateAsync(string repoId, string content, float threshold, CancellationToken ct = default) =>
         Task.FromResult<MemoryEntry?>(null);
+
+    // Reflection coverage cursor — real backing store (default interface impl is null/no-op). Purely
+    // additive: only the Reflector tests read/advance it; every existing test is unaffected.
+    public Task<DateTime?> GetLastReflectedAtAsync(string repoId, CancellationToken ct = default)
+    {
+        lock (_lock)
+            return Task.FromResult(_reflectionCursors.TryGetValue(repoId, out var t) ? t : (DateTime?)null);
+    }
+
+    public Task SetLastReflectedAtAsync(string repoId, DateTime whenUtc, CancellationToken ct = default)
+    {
+        lock (_lock) _reflectionCursors[repoId] = whenUtc;
+        return Task.CompletedTask;
+    }
 
     public virtual Task<IReadOnlyList<MemoryEntry>> FindNearDuplicatesAsync(
         string repoId, MemoryEntry entry, float minSimilarity, int max, CancellationToken ct = default) =>

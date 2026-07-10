@@ -66,6 +66,7 @@ public class EnrichmentConfig
     public bool AutoForesight { get; set; } = true;
     public bool AutoConsolidation { get; set; } = true;
     public DriftReviewConfig DriftReview { get; set; } = new();
+    public ReflectionConfig Reflection { get; set; } = new();
 }
 
 public class DriftReviewConfig
@@ -75,6 +76,19 @@ public class DriftReviewConfig
     public int MinAgeDays { get; set; } = 7;
     public float MinModelConfidence { get; set; } = 0.7f; // below: verdict recorded, no action
     public DriftAutonomy Autonomy { get; set; } = DriftAutonomy.Decay;
+}
+
+/// <summary>
+/// The ACE-style Reflector: mints net-new memory candidates from positive feedback residue
+/// (net-echoed memories, Done loose ends, Contradicted drift verdicts) via one maintenance-time
+/// LLM call. Ships DORMANT (<see cref="Enabled"/> = false) — turn on deliberately per deployment.
+/// Still gated by <see cref="EnrichmentConfig.Enabled"/> at runtime like <see cref="DriftReviewConfig"/>.
+/// </summary>
+public class ReflectionConfig
+{
+    public bool Enabled { get; set; }                     // dormant by default — opt in per deployment
+    public int NightlyBatch { get; set; } = 10;           // total cap on residue items fed to the model per run
+    public int MinEchoes { get; set; } = 3;               // net echoes (EchoCount − FizzleCount) to count as residue
 }
 
 public class AuthConfig
