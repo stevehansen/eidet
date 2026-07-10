@@ -86,6 +86,14 @@ public sealed class QualityCommand : AsyncCommand<QualityCommand.Settings>
             }
 
             AnsiConsole.MarkupLine($"  Avg importance: {report.Breakdown.AverageImportance:F2}  Avg confidence: {report.Breakdown.AverageConfidence:F2}");
+
+            if (report.Breakdown.Reflection is { } rh)
+            {
+                var rateColor = rh.EchoRate >= 0.5f ? "green" : rh.EchoRate >= 0.25f ? "yellow" : "red";
+                AnsiConsole.MarkupLine(
+                    $"  Reflected memories: {rh.Total} — echo rate [{rateColor}]{rh.EchoRate:P0}[/] " +
+                    $"({rh.Echoed} echoed, {rh.NetNegative} net-negative, {rh.Untouched} untouched)");
+            }
         }
         finally
         {
