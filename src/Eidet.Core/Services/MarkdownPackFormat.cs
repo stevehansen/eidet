@@ -100,6 +100,8 @@ public static partial class MarkdownPackFormat
             meta.Add($"tags={string.Join(",", entry.Tags)}");
         if (entry.Provenance != MemoryProvenance.AgentInferred)
             meta.Add($"provenance={entry.Provenance.ToString().ToLowerInvariant()}");
+        if (entry.Valence != Valence.Neutral)
+            meta.Add($"valence={entry.Valence.ToString().ToLowerInvariant()}");
         if (!string.IsNullOrWhiteSpace(entry.Source))
             meta.Add($"source={entry.Source}");
         if (entry.DerivedFrom.Count > 0)
@@ -401,6 +403,9 @@ public static partial class MarkdownPackFormat
             if (pairs.TryGetValue("provenance", out var prov) &&
                 Enum.TryParse<MemoryProvenance>(prov, ignoreCase: true, out var provVal))
                 entry.Provenance = provVal;
+            if (pairs.TryGetValue("valence", out var val) &&
+                Enum.TryParse<Valence>(val, ignoreCase: true, out var vv))
+                entry.Valence = vv;
             if (pairs.TryGetValue("source", out var src))
                 entry.Source = src;
             if (pairs.TryGetValue("derivedfrom", out var df))

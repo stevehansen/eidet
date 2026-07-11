@@ -85,7 +85,9 @@ public sealed class MemoryService
         // Duplicate detection runs before the gate — no point firing PreStore for content
         // we're going to deduplicate against an existing entry.
         var duplicate = await _store.FindDuplicateAsync(normalizedRepoId, opts.Content, DuplicateThreshold, ct);
-        if (duplicate is not null)
+        // Polarity guard: a content-similar match that takes the OPPOSITE hard stance is a real
+        // contradiction, not a duplicate — let it through so "X does not work" survives alongside "X works".
+        if (duplicate is not null && !ValencePolarity.Conflicts(duplicate.Valence, entry.Valence))
             return StoreResult.Duplicate(duplicate.Id);
 
         var preCtx = new HookContext
@@ -895,6 +897,7 @@ public sealed class MemoryService
     {
         Text = opts.Query,
         Type = opts.Type,
+        Valence = opts.Valence,
         Tags = opts.Tags?.ToList() ?? [],
         Limit = opts.Limit,
         IncludeExpired = opts.IncludeExpired,

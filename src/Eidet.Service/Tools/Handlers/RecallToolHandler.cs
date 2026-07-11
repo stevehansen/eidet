@@ -40,6 +40,7 @@ public sealed class RecallToolHandler : IToolHandler
         var opts = new RecallOptions(queryText)
         {
             Type = ToolArgs.GetEnum<MemoryType>(args, "type"),
+            Valence = ToolArgs.GetEnum<Valence>(args, "valence"),
             Tags = ToolArgs.GetStringArray(args, "tags"),
             Limit = ToolArgs.GetInt(args, "limit", 10),
             IncludeExpired = ToolArgs.GetBool(args, "include_expired"),
@@ -80,8 +81,14 @@ public sealed class RecallToolHandler : IToolHandler
                     _ => "[?]",
                 };
                 var stale = r.StalenessWarning != null ? $" {r.StalenessWarning}" : "";
+                var glyph = r.Valence switch
+                {
+                    Valence.Refuting => "✗ ",
+                    Valence.Cautionary => "⚠ ",
+                    _ => "",
+                };
                 var display = r.OneLiner ?? r.Summary ?? Truncate(r.Content, 120);
-                lines.Add($"  {prefix} {display}{stale}");
+                lines.Add($"  {prefix} {glyph}{display}{stale}");
                 lines.Add($"      id={r.Id} importance={r.Importance:F2} score={r.Score:F2}");
             }
         }
@@ -119,6 +126,12 @@ public sealed class RecallToolHandler : IToolHandler
             {
                 ["type"] = "string",
                 ["description"] = "Filter by type: observation, insight, procedure, heuristic.",
+            },
+            ["valence"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["enum"] = new JsonArray { "neutral", "affirming", "refuting", "cautionary" },
+                ["description"] = "Filter by stance: refuting (dead-ends), cautionary (warnings), affirming, or neutral.",
             },
             ["tags"] = new JsonObject
             {

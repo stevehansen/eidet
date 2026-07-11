@@ -222,6 +222,7 @@ public static class RecallScoring
         Id = entry.Id,
         RepoId = entry.RepoId,
         Type = entry.Type,
+        Valence = entry.Valence,
         Content = entry.Content,
         Summary = entry.Summary,
         Tags = entry.Tags,

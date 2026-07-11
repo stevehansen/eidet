@@ -58,6 +58,7 @@ internal sealed class MemoryReadEndpoints
             query = q,
             limit = int.TryParse(ctx.Request.QueryString["limit"], out var lim) ? lim : 10,
             type = ctx.Request.QueryString["type"],
+            valence = ctx.Request.QueryString["valence"],
             tags = ctx.Request.QueryString["tags"]?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToArray() ?? [],
             cross_repo = string.Equals(ctx.Request.QueryString["cross_repo"], "true", StringComparison.OrdinalIgnoreCase),
         }, HttpJson.Options);

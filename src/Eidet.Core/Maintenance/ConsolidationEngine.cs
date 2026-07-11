@@ -54,16 +54,22 @@ public sealed class ConsolidationEngine
         BulkMutationCtx ctx, string repoId, IReadOnlyList<List<MemoryEntry>> groups,
         bool dryRun, ConsolidationResult result, CancellationToken ct)
     {
-        foreach (var group in groups.Where(g => g.Count >= 3))
+        // Partition each tag group by valence sign so opposite stances consolidate independently
+        // and a contradiction is never collapsed into one insight.
+        foreach (var group in groups)
+        foreach (var bucket in group.GroupBy(o => ValencePolarity.Sign(o.Valence)).Select(g => g.ToList()))
         {
-            var unionTags = group.SelectMany(o => o.Tags).Distinct().ToList();
-            var meanImportance = group.Average(o => o.Importance);
+            if (bucket.Count < 3) continue;
+
+            var bucketValence = bucket.FirstOrDefault(o => o.Valence != Valence.Neutral)?.Valence ?? Valence.Neutral;
+            var unionTags = bucket.SelectMany(o => o.Tags).Distinct().ToList();
+            var meanImportance = bucket.Average(o => o.Importance);
             var proposedImportance = Math.Min(1.0f, (float)(meanImportance * 1.2));
-            var representative = group.OrderByDescending(o => o.Importance).First();
+            var representative = bucket.OrderByDescending(o => o.Importance).First();
 
             var candidate = new ConsolidationCandidate
             {
-                ObservationIds = group.Select(o => o.Id).ToList(),
+                ObservationIds = bucket.Select(o => o.Id).ToList(),
                 Tags = unionTags,
                 ProposedContent = representative.Content,
                 ProposedImportance = proposedImportance,
@@ -72,14 +78,18 @@ public sealed class ConsolidationEngine
 
             if (dryRun) continue;
 
+            // Never boost an insight that takes the opposite hard stance from this bucket — a
+            // conflicting bucket falls through to create its own insight instead, so both
+            // stances coexist (mirrors the write-path polarity guards).
             var existingInsight = await _store.FindDuplicateAsync(repoId, representative.Content, 0.85f, ct);
-            if (existingInsight is not null && existingInsight.Type == MemoryType.Insight)
+            if (existingInsight is not null && existingInsight.Type == MemoryType.Insight &&
+                !ValencePolarity.Conflicts(existingInsight.Valence, bucketValence))
             {
                 // Anti-laundering (boost path): only trusted sources may lift a trusted insight. An
                 // attacker must not be able to raise a good insight's importance — or contaminate its
                 // lineage — by injecting low-trust (Pack/Intake) observations that happen to match it.
                 // No trusted contributors → skip the boost entirely (a "compression-amplified toxin").
-                var trusted = group.Where(IsTrustedSource).ToList();
+                var trusted = bucket.Where(IsTrustedSource).ToList();
                 if (trusted.Count == 0) continue;
 
                 existingInsight.Importance = Math.Min(1.0f, existingInsight.Importance + 0.05f * trusted.Count);
@@ -93,10 +103,10 @@ public sealed class ConsolidationEngine
             else
             {
                 var mergedContent = representative.Content;
-                if (group.Count > 5 && _enrichment.IsAvailable)
+                if (bucket.Count > 5 && _enrichment.IsAvailable)
                 {
                     var merged = await _enrichment.MergeObservationsAsync(
-                        group.Select(o => o.Content).ToList(), ct);
+                        bucket.Select(o => o.Content).ToList(), ct);
                     if (!string.IsNullOrEmpty(merged))
                         mergedContent = merged;
                 }
@@ -107,8 +117,8 @@ public sealed class ConsolidationEngine
                 // recall. This stops an attacker laundering a poisoned observation into a fully
                 // trusted insight ("compression-amplified toxin"). The audit trail — Source and
                 // DerivedFrom — is preserved untouched.
-                var provenance = group.Any(o => !IsTrustedSource(o))
-                    ? group.OrderBy(o => MemoryTrust.ProvenanceTrust(o.Provenance)).First().Provenance
+                var provenance = bucket.Any(o => !IsTrustedSource(o))
+                    ? bucket.OrderBy(o => MemoryTrust.ProvenanceTrust(o.Provenance)).First().Provenance
                     : MemoryProvenance.Consolidation;
 
                 var now = DateTime.UtcNow;
@@ -117,6 +127,7 @@ public sealed class ConsolidationEngine
                     Id = MemoryIdGenerator.Generate(repoId, MemoryType.Insight, mergedContent, now),
                     RepoId = repoId,
                     Type = MemoryType.Insight,
+                    Valence = bucketValence,
                     Content = mergedContent,
                     Tags = unionTags,
                     Importance = proposedImportance,

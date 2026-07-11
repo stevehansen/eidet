@@ -11,6 +11,7 @@ public sealed record StoreOptions(string RepoId, string Content, MemoryType Type
     public string? SessionId { get; init; }
     public string? Supersedes { get; init; }
     public MemoryProvenance? Provenance { get; init; }
+    public Valence Valence { get; init; } = Valence.Neutral;
 }
 
 /// <summary>20% surface for <see cref="MemoryService.RecallAsync(string, RecallOptions, CancellationToken)"/>.</summary>
@@ -18,6 +19,7 @@ public sealed record RecallOptions(string Query)
 {
     public int Limit { get; init; } = 10;
     public MemoryType? Type { get; init; }
+    public Valence? Valence { get; init; }
     public IReadOnlyList<string>? Tags { get; init; }
     public bool IncludeExpired { get; init; }
     public bool CrossRepo { get; init; } = true;

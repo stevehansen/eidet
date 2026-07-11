@@ -34,12 +34,14 @@ internal sealed class MemoryWriteEndpoints
         var args = JsonSerializer.SerializeToElement(new
         {
             content = req.Content,
-            type = req.Type.ToString(),
+            type = req.Type?.ToString(),
             tags = req.Tags,
             importance = req.Importance,
             source = req.Source,
             sessionId = req.SessionId,
             supersedes = req.Supersedes,
+            negative = req.Negative,
+            valence = req.Valence,
         }, HttpJson.Options);
 
         var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_store", req.Repo, args, "rest", ct));

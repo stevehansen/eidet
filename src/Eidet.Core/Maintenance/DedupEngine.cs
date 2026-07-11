@@ -1,5 +1,6 @@
 using Eidet.Core.Domain;
 using Eidet.Core.Enrichment;
+using Eidet.Core.Memory;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Core.Text;
@@ -85,8 +86,12 @@ public sealed class DedupEngine
     private async Task MergeAsync(
         MemoryEntry a, MemoryEntry b, HashSet<string> claimed, DedupResult result, bool dryRun, BulkMutationCtx write, CancellationToken ct)
     {
+        // Never fold a claim into its contradiction (opposite hard stance).
+        if (ValencePolarity.Conflicts(a.Valence, b.Valence)) return;
+
         var (keep, discard) = a.Importance >= b.Importance ? (a, b) : (b, a);
 
+        keep.Valence = ValencePolarity.Merge(keep.Valence, discard.Valence);
         keep.AccessCount += discard.AccessCount;
         foreach (var tag in discard.Tags)
         {

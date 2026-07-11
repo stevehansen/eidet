@@ -98,6 +98,68 @@ public class RecallToolHandlerTests
             await Invoke(handler, new { limit = 5 }));
     }
 
+    // ─── Valence: recall filter + glyph rendering (ValenceSpec) ───────
+
+    [Fact]
+    public async Task Recall_ValenceFilter_MapsToQueryAndReturnsOnlyMatchingStance()
+    {
+        var handler = NewHandler(out var store);
+        store.NextResults =
+        [
+            Result("memories/r/heuristic/d1", MemoryType.Heuristic, "Npgsql pooling deadlocks under load", "Pooling deadlocks", Valence.Refuting),
+            Result("memories/r/heuristic/d2", MemoryType.Heuristic, "In-process cache warmup OOMs the node", "Warmup OOMs the node", Valence.Refuting),
+            Result("memories/r/insight/ok", MemoryType.Insight, "Redis is the caching layer", "Redis caching layer", Valence.Affirming),
+        ];
+
+        var result = await Invoke(handler, new { query = "cache", valence = "refuting" });
+
+        // Mapping: the string filter reaches the store as MemoryQuery.Valence (the WhereEquals key).
+        Assert.NotNull(store.LastQuery);
+        Assert.Equal(Valence.Refuting, store.LastQuery!.Valence);
+
+        // Filtering: only the two refuting entries survive; the affirming one is excluded.
+        Assert.Equal(2, result.ResultCount);
+        Assert.Contains("Pooling deadlocks", result.HumanSummary);
+        Assert.Contains("Warmup OOMs the node", result.HumanSummary);
+        Assert.DoesNotContain("Redis caching layer", result.HumanSummary);
+    }
+
+    [Fact]
+    public async Task Recall_RendersValenceGlyphs()
+    {
+        var handler = NewHandler(out var store);
+        store.NextResults =
+        [
+            Result("memories/r/heuristic/d", MemoryType.Heuristic, "pooling deadlocks under load", "Pooling deadlocks", Valence.Refuting),
+            Result("memories/r/heuristic/w", MemoryType.Heuristic, "advisory locks serialize the pool", "Advisory locks serialize", Valence.Cautionary),
+            Result("memories/r/insight/ok", MemoryType.Insight, "redis is the cache", "Redis cache", Valence.Affirming),
+        ];
+
+        // No valence filter → all three render, each with its stance glyph (or none).
+        var result = await Invoke(handler, new { query = "cache" });
+
+        Assert.Equal(3, result.ResultCount);
+        Assert.Contains("✗ Pooling deadlocks", result.HumanSummary);       // Refuting
+        Assert.Contains("⚠ Advisory locks serialize", result.HumanSummary); // Cautionary
+        Assert.Contains("[I] Redis cache", result.HumanSummary);            // Affirming: prefix directly precedes display, no glyph
+        Assert.DoesNotContain("✗ Redis cache", result.HumanSummary);
+        Assert.DoesNotContain("⚠ Redis cache", result.HumanSummary);
+    }
+
+    private static MemoryEntry Result(string id, MemoryType type, string content, string oneLiner, Valence valence) => new()
+    {
+        Id = id,
+        RepoId = "test-repo",
+        Type = type,
+        Content = content,
+        OneLiner = oneLiner,
+        Valence = valence,
+        Importance = 0.7f,
+        CreatedAt = DateTime.UtcNow,
+        IsLatest = true,
+        Validity = new Validity { ValidFrom = DateTime.UtcNow },
+    };
+
     private static RecallToolHandler NewHandler(out RecallStore store)
     {
         store = new RecallStore();
@@ -117,14 +179,24 @@ public class RecallToolHandlerTests
     {
         public List<MemoryEntry> NextResults { get; set; } = [];
 
+        /// <summary>The last query the lexical arm saw — lets a test assert the
+        /// RecallOptions.Valence → MemoryQuery.Valence mapping the Raven store turns into WhereEquals.</summary>
+        public MemoryQuery? LastQuery { get; private set; }
+
         public Task<bool> TestConnectionAsync(CancellationToken ct = default) => Task.FromResult(true);
         public Task<MemoryEntry?> GetAsync(string id, CancellationToken ct = default) => Task.FromResult<MemoryEntry?>(null);
         public Task<string> StoreAsync(MemoryEntry entry, CancellationToken ct = default) => Task.FromResult(entry.Id);
         public Task UpdateAsync(MemoryEntry entry, CancellationToken ct = default) => Task.CompletedTask;
         public Task<bool> ForgetAsync(string id, CancellationToken ct = default) => Task.FromResult(false);
 
-        public Task<List<MemoryEntry>> FullTextSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) =>
-            Task.FromResult(NextResults);
+        public Task<List<MemoryEntry>> FullTextSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
+        {
+            LastQuery = query;
+            // Mimic the Raven store's WhereEquals("Valence", …) so a valence-filtered recall returns
+            // only matching-stance entries; no filter (null) returns everything.
+            var hits = query.Valence is { } v ? NextResults.Where(e => e.Valence == v).ToList() : NextResults;
+            return Task.FromResult(hits);
+        }
         public Task<List<MemoryEntry>> VectorSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) =>
             Task.FromResult(new List<MemoryEntry>());
 

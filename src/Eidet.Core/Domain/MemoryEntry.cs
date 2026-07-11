@@ -15,6 +15,7 @@ public class MemoryEntry
 
     // Classification
     public MemoryType Type { get; set; }
+    public Valence Valence { get; set; } = Valence.Neutral;
     public List<string> Tags { get; set; } = [];
 
     // Content
