@@ -48,6 +48,33 @@ public class MemoryConfig
     public bool CrossRepoRecallEnabled { get; set; } = true;
     public int StalenessWarningDays { get; set; } = 7;
     public bool RecallCacheEnabled { get; set; } = true;
+
+    // Retention lifecycle policy (#39) lives with the rest of the memory config.
+    public BudgetConfig Budget { get; set; } = new();
+    public DeprecateConfig Deprecate { get; set; } = new();
+}
+
+/// <summary>
+/// Per-repo, per-type memory budget (#39). OFF by default ⇒ unbounded, no eviction. When enabled with a
+/// positive cap, maintenance deterministically evicts the lowest-retention memories of each type down to
+/// the cap via forget-with-reason (reversible soft-delete). Quarantined memories are never evicted.
+/// </summary>
+public sealed class BudgetConfig
+{
+    public bool Enabled { get; set; }                       // default false ⇒ no eviction
+    public int MaxPerType { get; set; }                     // 0 = unbounded; caps EACH type, per repo
+    public double EchoReinforcement { get; set; } = 0.5;    // β: how much echo usage shields from eviction
+}
+
+/// <summary>
+/// Retirement of terminally-stale procedures (#39): forgets a Procedure only when it is FadeMem-floored
+/// AND net-negative AND idle beyond <see cref="MinIdleDays"/> — the terminal subset RoiDecay can never
+/// reach (RoiDecay only reversibly demotes Importance and never forgets). Conservative gate makes ON safe.
+/// </summary>
+public sealed class DeprecateConfig
+{
+    public bool Enabled { get; set; } = true;
+    public int MinIdleDays { get; set; } = 180;             // Procedure half-life-scaled
 }
 
 public class MaintenanceConfig
@@ -122,6 +149,11 @@ public class HooksConfig
     public List<HookDefinition> PostRecall { get; set; } = [];
     public List<HookDefinition> PreForget { get; set; } = [];
     public List<HookDefinition> PostForget { get; set; } = [];
+
+    /// <summary>True when at least one hook is configured and enabled across all six events.</summary>
+    public bool AnyEnabled() =>
+        PreStore.Concat(PostStore).Concat(PreRecall).Concat(PostRecall).Concat(PreForget).Concat(PostForget)
+            .Any(h => h.Enabled);
 }
 
 public class HookDefinition

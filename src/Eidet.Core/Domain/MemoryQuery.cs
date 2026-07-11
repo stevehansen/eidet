@@ -5,6 +5,7 @@ public class MemoryQuery
     public string Text { get; set; } = "";
     public MemoryType? Type { get; set; }
     public Valence? Valence { get; set; }
+    public FunctionalStage? Stage { get; set; }
     public List<string> Tags { get; set; } = [];
     public int Limit { get; set; } = 10;
     public bool IncludeExpired { get; set; }
@@ -21,6 +22,7 @@ public class MemorySearchResult
     public string RepoId { get; set; } = "";
     public MemoryType Type { get; set; }
     public Valence Valence { get; set; }
+    public FunctionalStage Stage { get; set; }
     public string Content { get; set; } = "";
     public string? Summary { get; set; }
     public List<string> Tags { get; set; } = [];

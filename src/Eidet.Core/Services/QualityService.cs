@@ -1,4 +1,5 @@
 using Eidet.Core.Domain;
+using Eidet.Core.Integrity;
 using Eidet.Core.Storage;
 
 namespace Eidet.Core.Services;
@@ -6,8 +7,15 @@ namespace Eidet.Core.Services;
 public class QualityService
 {
     private readonly IEidetStore _store;
+    private readonly IIntegrityAuditor? _auditor;
 
-    public QualityService(IEidetStore store) => _store = store;
+    // The auditor is optional so existing callers / test fakes are unaffected; when wired, a post-forget
+    // leak surfaces on GET /api/eidet/quality as a Critical issue with zero new UI plumbing.
+    public QualityService(IEidetStore store, IIntegrityAuditor? auditor = null)
+    {
+        _store = store;
+        _auditor = auditor;
+    }
 
     public async Task<QualityReport> AnalyzeAsync(string repoId, CancellationToken ct = default)
     {
@@ -43,6 +51,8 @@ public class QualityService
         issues.Add(CheckConflicts(entries));
         issues.Add(CheckDriftFlagged(entries));
         issues.Add(CheckReflectionHealth(entries));
+        issues.Add(CheckMergeRejected(entries));
+        issues.Add(await CheckForgetLeaksAsync(normalizedRepoId, ct));
 
         report.Issues = issues.Where(i => i != null).Cast<QualityIssue>().ToList();
 
@@ -234,6 +244,53 @@ public class QualityService
             Description = $"{conflicts.Count} pairs of memories have similar but not identical content — may conflict",
             AffectedCount = conflicts.Count,
             ExampleIds = conflicts.SelectMany(c => new[] { c.A, c.B }).Distinct().Take(5).ToList(),
+        };
+    }
+
+    // Runtime post-forget verification (#37). A leak means a forgotten/superseded memory still surfaces
+    // through some read path — a Critical integrity failure. Best-effort: a store hiccup here must not
+    // fail the whole quality analysis. No-op when the auditor isn't wired.
+    private async Task<QualityIssue?> CheckForgetLeaksAsync(string repoId, CancellationToken ct)
+    {
+        if (_auditor is null) return null;
+        try
+        {
+            var report = await _auditor.VerifyForgottenAsync(repoId, ct);
+            if (report.Clean) return null;
+
+            var paths = string.Join(", ", report.Leaks.Select(l => l.Path).Distinct());
+            return new QualityIssue
+            {
+                CheckId = "forget-leak",
+                Severity = QualitySeverity.Critical,
+                Title = "Forgotten memories still reachable",
+                Description = $"{report.Leaks.Count} forgotten/superseded memories still surface via: {paths}. These should be invisible to every read path.",
+                AffectedCount = report.Leaks.Count,
+                ExampleIds = report.Leaks.Select(l => l.MemoryId).Distinct().Take(5).ToList(),
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // Merges the recall-consistency guard withheld (#39). Informational, not a defect: nothing was
+    // forgotten — a near-dup pair was deliberately kept because folding it would lose retrievability.
+    // Reads the LastMergeRejectedAt stamp already on the browsed entries — no new query/collection.
+    private static QualityIssue? CheckMergeRejected(List<MemoryEntry> entries)
+    {
+        var rejected = entries.Where(e => e.LastMergeRejectedAt is not null && e.IsLatest).ToList();
+        if (rejected.Count == 0) return null;
+
+        return new QualityIssue
+        {
+            CheckId = "merge-rejected",
+            Severity = QualitySeverity.Info,
+            Title = "Merges withheld for recall consistency",
+            Description = $"{rejected.Count} memories were kept out of a dedup/consolidation merge because the survivor would not have surfaced for their retrieval intent — nothing was forgotten.",
+            AffectedCount = rejected.Count,
+            ExampleIds = rejected.Take(5).Select(e => e.Id).ToList(),
         };
     }
 

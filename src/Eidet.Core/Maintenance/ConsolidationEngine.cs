@@ -78,6 +78,19 @@ public sealed class ConsolidationEngine
 
             if (dryRun) continue;
 
+            // Two-altitude procedure emission (#39): when the cluster carries a determinable functional
+            // stage (#38), it is procedure-shaped — emit a fine-grained steps procedure + a script-like
+            // abstraction over it, both stage-tagged (honoring #38's "emitted subtask memories carry
+            // Stage != None"). An all-None cluster falls through to today's single-altitude Insight path
+            // unchanged — a zero-LLM path can't fabricate a stage.
+            var stage = DeterminableStage(bucket);
+            if (stage != FunctionalStage.None)
+            {
+                await EmitTwoAltitudeProceduresAsync(
+                    ctx, repoId, bucket, stage, bucketValence, unionTags, proposedImportance, representative, candidate.ObservationIds, result, ct);
+                continue;
+            }
+
             // Never boost an insight that takes the opposite hard stance from this bucket — a
             // conflicting bucket falls through to create its own insight instead, so both
             // stances coexist (mirrors the write-path polarity guards).
@@ -117,9 +130,7 @@ public sealed class ConsolidationEngine
                 // recall. This stops an attacker laundering a poisoned observation into a fully
                 // trusted insight ("compression-amplified toxin"). The audit trail — Source and
                 // DerivedFrom — is preserved untouched.
-                var provenance = bucket.Any(o => !IsTrustedSource(o))
-                    ? bucket.OrderBy(o => MemoryTrust.ProvenanceTrust(o.Provenance)).First().Provenance
-                    : MemoryProvenance.Consolidation;
+                var provenance = ProvenanceFor(bucket);
 
                 var now = DateTime.UtcNow;
                 var insight = new MemoryEntry
@@ -151,6 +162,94 @@ public sealed class ConsolidationEngine
     /// surface (Pack/Intake), i.e. its provenance trust floor is the full 1.0.</summary>
     private static bool IsTrustedSource(MemoryEntry obs) =>
         MemoryTrust.ProvenanceTrust(obs.Provenance) >= 1.0;
+
+    /// <summary>Anti-laundering provenance stamp: any untrusted contributor demotes the emission to the
+    /// least-trusted contributor's provenance; an all-trusted bucket earns <c>Consolidation</c>.</summary>
+    private static MemoryProvenance ProvenanceFor(IReadOnlyList<MemoryEntry> bucket) =>
+        bucket.Any(o => !IsTrustedSource(o))
+            ? bucket.OrderBy(o => MemoryTrust.ProvenanceTrust(o.Provenance)).First().Provenance
+            : MemoryProvenance.Consolidation;
+
+    /// <summary>The cluster's functional stage: the most common non-<c>None</c> stage among its sources
+    /// (ties broken by enum order for determinism), or <c>None</c> when no source carries one. Stage does
+    /// NOT partition consolidation groups (#38 decision) — this only classifies an already-formed bucket.</summary>
+    private static FunctionalStage DeterminableStage(IReadOnlyList<MemoryEntry> bucket)
+    {
+        var staged = bucket.Where(o => o.Stage != FunctionalStage.None).ToList();
+        return staged.Count == 0
+            ? FunctionalStage.None
+            : staged.GroupBy(o => o.Stage).OrderByDescending(g => g.Count()).ThenBy(g => g.Key).First().Key;
+    }
+
+    /// <summary>
+    /// Two-altitude procedure emission (Memp): a fine-grained steps Procedure (the ordered union of the
+    /// cluster's observation contents, subtask granularity) and a script-like abstraction Procedure over
+    /// it, linked <c>abstraction → fine</c> via <c>DerivedFrom</c> + a <c>"abstracts"</c> MemoryLink. Both
+    /// carry the cluster's <paramref name="stage"/> and the anti-laundering provenance. Deterministic;
+    /// the abstraction gets optional Ollama polish only on the existing large-bucket path.
+    /// </summary>
+    private async Task EmitTwoAltitudeProceduresAsync(
+        BulkMutationCtx ctx, string repoId, IReadOnlyList<MemoryEntry> bucket, FunctionalStage stage,
+        Valence bucketValence, List<string> unionTags, float proposedImportance, MemoryEntry representative,
+        List<string> observationIds, ConsolidationResult result, CancellationToken ct)
+    {
+        var provenance = ProvenanceFor(bucket);
+        var now = DateTime.UtcNow;
+
+        var stepsContent = string.Join("\n", bucket
+            .OrderBy(o => o.CreatedAt)
+            .Select((o, i) => $"{i + 1}. {o.Content}"));
+        var fine = new MemoryEntry
+        {
+            Id = MemoryIdGenerator.Generate(repoId, MemoryType.Procedure, stepsContent, now),
+            RepoId = repoId,
+            Type = MemoryType.Procedure,
+            Valence = bucketValence,
+            Stage = stage,
+            Content = stepsContent,
+            Tags = unionTags,
+            Importance = proposedImportance,
+            Source = "consolidation",
+            Provenance = provenance,
+            Confidence = 0.7f,
+            CreatedAt = now,
+            Validity = new Validity { ValidFrom = now },
+            DerivedFrom = observationIds,
+            Entities = EntityExtractor.Extract(stepsContent),
+            OneLiner = EntityExtractor.GenerateHeuristicOneLiner(stepsContent),
+        };
+        await ctx.StoreNewAsync(fine, ct);
+
+        var abstractContent = representative.Content;
+        if (bucket.Count > 5 && _enrichment.IsAvailable)
+        {
+            var merged = await _enrichment.MergeObservationsAsync(bucket.Select(o => o.Content).ToList(), ct);
+            if (!string.IsNullOrEmpty(merged)) abstractContent = merged;
+        }
+        var abstraction = new MemoryEntry
+        {
+            Id = MemoryIdGenerator.Generate(repoId, MemoryType.Procedure, abstractContent, now.AddTicks(1)),
+            RepoId = repoId,
+            Type = MemoryType.Procedure,
+            Valence = bucketValence,
+            Stage = stage,
+            Content = abstractContent,
+            Tags = unionTags,
+            Importance = proposedImportance,
+            Source = "consolidation",
+            Provenance = provenance,
+            Confidence = 0.7f,
+            CreatedAt = now.AddTicks(1),
+            Validity = new Validity { ValidFrom = now.AddTicks(1) },
+            DerivedFrom = new List<string> { fine.Id }.Concat(observationIds).ToList(),
+            Links = [new MemoryLink { TargetRepoId = repoId, TargetMemoryId = fine.Id, Relation = "abstracts" }],
+            Entities = EntityExtractor.Extract(abstractContent),
+            OneLiner = EntityExtractor.GenerateHeuristicOneLiner(abstractContent),
+        };
+        await ctx.StoreNewAsync(abstraction, ct);
+
+        result.ProceduresCreated += 2;
+    }
 
     public async Task<int> ApplyImportanceDecayAsync(
         string repoId, bool isRepoActive = true, CancellationToken ct = default, BulkMutationCtx? write = null)
@@ -201,6 +300,9 @@ public sealed class ConsolidationResult
     public List<ConsolidationCandidate> Candidates { get; set; } = [];
     public int InsightsCreated { get; set; }
     public int InsightsBoosted { get; set; }
+
+    /// <summary>Procedure memories emitted by the two-altitude path (#39) — 2 per staged cluster (fine + abstraction).</summary>
+    public int ProceduresCreated { get; set; }
 }
 
 public sealed class ConsolidationCandidate

@@ -1,7 +1,7 @@
 namespace Eidet.Core.Maintenance;
 
 /// <summary>
-/// The 12 maintenance stages, in pipeline order. Each value's name equals the matching
+/// The 15 maintenance stages, in pipeline order. Each value's name equals the matching
 /// stage's <c>StageName</c> const; the orchestrator maps enum ⇄ name at the selection boundary.
 /// </summary>
 public enum MaintenanceStep
@@ -11,6 +11,8 @@ public enum MaintenanceStep
     DedupSweep,
     ImportanceDecay,
     RoiDecay,
+    Deprecate,
+    BudgetEviction,
     OrphanCleanup,
     EnrichmentCleanup,
     HeuristicEnrichmentBackfill,
@@ -18,6 +20,7 @@ public enum MaintenanceStep
     DriftReview,
     Consolidation,
     Reflection,
+    ForgetIntegrity,
 }
 
 public sealed class MaintenanceRequest

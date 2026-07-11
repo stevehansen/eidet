@@ -41,8 +41,7 @@ public sealed class StoreCommand : AsyncCommand<StoreCommand.Settings>
         var config = ConfigManager.Load();
         var store = DocumentStoreFactory.CreateFromConfig(config);
         var eidetStore = new RavenEidetStore(store);
-        IHookRunner hookRunner = config.Hooks.PreStore.Count > 0 || config.Hooks.PostStore.Count > 0
-            ? new HookRunner(config.Hooks) : NullHookRunner.Instance;
+        var hookRunner = new HookRunner(config.Hooks);
         var svc = new MemoryService(eidetStore, hooks: hookRunner);
 
         var repoId = settings.Repo ?? Directory.GetCurrentDirectory();

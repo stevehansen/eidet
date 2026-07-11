@@ -1,5 +1,6 @@
 using Eidet.Core.Configuration;
 using Eidet.Core.Enrichment;
+using Eidet.Core.Integrity;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 
@@ -24,11 +25,14 @@ public sealed class MaintenanceContext
     public required ConsolidationEngine Consolidation { get; init; }
     public required ReflectionEngine Reflection { get; init; }
     public required DedupEngine Dedup { get; init; }
+    public required IIntegrityAuditor Auditor { get; init; }
 
     public required string RepoId { get; init; }
     public required bool IsRepoActive { get; init; }
     public int ObservationRetentionDays { get; init; } = 90;
     public DriftReviewConfig Drift { get; init; } = new();
+    public BudgetConfig Budget { get; init; } = new();
+    public DeprecateConfig Deprecate { get; init; } = new();
     public DateTime Now { get; init; } = DateTime.UtcNow;
 
     /// <summary>Stage-to-stage scratch area — avoid unless truly needed.</summary>
@@ -56,6 +60,7 @@ public sealed class MaintenanceContext
             Consolidation = new ConsolidationEngine(store, enrich, memory),
             Reflection = new ReflectionEngine(store, enrich, memory),
             Dedup = new DedupEngine(store, memory, enrich),
+            Auditor = new IntegrityAuditor(memory, store),
             RepoId = repoId,
             IsRepoActive = true,
         };

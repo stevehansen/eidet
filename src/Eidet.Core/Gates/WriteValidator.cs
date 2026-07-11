@@ -55,6 +55,7 @@ public static class WriteValidator
             RepoId = repoId,
             Type = opts.Type,
             Valence = opts.Valence,
+            Stage = opts.Stage,
             Content = opts.Content,
             Tags = opts.Tags?.ToList() ?? [],
             Importance = Math.Clamp(opts.Importance, 0f, 1f),
@@ -81,6 +82,7 @@ public static class WriteValidator
     public static EntryBuildResult BuildEditEntry(MemoryEntry original, EditOptions edit)
     {
         var effectiveType = edit.Type ?? original.Type;
+        var effectiveStage = edit.Stage ?? original.Stage;
         var newContent = edit.Content!;
         var validation = Validate(newContent, effectiveType);
         if (!validation.Passed) return EntryBuildResult.Rejected(validation.Reason ?? "rejected");
@@ -92,6 +94,7 @@ public static class WriteValidator
             RepoId = original.RepoId,
             Type = effectiveType,
             Valence = original.Valence,
+            Stage = effectiveStage,
             Content = newContent,
             Tags = edit.Tags?.ToList() ?? original.Tags,
             Importance = edit.Importance.HasValue ? Math.Clamp(edit.Importance.Value, 0f, 1f) : original.Importance,

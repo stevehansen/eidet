@@ -146,6 +146,31 @@ public class RecallToolHandlerTests
         Assert.DoesNotContain("⚠ Redis cache", result.HumanSummary);
     }
 
+    // ─── Functional stage (#38) ───────────────────────────────────────
+
+    [Fact]
+    public async Task Recall_StageFilter_MapsToQuery()
+    {
+        var handler = NewHandler(out var store);
+
+        await Invoke(handler, new { query = "parser", stage = "edit" });
+
+        // The string filter reaches the store as MemoryQuery.Stage (the None-wildcard WhereEquals key).
+        Assert.NotNull(store.LastQuery);
+        Assert.Equal(FunctionalStage.Edit, store.LastQuery!.Stage);
+    }
+
+    [Fact]
+    public async Task Recall_NoStageFilter_LeavesQueryStageNull()
+    {
+        var handler = NewHandler(out var store);
+
+        await Invoke(handler, new { query = "parser" });
+
+        Assert.NotNull(store.LastQuery);
+        Assert.Null(store.LastQuery!.Stage);
+    }
+
     private static MemoryEntry Result(string id, MemoryType type, string content, string oneLiner, Valence valence) => new()
     {
         Id = id,

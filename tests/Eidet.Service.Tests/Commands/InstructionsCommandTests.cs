@@ -12,6 +12,15 @@ public class InstructionsCommandTests
     }
 
     [Fact]
+    public void GenerateInstructions_ContainsCompactionGuidance()
+    {
+        // #67: nudge the agent to store durable findings at the pre-compaction boundary.
+        var instructions = InstructionsCommand.GenerateInstructions();
+        Assert.Contains("Before compaction", instructions);
+        Assert.Contains("survives compaction", instructions);
+    }
+
+    [Fact]
     public void GenerateInstructions_ContainsCoreTools()
     {
         var instructions = InstructionsCommand.GenerateInstructions();

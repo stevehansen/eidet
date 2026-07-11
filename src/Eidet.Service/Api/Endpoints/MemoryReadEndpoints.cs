@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Eidet.Core.Domain;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
@@ -59,6 +60,7 @@ internal sealed class MemoryReadEndpoints
             limit = int.TryParse(ctx.Request.QueryString["limit"], out var lim) ? lim : 10,
             type = ctx.Request.QueryString["type"],
             valence = ctx.Request.QueryString["valence"],
+            stage = ctx.Request.QueryString["stage"],
             tags = ctx.Request.QueryString["tags"]?.Split(',', StringSplitOptions.RemoveEmptyEntries).ToArray() ?? [],
             cross_repo = string.Equals(ctx.Request.QueryString["cross_repo"], "true", StringComparison.OrdinalIgnoreCase),
         }, HttpJson.Options);
@@ -76,7 +78,11 @@ internal sealed class MemoryReadEndpoints
             await HttpJson.WriteAsync(ctx, new { error = "Memory not found" }, 404);
             return;
         }
-        await HttpJson.WriteAsync(ctx, chain[0]);
+        // Additive: expose contentSha256 (#65) alongside the entry fields so a caller can round-trip it
+        // as the If-Match precondition on a subsequent PUT without recomputing it locally.
+        var node = JsonSerializer.SerializeToNode(chain[0], HttpJson.Options)!.AsObject();
+        node["contentSha256"] = Eidet.Core.Domain.ContentHash.Of(chain[0].Content);
+        await HttpJson.WriteAsync(ctx, node);
     }
 
     public async Task History(HttpListenerContext ctx, string id, CancellationToken ct)

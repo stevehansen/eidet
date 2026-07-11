@@ -94,6 +94,7 @@ Every hook receives a JSON object on stdin:
   "event": "pre-store",
   "repo": "P--MyProject",
   "data": {
+    "id": "memories/P--MyProject/observation/abc123",
     "content": "The auth module uses JWT with RS256",
     "type": "observation",
     "tags": ["auth", "jwt"],
@@ -103,7 +104,7 @@ Every hook receives a JSON object on stdin:
 }
 ```
 
-Post-store also includes the assigned `id`.
+Pre-store and post-store receive the same payload, including the deterministic `id` the entry will be stored under.
 
 ### pre-recall / post-recall
 
@@ -229,8 +230,7 @@ hooks.postForget  0 hook(s)
 
 ## Performance
 
-- When **no hooks are configured**, Eidet uses `NullHookRunner` — zero overhead, no process spawning
-- Hooks are only activated when at least one hook definition exists in the config
+- When **no hooks are configured**, the runner short-circuits before any process spawn — zero overhead
 - Pre-hooks add latency (process spawn + execution time). Keep them fast.
 - Post-hooks run after the response is sent — they don't slow down the caller
 - Use `enabled: false` to temporarily disable a hook without removing it

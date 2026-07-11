@@ -41,6 +41,7 @@ public sealed class RecallToolHandler : IToolHandler
         {
             Type = ToolArgs.GetEnum<MemoryType>(args, "type"),
             Valence = ToolArgs.GetEnum<Valence>(args, "valence"),
+            Stage = ToolArgs.GetEnum<FunctionalStage>(args, "stage"),
             Tags = ToolArgs.GetStringArray(args, "tags"),
             Limit = ToolArgs.GetInt(args, "limit", 10),
             IncludeExpired = ToolArgs.GetBool(args, "include_expired"),
@@ -132,6 +133,12 @@ public sealed class RecallToolHandler : IToolHandler
                 ["type"] = "string",
                 ["enum"] = new JsonArray { "neutral", "affirming", "refuting", "cautionary" },
                 ["description"] = "Filter by stance: refuting (dead-ends), cautionary (warnings), affirming, or neutral.",
+            },
+            ["stage"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["enum"] = new JsonArray { "analyze", "locate", "edit", "test", "debug", "deploy" },
+                ["description"] = "Hard-filter by functional subtask before ranking. Returns memories tagged with this stage PLUS stage-agnostic memories; excludes memories tagged with a different stage.",
             },
             ["tags"] = new JsonObject
             {
