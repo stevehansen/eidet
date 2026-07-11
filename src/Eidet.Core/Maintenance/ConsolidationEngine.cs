@@ -78,12 +78,13 @@ public sealed class ConsolidationEngine
 
             if (dryRun) continue;
 
+            // Never boost an insight that takes the opposite hard stance from this bucket — a
+            // conflicting bucket falls through to create its own insight instead, so both
+            // stances coexist (mirrors the write-path polarity guards).
             var existingInsight = await _store.FindDuplicateAsync(repoId, representative.Content, 0.85f, ct);
-            if (existingInsight is not null && existingInsight.Type == MemoryType.Insight)
+            if (existingInsight is not null && existingInsight.Type == MemoryType.Insight &&
+                !ValencePolarity.Conflicts(existingInsight.Valence, bucketValence))
             {
-                // Never boost an insight that takes the opposite hard stance from this bucket.
-                if (ValencePolarity.Conflicts(existingInsight.Valence, bucketValence)) continue;
-
                 // Anti-laundering (boost path): only trusted sources may lift a trusted insight. An
                 // attacker must not be able to raise a good insight's importance — or contaminate its
                 // lineage — by injecting low-trust (Pack/Intake) observations that happen to match it.
