@@ -16,6 +16,13 @@ class MemoryType(str, Enum):
     HEURISTIC = "heuristic"
 
 
+class Valence(str, Enum):
+    NEUTRAL = "neutral"
+    AFFIRMING = "affirming"
+    REFUTING = "refuting"
+    CAUTIONARY = "cautionary"
+
+
 @dataclass
 class StoreRequest:
     repo: str
@@ -26,6 +33,8 @@ class StoreRequest:
     source: str = "sdk"
     session_id: str | None = None
     supersedes: str | None = None
+    negative: bool = False
+    valence: Valence | str | None = None
 
 
 class EidetError(Exception):
@@ -67,6 +76,8 @@ class EidetClient:
         source: str = "sdk",
         session_id: str | None = None,
         supersedes: str | None = None,
+        negative: bool = False,
+        valence: Valence | str | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "repo": repo,
@@ -81,6 +92,10 @@ class EidetClient:
             body["sessionId"] = session_id
         if supersedes:
             body["supersedes"] = supersedes
+        if negative:
+            body["negative"] = True
+        if valence:
+            body["valence"] = str(valence.value) if isinstance(valence, Valence) else valence
         return self._post("/api/eidet", body)
 
     def recall(
@@ -91,12 +106,18 @@ class EidetClient:
         limit: int = 10,
         type: MemoryType | str | None = None,
         tags: list[str] | None = None,
+        valence: Valence | str | None = None,
+        cross_repo: bool = False,
     ) -> list[dict[str, Any]]:
         params: dict[str, str] = {"repo": repo, "q": query, "limit": str(limit)}
         if type:
             params["type"] = str(type.value) if isinstance(type, MemoryType) else type
         if tags:
             params["tags"] = ",".join(tags)
+        if valence:
+            params["valence"] = str(valence.value) if isinstance(valence, Valence) else valence
+        if cross_repo:
+            params["cross_repo"] = "true"
         data = self._get("/api/eidet/search", params=params)
         return data["results"]
 
@@ -112,8 +133,11 @@ class EidetClient:
         data = self._delete(f"/api/eidet/{memory_id}", params=params)
         return data.get("forgotten", False)
 
-    def feedback(self, memory_id: str, was_used: bool) -> bool:
-        data = self._post("/api/eidet/feedback", {"memoryId": memory_id, "wasUsed": was_used})
+    def feedback(self, memory_id: str, was_used: bool, reason: str | None = None) -> bool:
+        body: dict[str, Any] = {"memoryId": memory_id, "wasUsed": was_used}
+        if reason:
+            body["reason"] = reason
+        data = self._post("/api/eidet/feedback", body)
         return data.get("applied", False)
 
     def history(self, memory_id: str) -> list[dict[str, Any]]:
@@ -189,6 +213,13 @@ class EidetClient:
 
     def status(self) -> dict[str, Any]:
         return self._get("/api/status")
+
+    def is_available(self) -> bool:
+        try:
+            self.health()
+            return True
+        except Exception:
+            return False
 
     # ─── HTTP helpers ────────────────────────────────────────────
 

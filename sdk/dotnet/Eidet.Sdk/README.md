@@ -24,7 +24,7 @@ var result = await client.StoreAsync(new StoreRequest
 {
     Repo = "/path/to/project",
     Content = "The auth module uses JWT with RS256 signing",
-    Type = "observation",
+    Type = MemoryType.Observation,
     Tags = ["auth", "jwt"],
 });
 
@@ -32,7 +32,7 @@ var result = await client.StoreAsync(new StoreRequest
 var results = await client.RecallAsync("/path/to/project", "authentication");
 
 // Get session context (L0 identity + L1 top memories, < 600 tokens)
-var context = await client.ContextAsync("/path/to/project");
+var context = await client.GetContextAsync("/path/to/project");
 
 // Browse all memories
 var page = await client.BrowseAsync("/path/to/project", skip: 0, take: 50);
@@ -52,16 +52,16 @@ using var client = new EidetClient("http://localhost:19380", apiKey: "your-api-k
 
 | Method | Description |
 |--------|-------------|
-| `StoreAsync(request)` | Store a memory (observation, insight, procedure, heuristic) |
-| `RecallAsync(repo, query, ...)` | Search memories by meaning and keywords |
-| `ContextAsync(repo)` | Get compact session context (< 600 tokens) |
+| `StoreAsync(request)` | Store a memory (observation, insight, procedure, heuristic; `Negative`/`Valence` for dead-ends) |
+| `RecallAsync(repo, query, ...)` | Search memories by meaning and keywords (filters: type, tags, valence, crossRepo) |
+| `GetContextAsync(repo)` | Get compact session context (< 600 tokens) |
 | `GetMemoryAsync(id)` | Get a specific memory by ID |
 | `ForgetAsync(id, reason?)` | Soft-delete a memory |
-| `FeedbackAsync(memoryId, wasUsed)` | Echo (useful) or fizzle (irrelevant) feedback |
-| `HistoryAsync(id)` | Get version chain for a memory |
+| `FeedbackAsync(memoryId, wasUsed, reason?)` | Echo (useful) or fizzle (irrelevant) feedback |
+| `GetHistoryAsync(id)` | Get version chain for a memory |
 | `BrowseAsync(repo, ...)` | Paginated memory listing |
-| `GraphAsync(repo, limit?)` | Graph data for visualization |
-| `ReposAsync()` | List all known repositories |
+| `GetGraphAsync(repo, limit?)` | Graph data for visualization |
+| `GetReposAsync()` | List all known repositories |
 | `IntakeAsync(repo)` | Ingest project files as seed memories |
 | `ConsolidateAsync(repo)` | Merge related observations into insights |
 | `MaintenanceAsync(repo)` | Run maintenance pipeline |
