@@ -8,5 +8,9 @@
     <Project Path="tests/Eidet.Service.Tests/Eidet.Service.Tests.csproj" />
     <Project Path="tests/Eidet.Integration.Tests/Eidet.Integration.Tests.csproj" />
     <Project Path="tests/Eidet.Benchmark.Tests/Eidet.Benchmark.Tests.csproj" />
+    <Project Path="tests/Eidet.Bench.Tests/Eidet.Bench.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Eidet.Bench/Eidet.Bench.csproj" />
   </Folder>
 </Solution>

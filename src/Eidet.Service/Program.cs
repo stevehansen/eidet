@@ -165,6 +165,15 @@ app.Configure(config =>
             .WithDescription("List all config values");
     });
 
+    config.AddBranch("bench", bench =>
+    {
+        bench.SetDescription("SWE Context Bench harness (offline fixture smoke by default)");
+        bench.SetDefaultCommand<BenchSmokeCommand>();
+
+        bench.AddCommand<BenchFullCommand>("full")
+            .WithDescription("Run against the real SWE Context Bench dataset (refuses to emit a number without it)");
+    });
+
     config.AddBranch("ollama", ollama =>
     {
         ollama.SetDescription("Manage Ollama models for enrichment");

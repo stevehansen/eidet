@@ -14,8 +14,11 @@ namespace Eidet.Benchmark.Tests;
 ///
 /// Layer support is real enough to fan a cross-repo recall across a mounted layer's
 /// <c>ApplicableRepos</c>, so the guard can prove stale-suppression holds across the repo union.
+///
+/// Public (not internal) so <c>Eidet.Bench.Tests</c> can reuse it as the deterministic store
+/// under the in-process Eidet memory backend.
 /// </summary>
-internal sealed class BenchInMemoryStore : IEidetStore
+public sealed class BenchInMemoryStore : IEidetStore
 {
     private readonly Dictionary<string, MemoryEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, MemoryLayer> _layers = new(StringComparer.OrdinalIgnoreCase);

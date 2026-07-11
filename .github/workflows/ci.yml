@@ -41,7 +41,8 @@ jobs:
         run: dotnet build Eidet.slnx --no-restore -c Release
 
       - name: Test
-        run: dotnet test Eidet.slnx --no-build -c Release --logger "trx;LogFileName=results.trx" --results-directory ./test-results
+        # RealRun-tagged tests need the real SWE Context Bench dataset + paid solver runs; CI never runs them.
+        run: dotnet test Eidet.slnx --no-build -c Release --filter "Category!=RealRun" --logger "trx;LogFileName=results.trx" --results-directory ./test-results
 
       - name: Upload test results
         if: always()

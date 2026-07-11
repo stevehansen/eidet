@@ -1,0 +1,76 @@
+{
+  "related": [
+    {
+      "repo": "acme/parquet-tools",
+      "instance_id": "acme__parquet-tools-101",
+      "base_commit": "3f1c2a9d0e8b76543210fedcba9876543210abcd",
+      "patch": "diff --git a/parquet_tools/page_reader.py b/parquet_tools/page_reader.py\n--- a/parquet_tools/page_reader.py\n+++ b/parquet_tools/page_reader.py\n@@ -41,7 +41,7 @@ def read_page(self, index):\n-        offset = self._page_offsets[index]\n+        offset = min(self._page_offsets[index], self._row_group_end)\n",
+      "test_patch": "diff --git a/tests/test_page_reader.py b/tests/test_page_reader.py\n--- a/tests/test_page_reader.py\n+++ b/tests/test_page_reader.py\n@@ -88,0 +89,6 @@\n+def test_offset_clamped_to_row_group():\n+    reader = PageReader(pages_beyond_row_group())\n+    assert reader.read_page(2).offset <= reader.row_group_end\n",
+      "problem_statement": "PageReader returns garbage rows when a page starts beyond the row-group boundary: the page byte offset is never clamped to the row-group end before seeking.",
+      "hints_text": "",
+      "created_at": "2025-11-03T09:14:00Z",
+      "version": 1.2,
+      "FAIL_TO_PASS": "[\"tests/test_page_reader.py::test_offset_clamped_to_row_group\"]",
+      "PASS_TO_PASS": "[\"tests/test_page_reader.py::test_read_first_page\"]",
+      "environment_setup_commit": "3f1c2a9d0e8b76543210fedcba9876543210abcd"
+    },
+    {
+      "repo": "acme/parquet-tools",
+      "instance_id": "acme__parquet-tools-102",
+      "base_commit": "8d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e",
+      "patch": "diff --git a/parquet_tools/slugger.py b/parquet_tools/slugger.py\n--- a/parquet_tools/slugger.py\n+++ b/parquet_tools/slugger.py\n@@ -12,7 +12,7 @@ def slugify(name):\n-    return \"\".join(c for c in name if c.isascii())\n+    return transliterate(name)\n",
+      "test_patch": "diff --git a/tests/test_slugger.py b/tests/test_slugger.py\n--- a/tests/test_slugger.py\n+++ b/tests/test_slugger.py\n@@ -30,0 +31,5 @@\n+def test_unicode_column_names_survive():\n+    assert slugify(\"prix_moyen_€\") == \"prix_moyen_eur\"\n",
+      "problem_statement": "Column names containing unicode are mangled when generating slug identifiers: the slugger silently drops non-ascii characters instead of applying transliteration.",
+      "hints_text": "",
+      "created_at": "2025-11-19T15:42:00Z",
+      "version": 1.2,
+      "FAIL_TO_PASS": "[\"tests/test_slugger.py::test_unicode_column_names_survive\"]",
+      "PASS_TO_PASS": "[\"tests/test_slugger.py::test_ascii_names_unchanged\"]",
+      "environment_setup_commit": "8d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e"
+    }
+  ],
+  "base": [
+    {
+      "repo": "acme/parquet-tools",
+      "instance_id": "acme__parquet-tools-201",
+      "base_commit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+      "patch": "diff --git a/parquet_tools/page_writer.py b/parquet_tools/page_writer.py\n--- a/parquet_tools/page_writer.py\n+++ b/parquet_tools/page_writer.py\n@@ -57,7 +57,7 @@ def write_page(self, page):\n-        end = page.offset + page.length\n+        end = min(page.offset + page.length, self._row_group_end)\n",
+      "test_patch": "diff --git a/tests/test_page_writer.py b/tests/test_page_writer.py\n--- a/tests/test_page_writer.py\n+++ b/tests/test_page_writer.py\n@@ -61,0 +62,6 @@\n+def test_write_offset_clamped_to_row_group():\n+    writer = PageWriter(row_group_end=4096)\n+    writer.write_page(page_of_length(8192))\n+    assert writer.last_page_end <= 4096\n",
+      "problem_statement": "PageWriter emits pages that spill past the row-group boundary; the write-side page end must be clamped to the row-group end exactly like the reader side.",
+      "hints_text": "",
+      "created_at": "2026-01-08T11:05:00Z",
+      "version": 1.3,
+      "FAIL_TO_PASS": "[\"tests/test_page_writer.py::test_write_offset_clamped_to_row_group\"]",
+      "PASS_TO_PASS": "[\"tests/test_page_writer.py::test_write_first_page\"]",
+      "environment_setup_commit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+    },
+    {
+      "repo": "acme/parquet-tools",
+      "instance_id": "acme__parquet-tools-202",
+      "base_commit": "0f9e8d7c6b5a49382716059483726150493827af",
+      "patch": "diff --git a/parquet_tools/alias_table.py b/parquet_tools/alias_table.py\n--- a/parquet_tools/alias_table.py\n+++ b/parquet_tools/alias_table.py\n@@ -24,7 +24,7 @@ def register_alias(self, alias):\n-    key = alias.lower()\n+    key = transliterate(alias).lower()\n",
+      "test_patch": "diff --git a/tests/test_alias_table.py b/tests/test_alias_table.py\n--- a/tests/test_alias_table.py\n+++ b/tests/test_alias_table.py\n@@ -44,0 +45,6 @@\n+def test_unicode_aliases_do_not_collide():\n+    table = AliasTable()\n+    table.register_alias(\"coût\")\n+    table.register_alias(\"cout\")\n+    assert len(table) == 2\n",
+      "problem_statement": "Slug identifiers derived from unicode column aliases collide after the alias table roundtrip; aliases need the same transliteration treatment the slugger applies.",
+      "hints_text": "",
+      "created_at": "2026-01-27T08:30:00Z",
+      "version": 1.3,
+      "FAIL_TO_PASS": "[\"tests/test_alias_table.py::test_unicode_aliases_do_not_collide\"]",
+      "PASS_TO_PASS": "[\"tests/test_alias_table.py::test_ascii_alias_roundtrip\"]",
+      "environment_setup_commit": "0f9e8d7c6b5a49382716059483726150493827af"
+    },
+    {
+      "repo": "acme/parquet-tools",
+      "instance_id": "acme__parquet-tools-203",
+      "base_commit": "5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d",
+      "patch": "diff --git a/parquet_tools/ingest.py b/parquet_tools/ingest.py\n--- a/parquet_tools/ingest.py\n+++ b/parquet_tools/ingest.py\n@@ -103,6 +103,8 @@ def ingest_batch(self, rows):\n     self._sink.commit(rows)\n+    self._journal.write_checkpoint(self._sink.position())\n",
+      "test_patch": "diff --git a/tests/test_ingest.py b/tests/test_ingest.py\n--- a/tests/test_ingest.py\n+++ b/tests/test_ingest.py\n@@ -77,0 +78,7 @@\n+def test_restart_resumes_from_checkpoint():\n+    job = interrupted_ingest_job()\n+    job.restart()\n+    assert job.rows_ingested == job.rows_total\n",
+      "problem_statement": "Resumable ingestion loses rows when a job restarts mid-file; ingestion needs a durable checkpoint marker written after every committed row batch.",
+      "hints_text": "",
+      "created_at": "2026-02-14T17:55:00Z",
+      "version": 1.4,
+      "FAIL_TO_PASS": "[\"tests/test_ingest.py::test_restart_resumes_from_checkpoint\"]",
+      "PASS_TO_PASS": "[\"tests/test_ingest.py::test_single_pass_ingest\"]",
+      "environment_setup_commit": "5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d"
+    }
+  ]
+}

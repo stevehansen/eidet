@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Eidet.Core\Eidet.Core.csproj" />
+    <ProjectReference Include="..\..\tools\Eidet.Bench\Eidet.Bench.csproj" />
   </ItemGroup>
 
   <ItemGroup>
