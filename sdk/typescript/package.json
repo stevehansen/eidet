@@ -27,6 +27,6 @@
     "directory": "sdk/typescript"
   },
   "devDependencies": {
-    "typescript": "^6.0"
+    "typescript": "^7.0.0"
   }
 }
