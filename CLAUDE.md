@@ -129,6 +129,7 @@ Base: `http://localhost:19380`
 | POST | `/api/eidet/intake/git` | Seed memories from git commit history |
 | POST | `/api/eidet/intake/claude-memory` | Import Claude Code native per-project memory |
 | POST | `/api/eidet/consolidate` | Consolidate observations → insights |
+| POST | `/api/eidet/memory-tool?repo=...` | Claude memory-tool (`memory_20250818`) command relay |
 | POST | `/api/maintenance` | Run maintenance pipeline |
 | POST | `/mcp?repo=...` | MCP JSON-RPC over HTTP |
 | GET  | `/ui` | Web UI SPA |

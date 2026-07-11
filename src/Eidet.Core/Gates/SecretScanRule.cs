@@ -33,6 +33,22 @@ internal static partial class SecretScanRule
         return ValidationResult.Pass();
     }
 
+    /// <summary>Replace every pattern match with a stable <c>[REDACTED:description]</c> marker.</summary>
+    public static string Redact(string content, out int redactions)
+    {
+        var count = 0;
+        foreach (var (pattern, description) in Patterns)
+        {
+            content = pattern.Replace(content, _ =>
+            {
+                count++;
+                return $"[REDACTED:{description}]";
+            });
+        }
+        redactions = count;
+        return content;
+    }
+
     [GeneratedRegex(@"AKIA[0-9A-Z]{16}")]
     private static partial Regex AwsKeyRegex();
 

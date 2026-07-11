@@ -2,6 +2,7 @@ using Eidet.Core.Configuration;
 using Eidet.Core.Enrichment;
 using Eidet.Core.LooseEnds;
 using Eidet.Core.Maintenance;
+using Eidet.Core.MemoryTool;
 using Eidet.Core.Services;
 using Eidet.Service.Mcp;
 
@@ -34,4 +35,7 @@ public sealed record EidetApiServerOptions
     public EidetConfig? Config { get; init; }
     public UsageTracker? Usage { get; init; }
     public ScheduledTaskService? ScheduledTasks { get; init; }
+
+    /// <summary>Faithful blob store behind <c>POST /api/eidet/memory-tool</c>; omitting it disables the endpoint (503).</summary>
+    public IMemoryFileStore? MemoryFiles { get; init; }
 }

@@ -40,6 +40,7 @@ public class CurationApiTests
     [InlineData("POST", "/api/eidet/enrich", "write:all")]
     [InlineData("POST", "/api/eidet/memories/test/insight/123/links", "write:all")]
     [InlineData("DELETE", "/api/eidet/memories/test/insight/123/links", "write:all")]
+    [InlineData("POST", "/api/eidet/memory-tool", "write:all")] // memory-tool endpoint is NOT auth-exempt
     public void GetRequiredScope_CurationEndpoints(string method, string path, string expectedScope)
     {
         var scope = ApiKeyService.GetRequiredScope(method, path);
