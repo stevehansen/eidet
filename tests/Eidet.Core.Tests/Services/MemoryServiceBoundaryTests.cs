@@ -384,6 +384,7 @@ internal class InMemoryEidetStore : IEidetStore
 {
     private readonly Dictionary<string, MemoryEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTime> _reflectionCursors = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _gitWatermarks = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _lock = new();
 
     public virtual Task<MemoryEntry?> GetAsync(string id, CancellationToken ct = default)
@@ -452,6 +453,20 @@ internal class InMemoryEidetStore : IEidetStore
     public Task SetLastReflectedAtAsync(string repoId, DateTime whenUtc, CancellationToken ct = default)
     {
         lock (_lock) _reflectionCursors[repoId] = whenUtc;
+        return Task.CompletedTask;
+    }
+
+    // Git-intake watermark — real backing store (default interface impl is null/no-op) so the
+    // git-intake tests can assert increments; every existing test is unaffected.
+    public Task<string?> GetGitIntakeWatermarkAsync(string repoId, CancellationToken ct = default)
+    {
+        lock (_lock)
+            return Task.FromResult(_gitWatermarks.TryGetValue(repoId, out var sha) ? sha : null);
+    }
+
+    public Task SetGitIntakeWatermarkAsync(string repoId, string sha, CancellationToken ct = default)
+    {
+        lock (_lock) _gitWatermarks[repoId] = sha;
         return Task.CompletedTask;
     }
 

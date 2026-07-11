@@ -21,9 +21,9 @@ public class McpToolDefinitionsTests
         AllHandlers().Where(h => h.McpExposed).Select(h => h.Schema).ToList();
 
     [Fact]
-    public void All_Registers15Handlers()
+    public void All_Registers17Handlers()
     {
-        Assert.Equal(15, Tools.Count);
+        Assert.Equal(17, Tools.Count);
     }
 
     [Fact]
@@ -65,6 +65,8 @@ public class McpToolDefinitionsTests
     [Theory]
     [InlineData("eidet_history")]
     [InlineData("eidet_intake")]
+    [InlineData("eidet_intake_git")]
+    [InlineData("eidet_intake_claude_memory")]
     [InlineData("eidet_consolidate")]
     [InlineData("eidet_maintenance")]
     [InlineData("eidet_edit")]

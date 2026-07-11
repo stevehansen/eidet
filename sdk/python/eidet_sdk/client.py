@@ -171,6 +171,26 @@ class EidetClient:
     def intake(self, repo: str) -> dict[str, Any]:
         return self._post(f"/api/eidet/intake?repo={repo}")
 
+    def intake_git(
+        self,
+        repo: str,
+        *,
+        since: str | None = None,
+        max_commits: int | None = None,
+        all_commits: bool = False,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        url = f"/api/eidet/intake/git?repo={repo}"
+        if since:
+            url += f"&since={since}"
+        if max_commits is not None:
+            url += f"&max_commits={max_commits}"
+        if all_commits:
+            url += "&all_commits=true"
+        if dry_run:
+            url += "&dry_run=true"
+        return self._post(url)
+
     def consolidate(self, repo: str) -> dict[str, Any]:
         return self._post(f"/api/eidet/consolidate?repo={repo}")
 

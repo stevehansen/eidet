@@ -106,6 +106,17 @@ public sealed class EidetClient : IDisposable
     public async Task<IntakeResult> IntakeAsync(string repo, CancellationToken ct = default) =>
         await PostAsync<IntakeResult>($"api/eidet/intake?repo={Uri.EscapeDataString(repo)}", ct);
 
+    public async Task<IntakeResult> IntakeGitAsync(
+        string repo, GitIntakeOptions? options = null, bool dryRun = false, CancellationToken ct = default)
+    {
+        var url = $"api/eidet/intake/git?repo={Uri.EscapeDataString(repo)}";
+        if (!string.IsNullOrEmpty(options?.Since)) url += $"&since={Uri.EscapeDataString(options.Since)}";
+        if (options?.MaxCommits is { } maxCommits) url += $"&max_commits={maxCommits}";
+        if (options?.AllCommits == true) url += "&all_commits=true";
+        if (dryRun) url += "&dry_run=true";
+        return await PostAsync<IntakeResult>(url, ct);
+    }
+
     public async Task<ConsolidateResult> ConsolidateAsync(string repo, CancellationToken ct = default) =>
         await PostAsync<ConsolidateResult>($"api/eidet/consolidate?repo={Uri.EscapeDataString(repo)}", ct);
 
@@ -310,6 +321,19 @@ public record IntakeResult
 {
     public int NewCount { get; init; }
     public int SkippedCount { get; init; }
+}
+
+/// <summary>Advanced knobs for <see cref="EidetClient.IntakeGitAsync"/>; the happy path passes null.</summary>
+public record GitIntakeOptions
+{
+    /// <summary>Exclusive lower-bound commit SHA (default: the server's per-repo watermark).</summary>
+    public string? Since { get; init; }
+
+    /// <summary>Upper bound on commits examined (server default 500).</summary>
+    public int? MaxCommits { get; init; }
+
+    /// <summary>Also mine non-Conventional-Commits messages.</summary>
+    public bool AllCommits { get; init; }
 }
 
 public record ConsolidateResult

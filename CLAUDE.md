@@ -24,7 +24,7 @@ Design decisions live in `docs/specs/`:
 
 ## Current Capabilities
 
-- **8 MCP tools**: 6 core session flow (context, recall, store, feedback, forget, link) + park/resolve (Loose Ends). Advanced operations (history, intake, consolidate, maintenance, edit, pack_export, pack_import) stay off the MCP surface — they run via the scheduler/maintenance pipeline and are reachable through the REST API, CLI, and Web UI. 15 tool handlers total, shared by REST + MCP via `ToolDispatcher`; MCP exposure is gated by `IToolHandler.McpExposed`.
+- **8 MCP tools**: 6 core session flow (context, recall, store, feedback, forget, link) + park/resolve (Loose Ends). Advanced operations (history, intake, intake_git, intake_claude_memory, consolidate, maintenance, edit, pack_export, pack_import) stay off the MCP surface — they run via the scheduler/maintenance pipeline and are reachable through the REST API, CLI, and Web UI. 17 tool handlers total, shared by REST + MCP via `ToolDispatcher`; MCP exposure is gated by `IToolHandler.McpExposed`.
 - **4 memory types**: Observation, Insight, Procedure, Heuristic — each with per-type retrieval budgets
 - **Storage**: RavenDB (embedded or external) with vector + full-text hybrid search on composite `SearchText` field
 - **Write gates**: `WriteValidator` chains rules (13 secret patterns + signal/low-signal + self-talk) — deterministic, local, always-on; single entry point from `MemoryService.StoreAsync` and `UpdateMemoryAsync`
@@ -126,6 +126,8 @@ Base: `http://localhost:19380`
 | POST | `/api/eidet/feedback` | Echo / fizzle |
 | POST | `/api/eidet/enrich` | On-demand Ollama enrichment |
 | POST | `/api/eidet/intake` | Ingest project files |
+| POST | `/api/eidet/intake/git` | Seed memories from git commit history |
+| POST | `/api/eidet/intake/claude-memory` | Import Claude Code native per-project memory |
 | POST | `/api/eidet/consolidate` | Consolidate observations → insights |
 | POST | `/api/maintenance` | Run maintenance pipeline |
 | POST | `/mcp?repo=...` | MCP JSON-RPC over HTTP |

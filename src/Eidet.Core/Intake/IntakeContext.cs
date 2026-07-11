@@ -1,3 +1,5 @@
+using Eidet.Core.Intake.Git;
+
 namespace Eidet.Core.Intake;
 
 /// <summary>
@@ -15,7 +17,8 @@ public sealed class IntakeContext
 
 /// <summary>
 /// Optional knobs picked up by individual extractors. Whole-repo intake leaves these
-/// at their defaults; the docs-folder verb sets <see cref="DocsPattern"/> and friends.
+/// at their defaults; the docs-folder verb sets <see cref="DocsPattern"/> and friends;
+/// the git verb sets <see cref="Git"/>.
 /// </summary>
 public sealed class IntakeOptions
 {
@@ -30,4 +33,13 @@ public sealed class IntakeOptions
 
     /// <summary>Extra tags appended to every memory produced by the docs-folder extractor.</summary>
     public IReadOnlyList<string>? DocsExtraTags { get; init; }
+
+    /// <summary>Git-history knobs; null keeps <see cref="GitHistoryExtractor"/> inactive.</summary>
+    public GitIntakeOptions? Git { get; init; }
+
+    /// <summary>
+    /// Opt-in for the Claude Code native memory import (reads outside the repo); false keeps
+    /// <see cref="Extractors.ClaudeCodeMemoryExtractor"/> inactive in the default intake pass.
+    /// </summary>
+    public bool ClaudeMemory { get; init; }
 }
