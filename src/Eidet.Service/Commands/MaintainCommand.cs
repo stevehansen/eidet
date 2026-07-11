@@ -27,9 +27,12 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
         using var enrichment = EnrichmentService.CreateFromConfig(config.Enrichment);
         var memorySvc = new MemoryService(eidetStore);
         var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memorySvc);
+        var reflectionEngine = new ReflectionEngine(
+            eidetStore, enrichment, memorySvc, new RavenLooseEndStore(store), config.Enrichment.Reflection);
         IMaintenanceRunner runner = new MaintenanceOrchestrator(
             eidetStore, memorySvc, enrichment, consolidationEngine,
-            drift: config.Enrichment.DriftReview);
+            drift: config.Enrichment.DriftReview,
+            reflection: reflectionEngine);
 
         var repoId = Eidet.Core.Domain.RepoIdNormalizer.Normalize(settings.Repo ?? Directory.GetCurrentDirectory());
 

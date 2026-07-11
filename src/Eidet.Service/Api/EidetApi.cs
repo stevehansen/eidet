@@ -44,7 +44,7 @@ public class EidetApiServer
         var svc = options.Memory;
         var intake = options.Intake;
         var dispatcher = ToolDispatcherFactory.Create(svc, intake, options.Consolidation, options.Maintenance,
-            options.LooseEnds, options.Export, options.Layers, options.Usage);
+            options.LooseEnds, options.Export, options.Layers, options.Usage, options.Reflection);
 
         _memoryRead = new MemoryReadEndpoints(svc, dispatcher, options.Usage, options.Layers);
         _memoryWrite = new MemoryWriteEndpoints(svc, dispatcher);
@@ -146,6 +146,7 @@ public class EidetApiServer
         r.MapPost("/api/eidet/feedback", (ctx, _, ct) => _memoryWrite.Feedback(ctx, ct));
         r.MapPost("/api/eidet/intake", (ctx, _, ct) => _memoryBulk.Intake(ctx, ct));
         r.MapPost("/api/eidet/consolidate", (ctx, _, ct) => _memoryBulk.Consolidate(ctx, ct));
+        r.MapPost("/api/eidet/reflect", (ctx, _, ct) => _memoryBulk.Reflect(ctx, ct));
         r.MapPost("/api/maintenance", (ctx, _, ct) => _maintenanceEndpoints.Maintenance(ctx, ct));
         r.MapGet("/api/eidet/export", (ctx, _, ct) => _memoryBulk.Export(ctx, ct));
         r.MapPost("/api/eidet/packs/export", (ctx, _, ct) => _memoryBulk.PackExport(ctx, ct));

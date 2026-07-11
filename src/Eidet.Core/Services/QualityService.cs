@@ -42,6 +42,7 @@ public class QualityService
         issues.Add(CheckMissingEntities(entries));
         issues.Add(CheckConflicts(entries));
         issues.Add(CheckDriftFlagged(entries));
+        issues.Add(CheckReflectionHealth(entries));
 
         report.Issues = issues.Where(i => i != null).Cast<QualityIssue>().ToList();
 
@@ -253,6 +254,46 @@ public class QualityService
         };
     }
 
+    // Reflected memories are tagged Source=="reflection" (see ReflectionEngine). We alarm only on
+    // demonstrated harm — net-negative reflected memories that outnumber the useful ones — never on
+    // youth, so a freshly-enabled Reflector whose memories are simply untouched doesn't trip it.
+    private static QualityIssue? CheckReflectionHealth(List<MemoryEntry> entries)
+    {
+        var reflected = entries.Where(e => e.Source == "reflection" && e.IsLatest).ToList();
+        if (reflected.Count < 5) return null; // too little evidence to judge the Reflector
+
+        var netNegative = reflected.Where(e => e.FizzleCount > e.EchoCount).ToList();
+        var echoed = reflected.Count(e => e.EchoCount > 0);
+        if (netNegative.Count < 3 || netNegative.Count <= echoed) return null;
+
+        var echoRate = (float)echoed / reflected.Count;
+        return new QualityIssue
+        {
+            CheckId = "reflection-underperforming",
+            Severity = QualitySeverity.Warning,
+            Title = "Reflected memories underperforming",
+            Description = $"{netNegative.Count} of {reflected.Count} reflection-minted memories run net-negative (echo rate {echoRate:P0}). Consider disabling the Reflector or tightening its residue filters.",
+            AffectedCount = netNegative.Count,
+            ExampleIds = netNegative.Take(5).Select(e => e.Id).ToList(),
+        };
+    }
+
+    private static ReflectionHealth? ComputeReflectionHealth(List<MemoryEntry> entries)
+    {
+        var reflected = entries.Where(e => e.Source == "reflection" && e.IsLatest).ToList();
+        if (reflected.Count == 0) return null; // surface the metric only once the Reflector is producing
+
+        var echoed = reflected.Count(e => e.EchoCount > 0);
+        return new ReflectionHealth
+        {
+            Total = reflected.Count,
+            Echoed = echoed,
+            NetNegative = reflected.Count(e => e.FizzleCount > e.EchoCount),
+            Untouched = reflected.Count(e => e.EchoCount == 0 && e.FizzleCount == 0),
+            EchoRate = (float)echoed / reflected.Count,
+        };
+    }
+
     private static QualityBreakdown ComputeBreakdown(List<MemoryEntry> entries, DateTime now)
     {
         var byType = entries.GroupBy(e => e.Type).ToDictionary(g => g.Key.ToString(), g => g.Count());
@@ -276,6 +317,7 @@ public class QualityService
             DriftFlaggedCount = entries.Count(e => e.Drift is { Verdict: not DriftVerdictKind.Ok } && e.IsLatest),
             AverageImportance = entries.Count > 0 ? entries.Average(e => e.Importance) : 0,
             AverageConfidence = entries.Count > 0 ? entries.Average(e => e.Confidence) : 0,
+            Reflection = ComputeReflectionHealth(entries),
         };
     }
 }

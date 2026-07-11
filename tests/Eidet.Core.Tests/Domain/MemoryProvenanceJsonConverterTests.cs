@@ -34,6 +34,20 @@ public class MemoryProvenanceJsonConverterTests
     }
 
     [Fact]
+    public void Deserialize_Reflection_ReturnsReflection()
+    {
+        var result = JsonConvert.DeserializeObject<MemoryProvenance>("\"Reflection\"");
+        Assert.Equal(MemoryProvenance.Reflection, result);
+    }
+
+    [Fact]
+    public void Serialize_Reflection_WritesReflection()
+    {
+        var json = JsonConvert.SerializeObject(MemoryProvenance.Reflection);
+        Assert.Equal("\"Reflection\"", json);
+    }
+
+    [Fact]
     public void Roundtrip_PreservesAllValues()
     {
         foreach (var value in System.Enum.GetValues<MemoryProvenance>())

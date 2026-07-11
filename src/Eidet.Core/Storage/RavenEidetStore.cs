@@ -121,6 +121,39 @@ public class RavenEidetStore : IEidetStore
         await _store.Operations.SendAsync(patchOp, token: ct);
     }
 
+    public async Task<DateTime?> GetLastReflectedAtAsync(string repoId, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+        var usage = await session.LoadAsync<RepoUsage>(RepoUsage.MakeId(repoId), ct);
+        return usage?.LastReflectedAt;
+    }
+
+    public async Task SetLastReflectedAtAsync(string repoId, DateTime whenUtc, CancellationToken ct = default)
+    {
+        // Patch ONLY LastReflectedAt on the usage anchor (same discipline as UpdateRepoAlphaAsync) so
+        // the reflection cursor never clobbers UsageTracker's time series, OriginalPath, or the learned
+        // alpha. patchIfMissing upserts the anchor the first time a repo is reflected with no usage doc yet.
+        var normalized = RepoIdNormalizer.Normalize(repoId);
+        var docId = RepoUsage.MakeId(repoId);
+        var patchOp = new Raven.Client.Documents.Operations.PatchOperation(
+            docId,
+            changeVector: null,
+            patch: new Raven.Client.Documents.Operations.PatchRequest
+            {
+                // Monotonic (forward-only) guard — the cursor is a coverage watermark, so a concurrent
+                // maintenance run with an older `now` must never pull it backward and re-open a window.
+                // ISO-8601 UTC strings compare chronologically, so the string comparison is correct here.
+                Script = "if (this.LastReflectedAt == null || args.When > this.LastReflectedAt) this.LastReflectedAt = args.When;",
+                Values = { { "When", whenUtc } },
+            },
+            patchIfMissing: new Raven.Client.Documents.Operations.PatchRequest
+            {
+                Script = "this.Id = args.Id; this.RepoId = args.RepoId; this.CreatedAt = args.Now; this.LastReflectedAt = args.When;",
+                Values = { { "Id", docId }, { "RepoId", normalized }, { "Now", DateTime.UtcNow }, { "When", whenUtc } },
+            });
+        await _store.Operations.SendAsync(patchOp, token: ct);
+    }
+
     public async Task<List<MemoryEntry>> FullTextSearchAsync(
         IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) =>
         (await SearchScoredAsync(SearchArm.Lexical, repoIds, query, ct)).Select(h => h.Entry).ToList();

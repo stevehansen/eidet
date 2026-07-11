@@ -47,6 +47,7 @@ public class MemoryTrustTests
     [Theory]
     [InlineData(MemoryProvenance.Intake)]
     [InlineData(MemoryProvenance.Pack)]
+    [InlineData(MemoryProvenance.Reflection)]
     public void Import_provenance_floors_trust_at_half_with_zero_feedback(MemoryProvenance provenance)
     {
         var trust = MemoryTrust.Factor(Entry(provenance, MemoryType.Insight));
@@ -68,6 +69,7 @@ public class MemoryTrustTests
     [Theory]
     [InlineData(MemoryProvenance.Intake, 0.5)]
     [InlineData(MemoryProvenance.Pack, 0.5)]
+    [InlineData(MemoryProvenance.Reflection, 0.5)] // LLM-synthesized: shares the import/poisoning floor
     [InlineData(MemoryProvenance.AgentInferred, 1.0)]
     [InlineData(MemoryProvenance.ToolOutput, 1.0)]
     [InlineData(MemoryProvenance.UserStated, 1.0)]

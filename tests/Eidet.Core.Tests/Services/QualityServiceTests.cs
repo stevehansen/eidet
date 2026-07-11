@@ -158,4 +158,85 @@ public class QualityServiceTests
         Assert.DoesNotContain(report.Issues, i => i.CheckId == "drift-flagged");
         Assert.Equal(0, report.Breakdown.DriftFlaggedCount);
     }
+
+    // ─── Reflection echo-rate health ──────────────────────────────────────
+
+    private static MemoryEntry MakeReflectedEntry(string id, int echo, int fizzle, string source = "reflection") => new()
+    {
+        Id = $"memories/repo-a/insight/{id}",
+        RepoId = "repo-a",
+        Type = MemoryType.Insight,
+        Content = $"reflected insight {id}",
+        Source = source,
+        Provenance = MemoryProvenance.Reflection,
+        CreatedAt = DateTime.UtcNow,
+        Validity = new Validity { ValidFrom = DateTime.UtcNow },
+        IsLatest = true,
+        Importance = 0.5f,
+        EchoCount = echo,
+        FizzleCount = fizzle,
+    };
+
+    [Fact]
+    public async Task Analyze_NoReflectedMemories_ReflectionHealthIsNull()
+    {
+        var store = new InMemoryEidetStore();
+        await store.StoreAsync(MakeDriftEntry("plain-1", null));
+
+        var report = await new QualityService(store).AnalyzeAsync("repo-a");
+
+        Assert.Null(report.Breakdown.Reflection);
+        Assert.DoesNotContain(report.Issues, i => i.CheckId == "reflection-underperforming");
+    }
+
+    [Fact]
+    public async Task Analyze_ReflectedMemories_ComputesEchoRateAndCounts()
+    {
+        var store = new InMemoryEidetStore();
+        for (var i = 0; i < 3; i++) await store.StoreAsync(MakeReflectedEntry($"echoed-{i}", echo: 2, fizzle: 0));
+        for (var i = 0; i < 3; i++) await store.StoreAsync(MakeReflectedEntry($"young-{i}", echo: 0, fizzle: 0));
+
+        var report = await new QualityService(store).AnalyzeAsync("repo-a");
+
+        var rh = Assert.IsType<ReflectionHealth>(report.Breakdown.Reflection);
+        Assert.Equal(6, rh.Total);
+        Assert.Equal(3, rh.Echoed);
+        Assert.Equal(3, rh.Untouched);
+        Assert.Equal(0, rh.NetNegative);
+        Assert.Equal(0.5f, rh.EchoRate);
+        // Healthy set: no underperformance alarm.
+        Assert.DoesNotContain(report.Issues, i => i.CheckId == "reflection-underperforming");
+    }
+
+    [Fact]
+    public async Task Analyze_NetNegativeReflectedMemories_RaisesUnderperformingWarning()
+    {
+        var store = new InMemoryEidetStore();
+        for (var i = 0; i < 4; i++) await store.StoreAsync(MakeReflectedEntry($"dud-{i}", echo: 0, fizzle: 2)); // net-negative
+        await store.StoreAsync(MakeReflectedEntry("good-1", echo: 3, fizzle: 0));                                // useful
+
+        var report = await new QualityService(store).AnalyzeAsync("repo-a");
+
+        var issue = report.Issues.Single(i => i.CheckId == "reflection-underperforming");
+        Assert.Equal(QualitySeverity.Warning, issue.Severity);
+        Assert.Equal(4, issue.AffectedCount);
+        var rh = Assert.IsType<ReflectionHealth>(report.Breakdown.Reflection);
+        Assert.Equal(5, rh.Total);
+        Assert.Equal(4, rh.NetNegative);
+        Assert.Equal(0.2f, rh.EchoRate);
+    }
+
+    [Fact]
+    public async Task Analyze_FewNetNegativeReflectedMemories_DoesNotAlarm()
+    {
+        var store = new InMemoryEidetStore();
+        // Only 2 net-negative — below the min-evidence floor, so no alarm even though they exist.
+        for (var i = 0; i < 2; i++) await store.StoreAsync(MakeReflectedEntry($"dud-{i}", echo: 0, fizzle: 2));
+        for (var i = 0; i < 4; i++) await store.StoreAsync(MakeReflectedEntry($"good-{i}", echo: 2, fizzle: 0));
+
+        var report = await new QualityService(store).AnalyzeAsync("repo-a");
+
+        Assert.DoesNotContain(report.Issues, i => i.CheckId == "reflection-underperforming");
+        Assert.Equal(6, report.Breakdown.Reflection!.Total);
+    }
 }

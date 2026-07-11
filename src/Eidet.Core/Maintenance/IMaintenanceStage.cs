@@ -22,6 +22,7 @@ public sealed class MaintenanceContext
     public required BulkMutationCtx Write { get; init; }
     public required EnrichmentService Enrichment { get; init; }
     public required ConsolidationEngine Consolidation { get; init; }
+    public required ReflectionEngine Reflection { get; init; }
     public required DedupEngine Dedup { get; init; }
 
     public required string RepoId { get; init; }
@@ -53,6 +54,7 @@ public sealed class MaintenanceContext
             Write = write,
             Enrichment = enrich,
             Consolidation = new ConsolidationEngine(store, enrich, memory),
+            Reflection = new ReflectionEngine(store, enrich, memory),
             Dedup = new DedupEngine(store, memory, enrich),
             RepoId = repoId,
             IsRepoActive = true,

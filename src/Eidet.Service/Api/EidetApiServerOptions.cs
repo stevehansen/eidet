@@ -18,6 +18,7 @@ public sealed record EidetApiServerOptions
     public required MemoryService Memory { get; init; }
     public required IntakeService Intake { get; init; }
     public required ConsolidationEngine Consolidation { get; init; }
+    public required ReflectionEngine Reflection { get; init; }
     public required IMaintenanceRunner Maintenance { get; init; }
     public required ExportService Export { get; init; }
     public required LooseEndService LooseEnds { get; init; }

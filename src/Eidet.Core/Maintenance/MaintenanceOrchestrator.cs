@@ -13,6 +13,7 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
     private readonly MemoryService _memory;
     private readonly EnrichmentService _enrichment;
     private readonly ConsolidationEngine _consolidation;
+    private readonly ReflectionEngine _reflection;
     private readonly IReadOnlyList<IMaintenanceStage> _stages;
     private readonly DriftReviewConfig _drift;
 
@@ -22,7 +23,9 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
         EnrichmentService? enrichment = null,
         ConsolidationEngine? consolidation = null,
         IReadOnlyList<IMaintenanceStage>? stages = null,
-        DriftReviewConfig? drift = null)
+        DriftReviewConfig? drift = null,
+        ReflectionEngine? reflection = null,
+        ReflectionConfig? reflectionConfig = null)
     {
         _store = store;
         _memory = memory;
@@ -30,6 +33,11 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
         // The default consolidation engine shares this orchestrator's MemoryService so recall and
         // consolidation writes hit one cache.
         _consolidation = consolidation ?? new ConsolidationEngine(store, _enrichment, _memory);
+        // The default reflection engine shares this MemoryService (same cache-coherence reason) but has
+        // NO loose-end store — the service passes a fully-wired engine so the loose-end residue arm works.
+        // `reflectionConfig` only seeds this default engine; when a `reflection` engine is supplied it
+        // already carries its own config, which is the single source the stage reads (see ReflectionStage).
+        _reflection = reflection ?? new ReflectionEngine(store, _enrichment, _memory, config: reflectionConfig);
         _stages = stages ?? DefaultStages();
         _drift = drift ?? new();
     }
@@ -47,6 +55,7 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
         new OllamaEnrichmentStage(),
         new DriftReviewStage(),
         new ConsolidationStage(),
+        new ReflectionStage(),
     ];
 
     public Task<MaintenanceReport> RunAsync(string repoPathOrId, CancellationToken ct = default) =>
@@ -71,6 +80,7 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
                 Write = write,
                 Enrichment = _enrichment,
                 Consolidation = _consolidation,
+                Reflection = _reflection,
                 Dedup = dedup,
                 RepoId = repoId,
                 // Single derivation site: null ⇒ derive so the CLI path can't decay an inactive repo.

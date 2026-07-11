@@ -8,6 +8,7 @@ public enum EnrichmentPrompt
     Entities,
     MergeObservations,
     DriftReview,
+    Reflect,
 }
 
 public sealed record EnrichmentRequest(

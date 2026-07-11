@@ -104,9 +104,12 @@ public sealed class EidetHost : IDisposable
 
         var intakeSvc = new IntakeService(eidetStore, memory: memorySvc);
         var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memory: memorySvc);
+        var reflectionEngine = new ReflectionEngine(
+            eidetStore, enrichment, memory: memorySvc, looseEnds: looseEndStore, config: config.Enrichment.Reflection);
         IMaintenanceRunner maintenanceRunner = new MaintenanceOrchestrator(
             eidetStore, memorySvc, enrichment, consolidationEngine,
-            drift: config.Enrichment.DriftReview);
+            drift: config.Enrichment.DriftReview,
+            reflection: reflectionEngine);
         var exportSvc = new ExportService(eidetStore, memory: memorySvc);
         var qualitySvc = new QualityService(eidetStore);
         var usageTracker = new UsageTracker(store);
@@ -120,6 +123,7 @@ public sealed class EidetHost : IDisposable
             Memory = memorySvc,
             Intake = intakeSvc,
             Consolidation = consolidationEngine,
+            Reflection = reflectionEngine,
             Maintenance = maintenanceRunner,
             Export = exportSvc,
             LooseEnds = looseEndSvc,

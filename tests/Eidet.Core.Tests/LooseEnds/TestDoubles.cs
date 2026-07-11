@@ -75,6 +75,30 @@ internal sealed class InMemoryLooseEndStore : ILooseEndStore
         }
     }
 
+    /// <summary>
+    /// Mirrors the documented Raven adapter filter (<see cref="ILooseEndStore.ListResolvedUnpromotedAsync"/>):
+    /// only <c>Resolved + Done + not-yet-promoted</c> ends surface, optionally those resolved after the
+    /// cursor, oldest-first, capped at <paramref name="max"/>. Pins the contract the Reflector's loose-end
+    /// residue arm depends on.
+    /// </summary>
+    public Task<IReadOnlyList<LooseEnd>> ListResolvedUnpromotedAsync(
+        string repoId, DateTimeOffset? since, int max, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            var matched = _ends.Values
+                .Where(e => string.Equals(e.RepoId, repoId, StringComparison.OrdinalIgnoreCase))
+                .Where(e => e.State == LooseEndState.Resolved
+                    && e.Resolution == ResolutionKind.Done
+                    && e.PromotedToMemoryId == null)
+                .Where(e => since is null || (e.ResolvedAt is { } r && r > since.Value))
+                .OrderBy(e => e.ResolvedAt)
+                .Take(max)
+                .ToList();
+            return Task.FromResult<IReadOnlyList<LooseEnd>>(matched);
+        }
+    }
+
     public Task<bool> TryClaimForResolveAsync(string id, CancellationToken ct = default)
     {
         // Genuinely atomic check-and-set under the same lock as every other mutation, so concurrent

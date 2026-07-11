@@ -50,6 +50,23 @@ public interface IEidetStore
     /// </summary>
     Task UpdateRepoAlphaAsync(string repoId, AlphaEwmaUpdate update, CancellationToken ct = default) =>
         Task.CompletedTask;
+
+    /// <summary>
+    /// The Reflector's coverage cursor (<c>RepoUsage.LastReflectedAt</c>): the UTC instant of the last
+    /// live reflection run for a repo, or null if never reflected. Residue mining only considers signal
+    /// newer than this so nightly runs walk forward without re-minting from the same feedback. Default
+    /// null so fakes need not opt in.
+    /// </summary>
+    Task<DateTime?> GetLastReflectedAtAsync(string repoId, CancellationToken ct = default) =>
+        Task.FromResult<DateTime?>(null);
+
+    /// <summary>
+    /// Advance the reflection cursor on the repo's usage anchor (JS-patch like
+    /// <see cref="UpdateRepoAlphaAsync"/>, never disturbing the usage time series or original-path
+    /// mapping). Default no-op for fakes.
+    /// </summary>
+    Task SetLastReflectedAtAsync(string repoId, DateTime whenUtc, CancellationToken ct = default) =>
+        Task.CompletedTask;
     Task<List<MemoryEntry>> FullTextSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default);
     Task<List<MemoryEntry>> VectorSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default);
 

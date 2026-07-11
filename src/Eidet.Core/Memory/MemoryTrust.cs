@@ -22,7 +22,7 @@ public static class MemoryTrust
     /// accumulated several echoes, so a single feedback event cannot flip it to full trust.</summary>
     private const double EchoSmoothing = 3.0;
 
-    /// <summary>Trust floor for the import / poisoning surface (Intake, Pack); 1.0 for everything else.</summary>
+    /// <summary>Trust floor for the import / poisoning surface (Intake, Pack, Reflection); 1.0 for everything else.</summary>
     private const double ImportTrust = 0.5;
 
     /// <summary>Trust floor for action-shaped types (Procedure, Heuristic); 1.0 for Insight/Observation.</summary>
@@ -42,12 +42,14 @@ public static class MemoryTrust
 
     /// <summary>
     /// Provenance trust floor. Intake and Pack are the import / poisoning surface and stay
-    /// provisional (0.5); first-party origins (UserStated, AgentInferred, ToolOutput, Consolidation,
-    /// System) are fully trusted. Public so consolidation can identify untrusted contributing sources.
+    /// provisional (0.5); Reflection is LLM-synthesized net-new content that must EARN trust via
+    /// echoes rather than being born trusted, so it shares the same provisional floor. First-party
+    /// origins (UserStated, AgentInferred, ToolOutput, Consolidation, System) are fully trusted.
+    /// Public so consolidation / reflection can identify untrusted contributing sources.
     /// </summary>
     public static double ProvenanceTrust(MemoryProvenance provenance) => provenance switch
     {
-        MemoryProvenance.Intake or MemoryProvenance.Pack => ImportTrust,
+        MemoryProvenance.Intake or MemoryProvenance.Pack or MemoryProvenance.Reflection => ImportTrust,
         _ => 1.0,
     };
 
