@@ -81,6 +81,7 @@ public sealed class EidetHost : IDisposable
         // Always deploy indexes on startup — idempotent, updates changed definitions
         DatabaseProvisioner.DeployIndexes(store);
         DatabaseProvisioner.EnsureRefreshEnabled(store);
+        DatabaseProvisioner.EnsureMemoryFileRevisions(store);
 
         var eidetStore = new RavenEidetStore(store);
 
@@ -138,6 +139,7 @@ public sealed class EidetHost : IDisposable
             Config = config,
             Usage = usageTracker,
             ScheduledTasks = scheduler,
+            MemoryFiles = new RavenMemoryFileStore(store),
         });
         var enrichmentWorker = new EnrichmentWorker(store, enrichment, memorySvc);
 

@@ -97,6 +97,17 @@ Open work an **Agent** defers mid-task — distinct from a **Memory** (recalled 
 | **Resolution kind** | Why/how a **Loose End** closed: **Done**, **Dropped**, **Promoted**, or **Superseded**                              | Status, outcome                   |
 | **Promote**         | Resolving a **Loose End** by graduating its substance into a **Memory** (**Observation**/**Insight**) or a linked external issue | Convert, save                     |
 
+## Memory-tool files
+
+Claude's `memory_20250818` scratch space served by Eidet — distinct from a **Memory** (knowledge) and a **Loose End** (open work). A **Memory file** is a faithful, byte-exact blob the model re-reads verbatim; it bypasses the **Signal gate**, **FadeMem** decay, and **Consolidation** by design, but never the **Secret scanner**.
+
+| Term               | Definition                                                                                                                | Aliases to avoid                       |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| **Memory file**    | A byte-exact, path-keyed, overwrite-in-place blob under `/memories`, stored per-repo in its own `memoryfiles/*` collection | Memory, note, document                 |
+| **Memory tool**    | Claude's `memory_20250818` command set (view/create/str_replace/insert/delete/rename) that Eidet serves as a backend       | Memory API, file tool                  |
+| **Translator**     | The single-entry Core module that executes memory-tool commands over **Memory files**; never rewrites bytes semantically   | Handler, dispatcher                    |
+| **Bridge**         | The opt-in, one-way shadow that promotes a written **Memory file** into a **Memory** through the full **Write gate** (off by default) | Sync, mirror, projection |
+
 ## Sharing
 
 | Term               | Definition                                                                                         | Aliases to avoid                       |

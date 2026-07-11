@@ -29,10 +29,25 @@ public static class WriteValidator
 
     public static ValidationResult Validate(string content, MemoryType type = MemoryType.Observation)
     {
-        var secret = SecretScanRule.Check(content);
+        var secret = ScanSecrets(content);
         if (!secret.Passed) return secret;
         return CheckSignal(content, type);
     }
+
+    /// <summary>
+    /// The always-on 13-pattern secret scan, exposed on its own so surfaces that store
+    /// non-semantic content (e.g. memory-tool files) can run it WITHOUT the low-signal/
+    /// self-talk gates — those are semantic-store rules. Secret scanning itself is
+    /// never optional on any write path.
+    /// </summary>
+    public static ValidationResult ScanSecrets(string content) => SecretScanRule.Check(content);
+
+    /// <summary>
+    /// Replace every secret-pattern match with a stable <c>[REDACTED:type]</c> marker.
+    /// <paramref name="redactions"/> reports how many spans were rewritten.
+    /// </summary>
+    public static string RedactSecrets(string content, out int redactions) =>
+        SecretScanRule.Redact(content, out redactions);
 
     /// <summary>
     /// Validate <paramref name="opts"/> content and build a fresh <see cref="MemoryEntry"/> ready for

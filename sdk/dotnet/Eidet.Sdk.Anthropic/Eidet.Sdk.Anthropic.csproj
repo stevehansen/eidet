@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageId>Eidet.Sdk.Anthropic</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Anthropic SDK adapter for Eidet — plug Eidet in as the Claude memory-tool (memory_20250818) backend</Description>
+    <Authors>Steve Hansen</Authors>
+    <PackageTags>eidet;memory;ai;claude;anthropic;memory-tool</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/stevehansen/eidet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/stevehansen/eidet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Anthropic" Version="12.35.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\..\logo-512x512.png" Pack="true" PackagePath="icon.png" />
+  </ItemGroup>
+
+</Project>

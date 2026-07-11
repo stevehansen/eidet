@@ -127,6 +127,7 @@ Base: `http://localhost:19380`
 | POST | `/api/eidet/enrich` | On-demand Ollama enrichment |
 | POST | `/api/eidet/intake` | Ingest project files |
 | POST | `/api/eidet/consolidate` | Consolidate observations → insights |
+| POST | `/api/eidet/memory-tool?repo=...` | Claude memory-tool (`memory_20250818`) command relay |
 | POST | `/api/maintenance` | Run maintenance pipeline |
 | POST | `/mcp?repo=...` | MCP JSON-RPC over HTTP |
 | GET  | `/ui` | Web UI SPA |

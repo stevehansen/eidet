@@ -33,6 +33,7 @@ public class EidetApiServer
     private readonly PortalEndpoint _portal;
     private readonly MetaEndpoints _meta;
     private readonly McpEndpoint _mcp;
+    private readonly MemoryToolEndpoint? _memoryTool;
 
     public EidetApiServer(EidetApiServerOptions options)
     {
@@ -59,6 +60,7 @@ public class EidetApiServer
         _portal = new PortalEndpoint(svc, options.Usage);
         _meta = new MetaEndpoints(svc, options.Enrichment, options.Config, _baseUrl, _startedAt);
         _mcp = new McpEndpoint(options.Mcp, svc, intake, options.Consolidation, options.Maintenance, options.LooseEnds);
+        _memoryTool = options.MemoryFiles is { } files ? new MemoryToolEndpoint(files) : null;
 
         _router = BuildRouter();
     }
@@ -153,6 +155,11 @@ public class EidetApiServer
         r.MapPost("/api/eidet/packs/import", (ctx, _, ct) => _memoryBulk.PackImport(ctx, ct));
         r.MapPost("/api/eidet/links", (ctx, _, ct) => _memoryWrite.CreateLink(ctx, ct));
         r.MapGet("/api/eidet/links", (ctx, _, ct) => _memoryRead.GetLinks(ctx, ct));
+
+        // Claude memory-tool commands (exact route — must register before the by-id catch-alls below)
+        r.MapPost("/api/eidet/memory-tool", (ctx, _, ct) => _memoryTool is not null
+            ? _memoryTool.Handle(ctx, ct)
+            : HttpJson.WriteAsync(ctx, new { error = "memory-tool backend not configured" }, 503));
 
         // Loose Ends (must register before the catch-all GET /api/eidet/{id})
         r.Map("POST", p => p.StartsWith("/api/eidet/loose-ends/") && p.EndsWith("/resolve"),
