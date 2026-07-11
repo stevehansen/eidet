@@ -22,7 +22,7 @@ public sealed class StoreToolHandler : IToolHandler
     public McpToolDefinition Schema { get; } = new()
     {
         Name = "eidet_store",
-        Description = "Store a memory (observation, insight, procedure, or heuristic). Content is validated through secret scanning and signal gates before storage. To record a failure/dead-end (\"tried X, does not work\"), pass negative:true — it stores a refuting, long-lived memory (type defaults to heuristic) so a future session recalls the dead-end before repeating it.",
+        Description = "Store a memory (observation, insight, procedure, or heuristic). Content is validated through secret scanning and signal gates before storage. To record a failure/dead-end (\"tried X, does not work\"), pass negative:true — it stores a refuting, long-lived memory (type defaults to heuristic) so a future session recalls the dead-end before repeating it. On a context-eviction or compaction warning, store any durable finding not yet saved — Eidet memory survives compaction; in-context notes do not.",
         InputSchema = BuildSchema(),
     };
 
@@ -85,6 +85,7 @@ public sealed class StoreToolHandler : IToolHandler
             Supersedes = supersedes,
             Provenance = provenance,
             Valence = valence,
+            Stage = ToolArgs.GetEnum<FunctionalStage>(args, "stage") ?? FunctionalStage.None,
         }, request.Ct);
 
         if (result.DuplicateId != null)
@@ -125,6 +126,12 @@ public sealed class StoreToolHandler : IToolHandler
                 ["type"] = "string",
                 ["enum"] = new JsonArray { "neutral", "affirming", "refuting", "cautionary" },
                 ["description"] = "Explicit stance toward the subject (overrides negative): refuting (dead-end), cautionary (works but has sharp edges), affirming (holds), or neutral (default).",
+            },
+            ["stage"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["enum"] = new JsonArray { "analyze", "locate", "edit", "test", "debug", "deploy" },
+                ["description"] = "Functional subtask this memory applies to. Recall can hard-filter by stage; a memory with no stage applies to every stage. Omit for stage-agnostic knowledge.",
             },
             ["tags"] = new JsonObject
             {

@@ -87,7 +87,11 @@ internal sealed class RecallCache
 
     public static string ComputeKey(string repoId, MemoryQuery query, double alphaBucket)
     {
-        var raw = $"{repoId}|{query.Text}|{query.Type}|{string.Join(",", query.Tags)}|{query.Limit}|{query.IncludeExpired}|{query.CrossRepo}|{alphaBucket}";
+        // Every field that changes the result set must be in the key. Valence and Stage are hard
+        // filters (ApplyFilters) — omitting either lets a filtered recall collide in-cache with an
+        // unfiltered recall of the same text and serve the wrong result. (The Valence term fixes a
+        // pre-existing omission from the shipped Valence feature; Stage is added with the #38 filter.)
+        var raw = $"{repoId}|{query.Text}|{query.Type}|{query.Valence}|{query.Stage}|{string.Join(",", query.Tags)}|{query.Limit}|{query.IncludeExpired}|{query.CrossRepo}|{alphaBucket}";
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
         return Convert.ToHexString(hash)[..16];
     }

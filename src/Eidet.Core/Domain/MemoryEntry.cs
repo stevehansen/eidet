@@ -16,6 +16,7 @@ public class MemoryEntry
     // Classification
     public MemoryType Type { get; set; }
     public Valence Valence { get; set; } = Valence.Neutral;
+    public FunctionalStage Stage { get; set; } = FunctionalStage.None;
     public List<string> Tags { get; set; } = [];
 
     // Content
@@ -70,4 +71,13 @@ public class MemoryEntry
 
     // Drift review (null = never reviewed)
     public DriftReview? Drift { get; set; }
+
+    // Write-time conflict verdict (null = not quarantined). Set when a store contradicted a
+    // high-trust incumbent; downranks in recall until an echo clears it or Released reverses it.
+    public QuarantineInfo? Quarantine { get; set; }
+
+    // Last time a dedup/consolidation merge was vetoed against this memory by the recall-consistency
+    // guard (#39). Null = never. A rejected merge forgets nothing; this stamp makes the decision
+    // queryable via the quality dashboard without a separate audit collection.
+    public DateTime? LastMergeRejectedAt { get; set; }
 }

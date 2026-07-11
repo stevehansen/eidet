@@ -9,10 +9,11 @@ namespace Eidet.Core.Services;
 
 /// <summary>
 /// Public surface for memory operations. Owns the cache invalidation invariant: every
-/// store / forget / feedback / edit / link mutation funnels through <c>RunMutationAsync</c>,
-/// which writes via a file-scoped <see cref="MutationCtx"/> ref-like gate and bumps the
-/// recall cache's per-scope generation in a <c>finally</c> block. The storage write API
-/// is unreachable from any code path outside this file.
+/// store / forget / feedback / edit / link mutation funnels through <c>RunWriteAsync</c>
+/// (store / forget via the hook-firing <c>RunMutationAsync</c> wrapper), which writes via
+/// a file-scoped <see cref="MutationCtx"/> ref-like gate and bumps the recall cache's
+/// per-scope generation in a <c>finally</c> block. The storage write API is unreachable
+/// from any code path outside this file.
 /// </summary>
 /// <remarks>
 /// Recall coherence under concurrency is preserved by per-scope generation tokens in
@@ -26,6 +27,15 @@ public sealed class MemoryService
 {
     private const float DuplicateThreshold = 0.92f;
 
+    // Write-time conflict check (#37): a contradiction requires near-duplicate content AND opposite hard
+    // valence signs AND a high-trust incumbent. The similarity floor for pulling conflict neighbors is
+    // below the exact-dup threshold (a Refuting rephrase is not a byte-dup of the Affirming claim).
+    private const float ConflictSimilarityFloor = 0.80f;
+    private const int ConflictTopK = 5;
+    // Heavy multiplicative recall de-boost for a quarantined memory — NOT 0.0: it must stay recallable so
+    // it can earn the echoes that clear it (hiding it entirely causes cold-start starvation).
+    private const double QuarantineDeBoost = 0.1;
+
     // Alpha learning (#33 item 6): the EWMA smoothing factor and the clamp band that keeps the learned
     // lexical-vs-vector blend from ever collapsing to a single arm (the compensating control for shipping
     // alpha-learning alongside UCB). Applied at both learn-time and read-time.
@@ -35,6 +45,7 @@ public sealed class MemoryService
 
     private readonly IEidetStore _store;
     private readonly IHookRunner _hooks;
+    private readonly IPoisonLog _poison;
     private readonly LayerService? _layers;
     private readonly RecallCache _cache = new();
     private readonly RepoActivityTracker _activity = new();
@@ -48,11 +59,13 @@ public sealed class MemoryService
     /// </summary>
     public LooseEnds.LooseEndService? LooseEnds { get; set; }
 
-    public MemoryService(IEidetStore store, LayerService? layers = null, IHookRunner? hooks = null)
+    public MemoryService(
+        IEidetStore store, LayerService? layers = null, IHookRunner? hooks = null, IPoisonLog? poison = null)
     {
         _store = store;
         _layers = layers;
         _hooks = hooks ?? NullHookRunner.Instance;
+        _poison = poison ?? NullPoisonLog.Instance;
     }
 
     // ─── Mutations ───────────────────────────────────────────────────
@@ -82,6 +95,19 @@ public sealed class MemoryService
             return StoreResult.Rejected(built.RejectionReason!);
         var entry = built.Entry!;
 
+        // A supersession is an explicit, deliberate correction — its whole point is to contradict and
+        // replace the incumbent — so it is EXEMPT from both the poison fast-path and the conflict gate.
+        var isCorrection = !string.IsNullOrEmpty(opts.Supersedes);
+
+        // Poison fast-path: a previously-quarantined content fingerprint short-circuits to Rejected
+        // before any similarity query. Zero-overhead when the log is the NullPoisonLog default.
+        if (!isCorrection)
+        {
+            var poison = await _poison.MatchAsync(normalizedRepoId, opts.Content, ct);
+            if (poison is not null)
+                return StoreResult.Rejected($"Matches recorded poison pattern (contradicts {poison.ContradictedId})");
+        }
+
         // Duplicate detection runs before the gate — no point firing PreStore for content
         // we're going to deduplicate against an existing entry.
         var duplicate = await _store.FindDuplicateAsync(normalizedRepoId, opts.Content, DuplicateThreshold, ct);
@@ -90,23 +116,44 @@ public sealed class MemoryService
         if (duplicate is not null && !ValencePolarity.Conflicts(duplicate.Valence, entry.Valence))
             return StoreResult.Duplicate(duplicate.Id);
 
-        var preCtx = new HookContext
+        // Write-time conflict check: only a hard-stance (Affirming/Refuting) incoming can contradict, so
+        // the near-duplicate query — the one added cost — is skipped for the Neutral common case. A found
+        // conflict quarantines the (still-stored) entry and records the attempt for the poison fast-path.
+        ConflictFinding? conflict = null;
+        if (!isCorrection && ValencePolarity.Sign(entry.Valence) != 0)
         {
-            Event = "pre-store",
-            Repo = normalizedRepoId,
-            Data = new { opts.Content, type = opts.Type.ToString().ToLowerInvariant(), opts.Tags, opts.Importance, opts.Source },
-        };
-        var postCtxFactory = (string id) => new HookContext
-        {
-            Event = "post-store",
-            Repo = normalizedRepoId,
-            Data = new { id, type = opts.Type.ToString().ToLowerInvariant(), opts.Content, opts.Tags, opts.Importance },
-        };
+            // Neighbor pool = same-type near-duplicates, PLUS the (type-agnostic) exact-duplicate already
+            // fetched above when it takes the opposite stance — so a cross-type contradiction (e.g. a
+            // Refuting Heuristic vs an Affirming Insight) is caught too, at no extra query.
+            var neighbors = new List<MemoryEntry>(
+                await _store.FindNearDuplicatesAsync(normalizedRepoId, entry, ConflictSimilarityFloor, ConflictTopK, ct));
+            if (duplicate is not null && ValencePolarity.Conflicts(duplicate.Valence, entry.Valence)
+                && neighbors.All(n => n.Id != duplicate.Id))
+                neighbors.Add(duplicate);
+            conflict = ConflictGate.Check(entry, neighbors);
+            if (conflict is { } c)
+            {
+                entry.Quarantine = new QuarantineInfo
+                {
+                    ContradictedId = c.ContradictedId,
+                    Stance = c.Stance,
+                    ContradictedStance = c.ContradictedStance,
+                    Similarity = c.Similarity,
+                    ContradictedTrust = c.ContradictedTrust,
+                    Reason = "Contradicts a high-trust memory",
+                    QuarantinedAt = DateTime.UtcNow,
+                };
+                await _poison.RecordAsync(normalizedRepoId, c, opts.Content, ct);
+            }
+        }
 
         return await RunMutationAsync(
-            scope: normalizedRepoId,
-            pre: HookEvent.PreStore, preCtx: preCtx,
-            post: HookEvent.PostStore, postCtxFactory: () => postCtxFactory(entry.Id),
+            MutationKind.Store, scope: normalizedRepoId,
+            ctx: () => new HookContext
+            {
+                Repo = normalizedRepoId,
+                Data = new { id = entry.Id, opts.Content, type = opts.Type.ToString().ToLowerInvariant(), opts.Tags, opts.Importance, opts.Source },
+            },
             body: async ctx =>
             {
                 if (!string.IsNullOrEmpty(opts.Supersedes))
@@ -121,7 +168,7 @@ public sealed class MemoryService
                     }
                 }
                 var id = await ctx.StoreNewAsync(entry, ct);
-                return StoreResult.Stored(id);
+                return conflict is { } cf ? StoreResult.QuarantinedPending(id, cf) : StoreResult.Stored(id);
             },
             denied: reason => StoreResult.Rejected($"Hook rejected: {reason}"),
             ct: ct);
@@ -133,13 +180,9 @@ public sealed class MemoryService
         var existing = await _store.GetAsync(id, ct);
         var scope = existing?.RepoId ?? "";
 
-        var hookCtx = new HookContext { Event = "pre-forget", Repo = scope, Data = new { id, reason } };
-        var postHookCtx = new HookContext { Event = "post-forget", Repo = scope, Data = new { id, reason } };
-
         var outcome = await RunMutationAsync(
-            scope: scope,
-            pre: HookEvent.PreForget, preCtx: hookCtx,
-            post: HookEvent.PostForget, postCtxFactory: () => postHookCtx,
+            MutationKind.Forget, scope: scope,
+            ctx: () => new HookContext { Repo = scope, Data = new { id, reason } },
             body: async ctx =>
             {
                 var forgotten = await ctx.ForgetAsync(id, ct);
@@ -193,6 +236,9 @@ public sealed class MemoryService
             entry.EchoCount++;
             entry.Importance = Math.Min(1.0f, entry.Importance + 0.05f);
             entry.Confidence = Math.Min(1.0f, entry.Confidence + 0.1f);
+            // An echo is the signal a quarantined memory earned its place — clear the verdict so the
+            // recall de-boost lifts. (A fizzle is left to the normal ForgetAfter/ROI machinery.)
+            entry.Quarantine = null;
         }
         else
         {
@@ -212,17 +258,14 @@ public sealed class MemoryService
         entry.LastAccessedAt = DateTime.UtcNow;
         entry.AccessCount++;
 
-        var written = await RunMutationAsync(
+        var written = await RunWriteAsync(
             scope: entry.RepoId,
-            pre: null, preCtx: null,
-            post: null, postCtxFactory: null,
             body: async ctx =>
             {
                 await ctx.WriteAsync(entry, ct);
                 return true;
             },
-            denied: _ => false,
-            ct: ct);
+            ct);
 
         // Per-repo alpha learning (#33 item 6): each echo/fizzle is a free relevance label for the
         // lexical-vs-vector blend. We nudge the learned alpha toward the lexical share that produced
@@ -248,7 +291,7 @@ public sealed class MemoryService
         return written;
     }
 
-    public Task<bool> UpdateMemoryAsync(
+    public async Task<bool> UpdateMemoryAsync(
         string id,
         string? content = null,
         IReadOnlyList<string>? tags = null,
@@ -258,8 +301,11 @@ public sealed class MemoryService
         string? oneLiner = null,
         string? summary = null,
         string? foresightHint = null,
-        CancellationToken ct = default) =>
-        EditAsync(id, new EditOptions
+        CancellationToken ct = default)
+    {
+        // Legacy bool wrapper — no precondition, so PreconditionFailed can't occur; maps the two success
+        // outcomes to true and NotFound/rejection to false, preserving its pre-#65 contract.
+        var outcome = await EditAsync(id, new EditOptions
         {
             Content = content,
             Tags = tags,
@@ -270,46 +316,102 @@ public sealed class MemoryService
             Summary = summary,
             ForesightHint = foresightHint,
         }, ct);
+        return outcome is EditOutcome.Updated or EditOutcome.Superseded;
+    }
 
-    public async Task<bool> EditAsync(string id, EditOptions opts, CancellationToken ct = default)
+    public async Task<EditOutcome> EditAsync(string id, EditOptions opts, CancellationToken ct = default)
     {
         var entry = await _store.GetAsync(id, ct);
-        if (entry is null) return false;
+        if (entry is null) return EditOutcome.NotFound;
+
+        // Optimistic concurrency (#65): a caller that pinned the content it read is refused if the stored
+        // content moved under it — no supersede, no lost update. Absent precondition = blind last-write-wins.
+        if (opts.ExpectedContentSha256 is { Length: > 0 } expected
+            && !string.Equals(expected, ContentHash.Of(entry.Content), StringComparison.OrdinalIgnoreCase))
+            return EditOutcome.PreconditionFailed;
 
         var contentChanged = opts.Content != null && opts.Content != entry.Content;
 
-        return await RunMutationAsync(
+        return await RunWriteAsync(
             scope: entry.RepoId,
-            pre: null, preCtx: null,
-            post: null, postCtxFactory: null,
             body: async ctx =>
             {
                 if (contentChanged)
                 {
                     var built = WriteValidator.BuildEditEntry(entry, opts);
-                    if (!built.IsBuilt) return false;
+                    // Content-gate rejection (secret/low-signal in the new content). Reported as NotFound
+                    // to preserve the pre-#65 conflated "not found or update rejected" behavior.
+                    if (!built.IsBuilt) return EditOutcome.NotFound;
 
                     entry.IsLatest = false;
                     entry.Validity.ValidUntil = DateTime.UtcNow;
                     entry.ForgetReason = "Superseded by user edit";
                     await ctx.WriteAsync(entry, ct);
                     await ctx.StoreNewAsync(built.Entry!, ct);
+                    return EditOutcome.Superseded;
                 }
-                else
+
+                if (opts.Tags != null) entry.Tags = opts.Tags.ToList();
+                if (opts.Importance.HasValue) entry.Importance = Math.Clamp(opts.Importance.Value, 0f, 1f);
+                if (opts.Confidence.HasValue) entry.Confidence = Math.Clamp(opts.Confidence.Value, 0f, 1f);
+                if (opts.Type.HasValue) entry.Type = opts.Type.Value;
+                if (opts.Stage.HasValue) entry.Stage = opts.Stage.Value;
+                if (opts.OneLiner != null) entry.OneLiner = opts.OneLiner;
+                if (opts.Summary != null) entry.Summary = opts.Summary;
+                if (opts.ForesightHint != null) entry.ForesightHint = opts.ForesightHint;
+                // One-edit reversal of a quarantine false positive: mark Released (kept for the audit
+                // trail) so the recall de-boost no longer applies.
+                if (opts.ReleaseQuarantine && entry.Quarantine is { } q) q.Released = true;
+                await ctx.WriteAsync(entry, ct);
+                return EditOutcome.Updated;
+            },
+            ct);
+    }
+
+    /// <summary>
+    /// Hard content erasure (#65) — the curation verb for GDPR erasure / secret cleanup, distinct from
+    /// Forget (which soft-deletes but keeps content). Scrubs the sensitive payload of ANY node in a chain
+    /// (latest or superseded) to a tombstone while preserving the audit structure: id, validity interval,
+    /// IsLatest, lineage (ParentMemoryId/DerivedFrom), echo/fizzle/access counters, RepoId, Type all stay,
+    /// so the chain remains walkable. Idempotent (re-redacting is a no-op). Writes a system audit
+    /// observation (who/when/why), mirroring Forget. Off-MCP: REST/CLI/Web UI only.
+    /// </summary>
+    public async Task<bool> RedactAsync(string id, string reason, CancellationToken ct = default)
+    {
+        var entry = await _store.GetAsync(id, ct);
+        if (entry is null) return false;
+        if (entry.Content.StartsWith("[redacted:", StringComparison.Ordinal)) return true; // idempotent
+
+        var now = DateTime.UtcNow;
+        return await RunWriteAsync(
+            scope: entry.RepoId,
+            body: async ctx =>
+            {
+                // Scrub the sensitive payload. SearchText/SearchVector are index projections of these
+                // fields, so re-indexing after this write drops the scrubbed content from search too.
+                entry.Content = $"[redacted: {reason} @ {now:O}]";
+                entry.Summary = null;
+                entry.OneLiner = null;
+                entry.ForesightHint = null;
+                entry.Entities = [];
+                await ctx.WriteAsync(entry, ct);
+
+                var observation = new MemoryEntry
                 {
-                    if (opts.Tags != null) entry.Tags = opts.Tags.ToList();
-                    if (opts.Importance.HasValue) entry.Importance = Math.Clamp(opts.Importance.Value, 0f, 1f);
-                    if (opts.Confidence.HasValue) entry.Confidence = Math.Clamp(opts.Confidence.Value, 0f, 1f);
-                    if (opts.Type.HasValue) entry.Type = opts.Type.Value;
-                    if (opts.OneLiner != null) entry.OneLiner = opts.OneLiner;
-                    if (opts.Summary != null) entry.Summary = opts.Summary;
-                    if (opts.ForesightHint != null) entry.ForesightHint = opts.ForesightHint;
-                    await ctx.WriteAsync(entry, ct);
-                }
+                    Id = MemoryIdGenerator.Generate(entry.RepoId, MemoryType.Observation, "redact:" + reason, now),
+                    RepoId = entry.RepoId,
+                    Type = MemoryType.Observation,
+                    Content = $"Redacted memory [{id}]: {reason}",
+                    Source = "system",
+                    CreatedAt = now,
+                    Validity = new Validity { ValidFrom = now },
+                    Importance = 0.1f,
+                    DerivedFrom = [id],
+                };
+                await ctx.StoreNewAsync(observation, ct);
                 return true;
             },
-            denied: _ => false,
-            ct: ct);
+            ct);
     }
 
     public async Task<bool> AddLinkAsync(
@@ -332,13 +434,10 @@ public sealed class MemoryService
             Relation = relation,
         });
 
-        return await RunMutationAsync(
+        return await RunWriteAsync(
             scope: entry.RepoId,
-            pre: null, preCtx: null,
-            post: null, postCtxFactory: null,
             body: async ctx => { await ctx.WriteAsync(entry, ct); return true; },
-            denied: _ => false,
-            ct: ct);
+            ct);
     }
 
     public async Task<bool> RemoveLinkAsync(
@@ -353,13 +452,10 @@ public sealed class MemoryService
             string.Equals(l.Relation, relation, StringComparison.OrdinalIgnoreCase));
         if (removed == 0) return false;
 
-        return await RunMutationAsync(
+        return await RunWriteAsync(
             scope: entry.RepoId,
-            pre: null, preCtx: null,
-            post: null, postCtxFactory: null,
             body: async ctx => { await ctx.WriteAsync(entry, ct); return true; },
-            denied: _ => false,
-            ct: ct);
+            ct);
     }
 
     // ─── Recall + Context ────────────────────────────────────────────
@@ -444,6 +540,11 @@ public sealed class MemoryService
             var score = candidate.Fused * trust * roi;
             if (!scope.IsLocalRepo(entry.RepoId))
                 score *= LayerScope.NonLocalDeBoost;
+            // Quarantine is a heavy DOWNRANK, never a hide: a memory that contradicts a high-trust
+            // incumbent stays recallable (so it can earn the echo that clears it) but sinks below
+            // trusted memories. An echo or a Released reversal removes the verdict entirely.
+            if (entry.Quarantine is { Released: false })
+                score *= QuarantineDeBoost;
 
             var result = RecallScoring.ToSearchResult(entry, (float)score);
             result.TrustFactor = (float)trust;
@@ -537,7 +638,10 @@ public sealed class MemoryService
                 var entry = await _store.GetAsync(id, ct);
                 // Authoritative scope check on the entry's actual RepoId — the link's declared
                 // TargetRepoId is untrusted; never admit a memory from a repo this recall isn't searching.
-                if (entry is { IsLatest: true } && InScope(entry.RepoId))
+                // The ValidUntil guard is load-bearing for post-forget integrity: forget stamps ValidUntil
+                // but leaves IsLatest=true, so an IsLatest-only check would resurface a forgotten memory
+                // linked from a live parent (the leak the GraphNeighbor auditor probe targets).
+                if (entry is { IsLatest: true } && entry.Validity.ValidUntil is null && InScope(entry.RepoId))
                     resolved[id] = entry;
             }
 
@@ -898,6 +1002,7 @@ public sealed class MemoryService
         Text = opts.Query,
         Type = opts.Type,
         Valence = opts.Valence,
+        Stage = opts.Stage,
         Tags = opts.Tags?.ToList() ?? [],
         Limit = opts.Limit,
         IncludeExpired = opts.IncludeExpired,
@@ -906,20 +1011,34 @@ public sealed class MemoryService
         AlphaOverride = opts.AlphaOverride,
     };
 
+    // COMMON CASE — name the op once, give one HookContext factory. Pre gates, Post notifies,
+    // cache invalidated in finally. Runner short-circuits internally when no hooks are enabled.
     private async Task<T> RunMutationAsync<T>(
-        string scope,
-        HookEvent? pre, HookContext? preCtx,
-        HookEvent? post, Func<HookContext>? postCtxFactory,
+        MutationKind kind, string scope,
+        Func<HookContext> ctx,
         Func<MutationCtx, Task<T>> body,
         Func<string?, T> denied,
         CancellationToken ct)
     {
-        if (pre is not null && preCtx is not null)
-        {
-            var preResult = await _hooks.RunPreHooksAsync(pre.Value, preCtx, ct);
-            if (!preResult.Allowed) return denied(preResult.Reason);
-        }
+        var preResult = await _hooks.RunPreHooksAsync(kind.Pre(), WithEvent(kind.Pre(), ctx()), ct);
+        if (!preResult.Allowed) return denied(preResult.Reason);
 
+        try
+        {
+            return await RunWriteAsync(scope, body, ct);
+        }
+        finally
+        {
+            // Inner finally (RunWriteAsync) has already invalidated the scope, so the post-hook
+            // fires after the generation bump. Fire-and-forget: never blocks or cancels with the caller.
+            _ = _hooks.RunPostHooksAsync(kind.Post(), WithEvent(kind.Post(), ctx()), default);
+        }
+    }
+
+    // ESCAPE HATCH — hookless writes (Feedback / Edit / Link). No event, no context, no denied.
+    private async Task<T> RunWriteAsync<T>(
+        string scope, Func<MutationCtx, Task<T>> body, CancellationToken ct)
+    {
         var ctx = new MutationCtx(_store);
         try
         {
@@ -930,17 +1049,26 @@ public sealed class MemoryService
             // Generation bump: every recall that started before this point will drop its cache
             // write on Set; every recall that starts after sees the new generation.
             _cache.Invalidate(scope);
-            if (post is not null && postCtxFactory is not null)
-                _ = _hooks.RunPostHooksAsync(post.Value, postCtxFactory(), default);
         }
     }
+
+    private static HookContext WithEvent(HookEvent evt, HookContext ctx) =>
+        new() { Event = EventName(evt), Repo = ctx.Repo, Data = ctx.Data };
+
+    private static string EventName(HookEvent evt) => evt switch
+    {
+        HookEvent.PreStore => "pre-store",
+        HookEvent.PostStore => "post-store",
+        HookEvent.PreForget => "pre-forget",
+        _ => "post-forget",
+    };
 }
 
 /// <summary>
 /// Storage write gate. The only code path with access to <see cref="IEidetStore"/>'s
 /// write API from inside <see cref="MemoryService"/> — every mutation must accept a <c>MutationCtx</c>
-/// from <c>RunMutationAsync</c> and call its methods, which guarantees the cache invalidation
-/// in the surrounding <c>finally</c> block fires.
+/// from <c>RunWriteAsync</c> (directly or via <c>RunMutationAsync</c>) and call its methods, which
+/// guarantees the cache invalidation in the surrounding <c>finally</c> block fires.
 /// </summary>
 /// <remarks>
 /// Internal-but-not-file-local because file-scoped types can't appear in private generic

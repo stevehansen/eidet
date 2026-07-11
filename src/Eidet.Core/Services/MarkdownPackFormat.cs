@@ -102,6 +102,8 @@ public static partial class MarkdownPackFormat
             meta.Add($"provenance={entry.Provenance.ToString().ToLowerInvariant()}");
         if (entry.Valence != Valence.Neutral)
             meta.Add($"valence={entry.Valence.ToString().ToLowerInvariant()}");
+        if (entry.Stage != FunctionalStage.None)
+            meta.Add($"stage={entry.Stage.ToString().ToLowerInvariant()}");
         if (!string.IsNullOrWhiteSpace(entry.Source))
             meta.Add($"source={entry.Source}");
         if (entry.DerivedFrom.Count > 0)
@@ -406,6 +408,9 @@ public static partial class MarkdownPackFormat
             if (pairs.TryGetValue("valence", out var val) &&
                 Enum.TryParse<Valence>(val, ignoreCase: true, out var vv))
                 entry.Valence = vv;
+            if (pairs.TryGetValue("stage", out var stg) &&
+                Enum.TryParse<FunctionalStage>(stg, ignoreCase: true, out var sv))
+                entry.Stage = sv;
             if (pairs.TryGetValue("source", out var src))
                 entry.Source = src;
             if (pairs.TryGetValue("derivedfrom", out var df))

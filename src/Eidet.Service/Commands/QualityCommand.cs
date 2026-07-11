@@ -1,5 +1,6 @@
 using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
+using Eidet.Core.Integrity;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Spectre.Console;
@@ -23,7 +24,8 @@ public sealed class QualityCommand : AsyncCommand<QualityCommand.Settings>
         var config = ConfigManager.Load();
         var store = DocumentStoreFactory.CreateFromConfig(config);
         var eidetStore = new RavenEidetStore(store);
-        var svc = new QualityService(eidetStore);
+        var memory = new MemoryService(eidetStore, new LayerService(eidetStore));
+        var svc = new QualityService(eidetStore, new IntegrityAuditor(memory, eidetStore));
 
         var repoId = settings.Repo ?? Directory.GetCurrentDirectory();
 

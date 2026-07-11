@@ -104,6 +104,15 @@ public interface IEidetStore
     Task<IReadOnlyList<MemoryEntry>> FindNearDuplicatesAsync(
         string repoId, MemoryEntry entry, float minSimilarity, int max, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
+    /// <summary>
+    /// The recently soft-deleted memories for a repo — those forgotten (<c>Validity.ValidUntil</c> set)
+    /// or superseded (<c>IsLatest == false</c>), newest-invalidated first, capped at <paramref name="max"/>.
+    /// The post-forget integrity auditor's input set; every one of these must be invisible to every read
+    /// path. Default <c>[]</c> so fakes need not opt in.
+    /// </summary>
+    Task<IReadOnlyList<MemoryEntry>> GetInvalidatedAsync(string repoId, int max, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
+
     Task<Dictionary<MemoryType, int>> GetCountsByTypeAsync(string repoId, CancellationToken ct = default);
     Task<List<MemoryEntry>> GetTopScoredAsync(string repoId, MemoryType[] types, int limit, CancellationToken ct = default);
     Task<bool> TestConnectionAsync(CancellationToken ct = default);

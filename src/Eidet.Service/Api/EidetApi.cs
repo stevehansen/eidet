@@ -169,6 +169,8 @@ public class EidetApiServer
         r.MapPrefix("PUT", "/api/eidet/", id => !id.Contains("/links"), _memoryWrite.UpdateMemory);
         r.Map("POST", p => p.EndsWith("/links") && p.StartsWith("/api/eidet/") && p != "/api/eidet/links",
             (ctx, path, ct) => _memoryWrite.AddMemoryLink(ctx, MemoryWriteEndpoints.ExtractMemoryIdFromLinkPath(path), ct));
+        r.Map("POST", p => p.EndsWith("/redact") && p.StartsWith("/api/eidet/"),
+            (ctx, path, ct) => _memoryWrite.Redact(ctx, MemoryWriteEndpoints.ExtractMemoryIdFromSuffixPath(path, "/redact"), ct));
         r.Map("DELETE", p => p.EndsWith("/links") && p.StartsWith("/api/eidet/") && p != "/api/eidet/links",
             (ctx, path, ct) => _memoryWrite.RemoveMemoryLink(ctx, MemoryWriteEndpoints.ExtractMemoryIdFromLinkPath(path), ct));
         r.MapPrefix("DELETE", "/api/eidet/layers/", _layerEndpoints.UnmountLayer);

@@ -27,6 +27,16 @@ public class McpToolDefinitionsTests
     }
 
     [Fact]
+    public void StoreAndContext_Descriptions_MentionCompactionSurvival()
+    {
+        // #67: the store/context descriptions reinforce store-before-eviction / reload-after-restart.
+        var store = Tools.First(t => t.Name == "eidet_store");
+        var context = Tools.First(t => t.Name == "eidet_context");
+        Assert.Contains("compaction", store.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("compaction", context.Description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Exposed_Returns8Tools()
     {
         Assert.Equal(8, Exposed.Count);

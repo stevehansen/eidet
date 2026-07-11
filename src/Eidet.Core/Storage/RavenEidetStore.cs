@@ -318,6 +318,23 @@ public class RavenEidetStore : IEidetStore
         }
     }
 
+    public async Task<IReadOnlyList<MemoryEntry>> GetInvalidatedAsync(
+        string repoId, int max, CancellationToken ct = default)
+    {
+        // Every soft-deleted memory carries a set ValidUntil — forget stamps it, and both supersession
+        // paths (store-supersede, content edit) stamp it alongside IsLatest=false — so this single
+        // indexed predicate captures the forgotten AND superseded sets the auditor must probe.
+        using var session = _store.OpenAsyncSession();
+        var results = await session.Advanced
+            .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
+            .WhereEquals("RepoId", repoId)
+            .AndAlso()
+            .WhereNotEquals("ValidUntil", (DateTime?)null)
+            .Take(max)
+            .ToListAsync(ct);
+        return results;
+    }
+
     public async Task<Dictionary<MemoryType, int>> GetCountsByTypeAsync(
         string repoId, CancellationToken ct = default)
     {
@@ -522,6 +539,17 @@ public class RavenEidetStore : IEidetStore
 
         if (query.Valence.HasValue)
             documentQuery = documentQuery.AndAlso().WhereEquals("Valence", query.Valence.Value);
+
+        // None-as-wildcard hard pre-filter: admit stage-`z` AND stage-agnostic (None) memories, exclude
+        // memories that declare a DIFFERENT stage. The grouped subclause is mandatory — an ungrouped
+        // OrElse would bind across the whole query and leak every None memory past the repo/type/valence
+        // isolation clauses. Precision rises as the corpus is tagged; degrades to today's behavior (never
+        // a blackout) when it isn't.
+        if (query.Stage.HasValue)
+            documentQuery = documentQuery.AndAlso().OpenSubclause()
+                .WhereEquals("Stage", query.Stage.Value)
+                .OrElse().WhereEquals("Stage", FunctionalStage.None)
+                .CloseSubclause();
 
         foreach (var tag in query.Tags)
             documentQuery = documentQuery.AndAlso().WhereIn("Tags", new[] { tag });
