@@ -183,6 +183,39 @@ public class ValenceWritePathGuardTests
     }
 
     [Fact]
+    public async Task Consolidation_conflicting_bucket_creates_its_own_insight_instead_of_being_dropped()
+    {
+        // A standing Affirming insight that FindDuplicateAsync will return for the refuting
+        // bucket's representative — the conflict case that used to `continue` and silently
+        // drop the negative knowledge forever.
+        var existing = Entry($"memories/{Repo}/insight/aff", MemoryType.Insight,
+            "cache warmup is safe to enable on every node", 0.7f, Valence.Affirming);
+        var store = new BoostStore(existing);
+
+        await store.StoreAsync(Obs("r1", "cache warmup exhausts the heap and OOMs the node", Valence.Refuting, 0.7f));
+        await store.StoreAsync(Obs("r2", "cache warmup stalls startup past the health-check window", Valence.Refuting, 0.6f));
+        await store.StoreAsync(Obs("r3", "cache warmup double-counts entries after a restart", Valence.Refuting, 0.5f));
+
+        var engine = new ConsolidationEngine(store, enrichment: null, new MemoryService(store));
+        var result = await engine.ConsolidateAsync(Repo);
+
+        // The conflicting bucket falls through to CREATE its own Refuting insight, not boost
+        // and not vanish — both stances now coexist.
+        Assert.Equal(1, result.InsightsCreated);
+        Assert.Equal(0, result.InsightsBoosted);
+
+        var insights = await store.BrowseAsync(Repo, 0, 50, MemoryType.Insight);
+        var created = Assert.Single(insights, i => i.Id != existing.Id);
+        Assert.Equal(Valence.Refuting, created.Valence);
+
+        // The standing Affirming insight is untouched: same importance, no lineage contamination.
+        var standing = await store.GetAsync(existing.Id);
+        Assert.Equal(0.7f, standing!.Importance);
+        Assert.Empty(standing.DerivedFrom);
+        Assert.Equal(Valence.Affirming, standing.Valence);
+    }
+
+    [Fact]
     public async Task Consolidation_control_folds_a_sign0_bucket_into_one_insight()
     {
         var store = new InMemoryEidetStore();
