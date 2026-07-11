@@ -28,11 +28,58 @@ internal sealed class MemoryBulkEndpoints
 
     public async Task Intake(HttpListenerContext ctx, CancellationToken ct)
     {
+        var path = await ResolveRepoPathAsync(ctx);
+        if (path is null) return;
+
+        var args = JsonSerializer.SerializeToElement(new { }, HttpJson.Options);
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_intake", path, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
+    }
+
+    public async Task IntakeGit(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var path = await ResolveRepoPathAsync(ctx);
+        if (path is null) return;
+
+        var q = ctx.Request.QueryString;
+        var args = JsonSerializer.SerializeToElement(new
+        {
+            dry_run = string.Equals(q["dry_run"], "true", StringComparison.OrdinalIgnoreCase),
+            since = q["since"],
+            max_commits = int.TryParse(q["max_commits"], out var maxCommits) ? maxCommits : 500,
+            all_commits = string.Equals(q["all_commits"], "true", StringComparison.OrdinalIgnoreCase),
+        }, HttpJson.Options);
+
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_intake_git", path, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
+    }
+
+    public async Task IntakeClaudeMemory(HttpListenerContext ctx, CancellationToken ct)
+    {
+        var path = await ResolveRepoPathAsync(ctx);
+        if (path is null) return;
+
+        var args = JsonSerializer.SerializeToElement(new
+        {
+            dry_run = string.Equals(ctx.Request.QueryString["dry_run"], "true", StringComparison.OrdinalIgnoreCase),
+        }, HttpJson.Options);
+
+        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_intake_claude_memory", path, args, "rest", ct));
+        await RestFormatter.WriteAsync(ctx, result);
+    }
+
+    /// <summary>
+    /// Resolves the `repo` query param to an existing filesystem path (explicit `path` param,
+    /// path-shaped repo id, or the tracked original path). Writes the 400 response and returns
+    /// null when it can't.
+    /// </summary>
+    private async Task<string?> ResolveRepoPathAsync(HttpListenerContext ctx)
+    {
         var repo = ctx.Request.QueryString["repo"];
         if (string.IsNullOrEmpty(repo))
         {
             await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
-            return;
+            return null;
         }
 
         var path = ctx.Request.QueryString["path"];
@@ -43,12 +90,9 @@ internal sealed class MemoryBulkEndpoints
         if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
         {
             await HttpJson.WriteAsync(ctx, new { error = $"Cannot resolve filesystem path for repo '{repo}'. The path '{path ?? "(unknown)"}' does not exist." }, 400);
-            return;
+            return null;
         }
-
-        var args = JsonSerializer.SerializeToElement(new { }, HttpJson.Options);
-        var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_intake", path, args, "rest", ct));
-        await RestFormatter.WriteAsync(ctx, result);
+        return path;
     }
 
     public async Task Consolidate(HttpListenerContext ctx, CancellationToken ct)
@@ -94,7 +138,11 @@ internal sealed class MemoryBulkEndpoints
             await HttpJson.WriteAsync(ctx, new { error = "Missing 'repo' parameter" }, 400);
             return;
         }
-        var markdown = await _export.ExportMarkdownAsync(RepoIdNormalizer.Normalize(repo), ct);
+        var normalized = RepoIdNormalizer.Normalize(repo);
+        // format=agents renders the AGENTS.md interop shape; default stays the memory dump.
+        var markdown = string.Equals(ctx.Request.QueryString["format"], "agents", StringComparison.OrdinalIgnoreCase)
+            ? await _export.ExportAgentsMdAsync(normalized, ct)
+            : await _export.ExportMarkdownAsync(normalized, ct);
         ctx.Response.StatusCode = 200;
         ctx.Response.ContentType = "text/markdown";
         var bytes = System.Text.Encoding.UTF8.GetBytes(markdown);

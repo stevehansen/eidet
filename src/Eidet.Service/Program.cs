@@ -85,6 +85,12 @@ app.Configure(config =>
     config.AddCommand<IntakeCommand>("intake")
         .WithDescription("Ingest project files as seed memories");
 
+    config.AddCommand<IntakeGitCommand>("intake-git")
+        .WithDescription("Seed Procedure/Insight memories from git commit history");
+
+    config.AddCommand<IntakeClaudeMemoryCommand>("intake-claude-memory")
+        .WithDescription("Import Claude Code's native per-project memory as seed memories");
+
     config.AddCommand<MaintainCommand>("maintain")
         .WithDescription("Run maintenance pipeline");
 

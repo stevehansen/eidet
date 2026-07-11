@@ -18,7 +18,7 @@ public sealed class ExportCommand : AsyncCommand<ExportCommand.Settings>
         public string? Output { get; set; }
 
         [CommandOption("-f|--format <FORMAT>")]
-        [Description("Export format: dump (memory dump) or pack (shareable pack)")]
+        [Description("Export format: dump (memory dump), pack (shareable pack), or agents (AGENTS.md interop file)")]
         public string? Format { get; set; }
 
         [CommandOption("--pack-id <ID>")]
@@ -62,8 +62,10 @@ public sealed class ExportCommand : AsyncCommand<ExportCommand.Settings>
                 return await ExportPack(exportSvc, repoId, settings, cancellation);
             }
 
-            // Default: memory dump
-            var markdown = await exportSvc.ExportMarkdownAsync(repoId, cancellation);
+            // Default: memory dump; "agents" renders the AGENTS.md interop shape.
+            var markdown = string.Equals(settings.Format, "agents", StringComparison.OrdinalIgnoreCase)
+                ? await exportSvc.ExportAgentsMdAsync(repoId, cancellation)
+                : await exportSvc.ExportMarkdownAsync(repoId, cancellation);
 
             if (!string.IsNullOrEmpty(settings.Output))
             {

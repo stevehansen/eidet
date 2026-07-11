@@ -234,6 +234,18 @@ export class EidetClient {
     return this.post(`/api/eidet/intake?repo=${enc(repo)}`);
   }
 
+  async intakeGit(
+    repo: string,
+    options?: { since?: string; maxCommits?: number; allCommits?: boolean; dryRun?: boolean },
+  ): Promise<{ newCount: number; skippedCount: number }> {
+    let url = `/api/eidet/intake/git?repo=${enc(repo)}`;
+    if (options?.since) url += `&since=${enc(options.since)}`;
+    if (options?.maxCommits != null) url += `&max_commits=${options.maxCommits}`;
+    if (options?.allCommits) url += '&all_commits=true';
+    if (options?.dryRun) url += '&dry_run=true';
+    return this.post(url);
+  }
+
   async consolidate(repo: string): Promise<{ candidates: number; insightsCreated: number; insightsBoosted: number }> {
     return this.post(`/api/eidet/consolidate?repo=${enc(repo)}`);
   }

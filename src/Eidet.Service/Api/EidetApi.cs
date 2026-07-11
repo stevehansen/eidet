@@ -145,6 +145,8 @@ public class EidetApiServer
         r.MapPost("/api/eidet", (ctx, _, ct) => _memoryWrite.Store(ctx, ct));
         r.MapPost("/api/eidet/feedback", (ctx, _, ct) => _memoryWrite.Feedback(ctx, ct));
         r.MapPost("/api/eidet/intake", (ctx, _, ct) => _memoryBulk.Intake(ctx, ct));
+        r.MapPost("/api/eidet/intake/git", (ctx, _, ct) => _memoryBulk.IntakeGit(ctx, ct));
+        r.MapPost("/api/eidet/intake/claude-memory", (ctx, _, ct) => _memoryBulk.IntakeClaudeMemory(ctx, ct));
         r.MapPost("/api/eidet/consolidate", (ctx, _, ct) => _memoryBulk.Consolidate(ctx, ct));
         r.MapPost("/api/eidet/reflect", (ctx, _, ct) => _memoryBulk.Reflect(ctx, ct));
         r.MapPost("/api/maintenance", (ctx, _, ct) => _maintenanceEndpoints.Maintenance(ctx, ct));

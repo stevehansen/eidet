@@ -67,6 +67,23 @@ public interface IEidetStore
     /// </summary>
     Task SetLastReflectedAtAsync(string repoId, DateTime whenUtc, CancellationToken ct = default) =>
         Task.CompletedTask;
+
+    /// <summary>
+    /// The git-intake watermark (<c>RepoUsage.GitIntakeLastSha</c>): SHA of the repo tip at the
+    /// end of the last non-dry git-history intake run, or null if never run. Drives the
+    /// incremental <c>Since</c> default. Default null so fakes need not opt in.
+    /// </summary>
+    Task<string?> GetGitIntakeWatermarkAsync(string repoId, CancellationToken ct = default) =>
+        Task.FromResult<string?>(null);
+
+    /// <summary>
+    /// Advance the git-intake watermark on the repo's usage anchor (JS-patch like
+    /// <see cref="SetLastReflectedAtAsync"/>, never disturbing the usage time series or
+    /// original-path mapping). Last-write-wins — SHAs carry no order to guard monotonically.
+    /// Default no-op for fakes.
+    /// </summary>
+    Task SetGitIntakeWatermarkAsync(string repoId, string sha, CancellationToken ct = default) =>
+        Task.CompletedTask;
     Task<List<MemoryEntry>> FullTextSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default);
     Task<List<MemoryEntry>> VectorSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default);
 

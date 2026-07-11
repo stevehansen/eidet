@@ -154,6 +154,35 @@ public class RavenEidetStore : IEidetStore
         await _store.Operations.SendAsync(patchOp, token: ct);
     }
 
+    public async Task<string?> GetGitIntakeWatermarkAsync(string repoId, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+        var usage = await session.LoadAsync<RepoUsage>(RepoUsage.MakeId(repoId), ct);
+        return usage?.GitIntakeLastSha;
+    }
+
+    public async Task SetGitIntakeWatermarkAsync(string repoId, string sha, CancellationToken ct = default)
+    {
+        // Patch ONLY GitIntakeLastSha on the usage anchor (same discipline as SetLastReflectedAtAsync).
+        // Last-write-wins: SHAs carry no order, so there is no monotonic guard to apply.
+        var normalized = RepoIdNormalizer.Normalize(repoId);
+        var docId = RepoUsage.MakeId(repoId);
+        var patchOp = new Raven.Client.Documents.Operations.PatchOperation(
+            docId,
+            changeVector: null,
+            patch: new Raven.Client.Documents.Operations.PatchRequest
+            {
+                Script = "this.GitIntakeLastSha = args.Sha;",
+                Values = { { "Sha", sha } },
+            },
+            patchIfMissing: new Raven.Client.Documents.Operations.PatchRequest
+            {
+                Script = "this.Id = args.Id; this.RepoId = args.RepoId; this.CreatedAt = args.Now; this.GitIntakeLastSha = args.Sha;",
+                Values = { { "Id", docId }, { "RepoId", normalized }, { "Now", DateTime.UtcNow }, { "Sha", sha } },
+            });
+        await _store.Operations.SendAsync(patchOp, token: ct);
+    }
+
     public async Task<List<MemoryEntry>> FullTextSearchAsync(
         IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) =>
         (await SearchScoredAsync(SearchArm.Lexical, repoIds, query, ct)).Select(h => h.Entry).ToList();
