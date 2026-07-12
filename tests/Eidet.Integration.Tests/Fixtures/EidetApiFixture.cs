@@ -73,6 +73,7 @@ public class EidetApiFixture : IAsyncLifetime
                 Layers = layerSvc,
                 LayerSync = layerSyncSvc,
                 Quality = qualitySvc,
+                MemoryFiles = new RavenMemoryFileStore(_store),
             });
 
             _serverTask = server.RunAsync(_cts.Token);

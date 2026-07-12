@@ -8,8 +8,8 @@ internal sealed class ConsolidationStage : IMaintenanceStage
     public async Task<StageOutcome> ExecuteAsync(MaintenanceContext ctx, CancellationToken ct)
     {
         var result = await ctx.Consolidation.ConsolidateAsync(ctx.RepoId, dryRun: false, ct, write: ctx.Write);
-        // Count boosted insights too: both creates and boosts mutate recall-scoring fields,
-        // and this Affected count is the orchestrator's gate for invalidating the recall cache.
-        return new StageOutcome(Name, result.InsightsCreated + result.InsightsBoosted);
+        // Count boosts and two-altitude procedures too: all mutate recall-scoring fields, and this
+        // Affected count is the orchestrator's gate for invalidating the recall cache.
+        return new StageOutcome(Name, result.InsightsCreated + result.InsightsBoosted + result.ProceduresCreated);
     }
 }

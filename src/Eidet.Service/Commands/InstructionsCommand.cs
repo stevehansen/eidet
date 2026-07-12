@@ -122,6 +122,11 @@ public sealed class InstructionsCommand : AsyncCommand<InstructionsCommand.Setti
             - Include relevant tags for discoverability (e.g., "testing", "deployment", "api")
             - Set importance: 0.3=minor, 0.5=normal, 0.8=important, 1.0=critical
 
+            ### Before compaction / context clear
+            - When you receive a context-eviction or compaction warning, call `eidet_store` for any durable finding not yet saved (bug root causes, decisions, gotchas).
+            - Memory in Eidet survives compaction; in-context notes do not.
+            - After a restart or compaction, call `eidet_context` (and `eidet_recall` for the task) to reload what you saved.
+
             ### Feedback
             - Call `eidet_feedback` with `used: true` (echo) when a recalled memory was helpful
             - Call `eidet_feedback` with `used: false` (fizzle) when a recalled memory was irrelevant

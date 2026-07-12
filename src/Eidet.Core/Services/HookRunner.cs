@@ -12,6 +12,17 @@ public enum HookEvent
     PreForget, PostForget,
 }
 
+// One value per mutation kind. The Pre-Post pairing lives HERE, not at each call site.
+public enum MutationKind { Store, Forget }
+
+internal static class MutationKindExtensions
+{
+    public static HookEvent Pre(this MutationKind k) => k switch
+        { MutationKind.Store => HookEvent.PreStore, _ => HookEvent.PreForget };
+    public static HookEvent Post(this MutationKind k) => k switch
+        { MutationKind.Store => HookEvent.PostStore, _ => HookEvent.PostForget };
+}
+
 public class HookContext
 {
     public string Event { get; init; } = "";

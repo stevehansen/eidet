@@ -69,6 +69,7 @@ public class RoiDecayStageTests
             Consolidation = new ConsolidationEngine(store, enrich, memory),
             Reflection = new ReflectionEngine(store, enrich, memory),
             Dedup = new DedupEngine(store, memory, enrich),
+            Auditor = new Eidet.Core.Integrity.IntegrityAuditor(memory, store),
             RepoId = Repo,
             IsRepoActive = false,
         };

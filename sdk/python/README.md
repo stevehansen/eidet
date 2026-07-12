@@ -15,17 +15,17 @@ pip install eidet-sdk
 ## Usage
 
 ```python
-from eidet_sdk import EidetClient, StoreRequest, MemoryType
+from eidet_sdk import EidetClient, MemoryType
 
 client = EidetClient()  # defaults to http://localhost:19380
 
 # Store a memory
-result = client.store(StoreRequest(
+result = client.store(
     repo="/path/to/project",
     content="The auth module uses JWT with RS256 signing",
     type=MemoryType.OBSERVATION,
     tags=["auth", "jwt"],
-))
+)
 
 # Search memories
 results = client.recall("/path/to/project", "authentication")
@@ -58,8 +58,8 @@ client = EidetClient(url="http://localhost:19380", api_key="your-api-key")
 
 | Method | Description |
 |--------|-------------|
-| `store(request)` | Store a memory (observation, insight, procedure, heuristic) |
-| `recall(repo, query, **kwargs)` | Search memories by meaning and keywords |
+| `store(repo, content, ...)` | Store a memory (observation, insight, procedure, heuristic; `negative`/`valence` for dead-ends) |
+| `recall(repo, query, **kwargs)` | Search memories by meaning and keywords (filters: type, tags, valence, cross_repo) |
 | `context(repo)` | Get compact session context (< 600 tokens) |
 | `get_memory(id)` | Get a specific memory by ID |
 | `forget(id, reason?)` | Soft-delete a memory |
@@ -74,6 +74,7 @@ client = EidetClient(url="http://localhost:19380", api_key="your-api-key")
 | `export_markdown(repo)` | Export memories as markdown |
 | `health()` | Health check |
 | `status()` | Service status and stats |
+| `is_available()` | Check if the service is reachable |
 
 ## Requirements
 

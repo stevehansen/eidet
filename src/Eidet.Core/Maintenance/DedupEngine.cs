@@ -91,6 +91,20 @@ public sealed class DedupEngine
 
         var (keep, discard) = a.Importance >= b.Importance ? (a, b) : (b, a);
 
+        // Recall-consistency veto (#39): don't fold the discard away unless the survivor still surfaces
+        // for the discard's own retrieval intent — otherwise the merge would silently lose retrievability.
+        // A rejected merge forgets nothing (both stay live); the stamp makes it queryable in the dashboard.
+        if (!await RecallConsistencyGuard.SurvivesAsync(_store, keep.RepoId, keep, discard, ct: ct))
+        {
+            result.Rejections.Add(new DedupPair(keep.Id, discard.Id));
+            if (!dryRun)
+            {
+                discard.LastMergeRejectedAt = DateTime.UtcNow;
+                await write.WriteAsync(discard, ct);
+            }
+            return;
+        }
+
         keep.Valence = ValencePolarity.Merge(keep.Valence, discard.Valence);
         keep.AccessCount += discard.AccessCount;
         foreach (var tag in discard.Tags)
@@ -126,6 +140,11 @@ public sealed class DedupResult
 {
     public List<DedupPair> Merges { get; init; } = [];
     public int MergedCount => Merges.Count;
+
+    /// <summary>Merges the recall-consistency guard vetoed (#39). Nothing was forgotten for these; the
+    /// discard stayed live and carries a <c>LastMergeRejectedAt</c> stamp.</summary>
+    public List<DedupPair> Rejections { get; init; } = [];
+    public int RejectedCount => Rejections.Count;
 }
 
 public readonly record struct DedupPair(string KeptId, string DiscardedId);

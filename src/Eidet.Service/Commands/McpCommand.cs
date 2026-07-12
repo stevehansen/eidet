@@ -35,11 +35,7 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
             DatabaseProvisioner.DeployIndexes(store);
             var eidetStore = new RavenEidetStore(store);
             using var enrichment = EnrichmentService.CreateFromConfig(config.Enrichment);
-            IHookRunner hookRunner = config.Hooks.PreStore.Count > 0 || config.Hooks.PostStore.Count > 0
-                || config.Hooks.PreRecall.Count > 0 || config.Hooks.PostRecall.Count > 0
-                || config.Hooks.PreForget.Count > 0 || config.Hooks.PostForget.Count > 0
-                ? new HookRunner(config.Hooks)
-                : NullHookRunner.Instance;
+            var hookRunner = new HookRunner(config.Hooks);
             var memorySvc = new MemoryService(eidetStore, hooks: hookRunner);
 
             var looseEndStore = new RavenLooseEndStore(store);

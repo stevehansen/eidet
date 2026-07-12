@@ -21,7 +21,7 @@ public sealed class ContextToolHandler : IToolHandler
     public McpToolDefinition Schema { get; } = new()
     {
         Name = "eidet_context",
-        Description = "Get compact L0 (identity) + L1 (top-K scored memories) context block for session start. Under 600 tokens.",
+        Description = "Get compact L0 (identity) + L1 (top-K scored memories) context block for session start. Under 600 tokens. Call this after a restart or compaction to reload what you stored — Eidet memory survives context clears.",
         InputSchema = BuildSchema(),
     };
 

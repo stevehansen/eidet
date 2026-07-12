@@ -7,7 +7,7 @@ namespace Eidet.Service.Tools;
 
 /// <summary>
 /// Builds the standard handler set for the <see cref="ToolDispatcher"/> shared by REST
-/// (<c>EidetApiServer</c>) and MCP (<c>McpServer</c>) — 15 handlers, plus <c>eidet_reflect</c>
+/// (<c>EidetApiServer</c>) and MCP (<c>McpServer</c>) — 17 handlers, plus <c>eidet_reflect</c>
 /// when a <see cref="ReflectionEngine"/> is supplied. Centralising the handler list keeps the two
 /// front-ends in lock-step — adding a new tool means editing one file, not two.
 /// </summary>
@@ -37,6 +37,8 @@ internal static class ToolDispatcherFactory
             new MaintenanceToolHandler(maintenance),
             new EditToolHandler(svc),
             new IntakeToolHandler(intake),
+            new IntakeGitToolHandler(intake),
+            new IntakeClaudeMemoryToolHandler(intake),
             new PackExportToolHandler(export),
             new PackImportToolHandler(export, layers),
             new ParkToolHandler(looseEnds),

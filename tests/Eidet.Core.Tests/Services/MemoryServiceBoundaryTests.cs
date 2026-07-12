@@ -207,7 +207,7 @@ public class MemoryServiceBoundaryTests
     public async Task RunBulkAsync_WithFireHooks_FiresPerEntry()
     {
         var store = new InMemoryEidetStore();
-        var hooks = new CountingHookRunner();
+        var hooks = new RecordingHookRunner();
         var svc = new MemoryService(store, hooks: hooks);
 
         await svc.RunBulkAsync(async ctx =>
@@ -217,11 +217,12 @@ public class MemoryServiceBoundaryTests
             await ctx.StoreNewAsync(MakeEntry("repo-a", "memories/repo-a/insight/3", "three"), CancellationToken.None);
             return 0;
         }, new BulkOptions { FireHooks = true });
+        await hooks.Drain();
 
-        Assert.Equal(3, hooks.PostStoreCount);
+        Assert.Equal(3, hooks.Fired.Count(e => e == HookEvent.PostStore));
 
         // Default options (FireHooks = false) must fire no post-store hooks.
-        var hooks2 = new CountingHookRunner();
+        var hooks2 = new RecordingHookRunner();
         var svc2 = new MemoryService(store, hooks: hooks2);
         await svc2.RunBulkAsync(async ctx =>
         {
@@ -229,8 +230,9 @@ public class MemoryServiceBoundaryTests
             await ctx.StoreNewAsync(MakeEntry("repo-b", "memories/repo-b/insight/2", "two"), CancellationToken.None);
             return 0;
         });
+        await hooks2.Drain();
 
-        Assert.Equal(0, hooks2.PostStoreCount);
+        Assert.Empty(hooks2.Fired);
     }
 
     [Fact]
@@ -374,27 +376,6 @@ internal sealed class GatedSearchStore : InMemoryEidetStore
 }
 
 /// <summary>
-/// Counts post-store hook invocations. Increments synchronously so the fire-and-forget
-/// <c>_ = RunPostHooksAsync(...)</c> in the bulk path is observable without an await race.
-/// </summary>
-internal sealed class CountingHookRunner : IHookRunner
-{
-    private int _postStore;
-    public int PostStoreCount => _postStore;
-
-    public Task<HookResult> RunPreHooksAsync(HookEvent evt, HookContext context, CancellationToken ct) =>
-        Task.FromResult(HookResult.Ok());
-
-    public Task RunPostHooksAsync(HookEvent evt, HookContext context, CancellationToken ct)
-    {
-        if (evt == HookEvent.PostStore) Interlocked.Increment(ref _postStore);
-        return Task.CompletedTask;
-    }
-
-    public bool HasHooks(HookEvent evt) => true;
-}
-
-/// <summary>
 /// Minimal in-memory <see cref="IEidetStore"/> for boundary tests. Implements just enough
 /// of the surface to exercise <see cref="MemoryService"/>'s public methods without
 /// depending on RavenDB. Search is naive substring matching on Content + Tags + RepoId.
@@ -403,6 +384,7 @@ internal class InMemoryEidetStore : IEidetStore
 {
     private readonly Dictionary<string, MemoryEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTime> _reflectionCursors = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _gitWatermarks = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _lock = new();
 
     public virtual Task<MemoryEntry?> GetAsync(string id, CancellationToken ct = default)
@@ -444,6 +426,9 @@ internal class InMemoryEidetStore : IEidetStore
             var results = _entries.Values
                 .Where(e => repoIds.Contains(e.RepoId, StringComparer.OrdinalIgnoreCase))
                 .Where(e => query.IncludeExpired || e.Validity.ValidUntil is null)
+                // Mirror RavenEidetStore.ApplyFilters' None-as-wildcard stage filter so recall
+                // semantics can be exercised without RavenDB.
+                .Where(e => query.Stage is not { } s || e.Stage == s || e.Stage == FunctionalStage.None)
                 .Where(e => terms.Any(t => e.Content.Contains(t, StringComparison.OrdinalIgnoreCase)))
                 .Take(query.Limit * 2)
                 .ToList();
@@ -451,7 +436,7 @@ internal class InMemoryEidetStore : IEidetStore
         }
     }
 
-    public Task<List<MemoryEntry>> VectorSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) =>
+    public virtual Task<List<MemoryEntry>> VectorSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) =>
         Task.FromResult(new List<MemoryEntry>());
 
     public virtual Task<MemoryEntry?> FindDuplicateAsync(string repoId, string content, float threshold, CancellationToken ct = default) =>
@@ -471,9 +456,38 @@ internal class InMemoryEidetStore : IEidetStore
         return Task.CompletedTask;
     }
 
+    // Git-intake watermark — real backing store (default interface impl is null/no-op) so the
+    // git-intake tests can assert increments; every existing test is unaffected.
+    public Task<string?> GetGitIntakeWatermarkAsync(string repoId, CancellationToken ct = default)
+    {
+        lock (_lock)
+            return Task.FromResult(_gitWatermarks.TryGetValue(repoId, out var sha) ? sha : null);
+    }
+
+    public Task SetGitIntakeWatermarkAsync(string repoId, string sha, CancellationToken ct = default)
+    {
+        lock (_lock) _gitWatermarks[repoId] = sha;
+        return Task.CompletedTask;
+    }
+
     public virtual Task<IReadOnlyList<MemoryEntry>> FindNearDuplicatesAsync(
         string repoId, MemoryEntry entry, float minSimilarity, int max, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
+
+    // Soft-deleted set for the post-forget integrity auditor: forgotten (ValidUntil set) or superseded
+    // (IsLatest false). Virtual so a leak-store fake can widen the read paths that expose them.
+    public virtual Task<IReadOnlyList<MemoryEntry>> GetInvalidatedAsync(string repoId, int max, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            var r = _entries.Values
+                .Where(e => string.Equals(e.RepoId, repoId, StringComparison.OrdinalIgnoreCase))
+                .Where(e => e.Validity.ValidUntil is not null || !e.IsLatest)
+                .Take(max)
+                .ToList();
+            return Task.FromResult<IReadOnlyList<MemoryEntry>>(r);
+        }
+    }
 
     public Task<Dictionary<MemoryType, int>> GetCountsByTypeAsync(string repoId, CancellationToken ct = default)
     {
@@ -487,7 +501,7 @@ internal class InMemoryEidetStore : IEidetStore
         }
     }
 
-    public Task<List<MemoryEntry>> GetTopScoredAsync(string repoId, MemoryType[] types, int limit, CancellationToken ct = default)
+    public virtual Task<List<MemoryEntry>> GetTopScoredAsync(string repoId, MemoryType[] types, int limit, CancellationToken ct = default)
     {
         lock (_lock)
         {

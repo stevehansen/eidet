@@ -16,6 +16,7 @@ public record StoreRequest
     public string? Supersedes { get; init; }
     public bool Negative { get; init; }
     public string? Valence { get; init; }
+    public string? Stage { get; init; }
 }
 
 public record FeedbackRequest
@@ -74,9 +75,17 @@ public record UpdateMemoryRequest
     public float? Importance { get; init; }
     public float? Confidence { get; init; }
     public string? Type { get; init; }
+    public string? Stage { get; init; }
     public string? OneLiner { get; init; }
     public string? Summary { get; init; }
     public string? ForesightHint { get; init; }
+    /// <summary>Optimistic-concurrency precondition (#65); the <c>If-Match</c> header takes precedence.</summary>
+    public string? ExpectedContentSha256 { get; init; }
+}
+
+public record RedactRequest
+{
+    public string Reason { get; init; } = "";
 }
 
 public record AddMemoryLinkRequest

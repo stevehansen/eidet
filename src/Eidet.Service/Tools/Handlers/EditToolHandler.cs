@@ -42,26 +42,41 @@ public sealed class EditToolHandler : IToolHandler
 
         var typeStr = ToolArgs.GetString(args, "type");
         MemoryType? type = typeStr != null && Enum.TryParse<MemoryType>(typeStr, true, out var t) ? t : null;
+        var stage = ToolArgs.GetEnum<FunctionalStage>(args, "stage");
+        var expectedSha = ToolArgs.GetString(args, "expectedContentSha256");
 
-        var ok = await _svc.EditAsync(id, new EditOptions
+        var outcome = await _svc.EditAsync(id, new EditOptions
         {
             Content = content,
             Tags = tags.Count > 0 ? tags : null,
             Importance = importance,
             Confidence = confidence,
             Type = type,
+            Stage = stage,
             OneLiner = oneLiner,
             Summary = summary,
             ForesightHint = foresightHint,
+            ExpectedContentSha256 = expectedSha,
         }, request.Ct);
 
-        if (!ok)
-            return ToolResult.NotFound($"Memory not found or update rejected: {id}");
+        return outcome switch
+        {
+            // Stale precondition → 409 with the current hash so the caller can re-read/merge.
+            EditOutcome.PreconditionFailed => ToolResult.Conflict(
+                $"content_sha256 precondition failed for {id}; re-read and retry.",
+                duplicateId: await CurrentShaAsync(id, request.Ct)),
+            EditOutcome.NotFound => ToolResult.NotFound($"Memory not found or update rejected: {id}"),
+            _ => ToolResult.Ok(
+                payload: new { updated = true, id, superseded = outcome == EditOutcome.Superseded },
+                summary: $"Memory {id} updated successfully.",
+                count: 1),
+        };
+    }
 
-        return ToolResult.Ok(
-            payload: new { updated = true, id },
-            summary: $"Memory {id} updated successfully.",
-            count: 1);
+    private async Task<string?> CurrentShaAsync(string id, CancellationToken ct)
+    {
+        var chain = await _svc.GetVersionChainAsync(id, ct);
+        return chain.Count > 0 ? Eidet.Core.Domain.ContentHash.Of(chain[0].Content) : null;
     }
 
     private static JsonObject BuildSchema()
@@ -74,6 +89,8 @@ public sealed class EditToolHandler : IToolHandler
             ["importance"] = new JsonObject { ["type"] = "number", ["description"] = "0.0-1.0." },
             ["confidence"] = new JsonObject { ["type"] = "number", ["description"] = "0.0-1.0." },
             ["type"] = new JsonObject { ["type"] = "string", ["description"] = "Reclassify: observation, insight, procedure, heuristic." },
+            ["stage"] = new JsonObject { ["type"] = "string", ["description"] = "Re-tag functional stage: analyze, locate, edit, test, debug, deploy." },
+            ["expectedContentSha256"] = new JsonObject { ["type"] = "string", ["description"] = "Optimistic-concurrency precondition: SHA256 of the content you read. Mismatch → 409, no edit." },
             ["oneLiner"] = new JsonObject { ["type"] = "string" },
             ["summary"] = new JsonObject { ["type"] = "string" },
             ["foresightHint"] = new JsonObject { ["type"] = "string" },

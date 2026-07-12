@@ -2,6 +2,8 @@
 
 export type MemoryType = 'observation' | 'insight' | 'procedure' | 'heuristic';
 
+export type Valence = 'neutral' | 'affirming' | 'refuting' | 'cautionary';
+
 export interface StoreRequest {
   repo: string;
   content: string;
@@ -11,6 +13,10 @@ export interface StoreRequest {
   source?: string;
   sessionId?: string;
   supersedes?: string;
+  /** Shorthand for a dead-end: sets valence=refuting, defaults type to heuristic, tags 'dead-end'. */
+  negative?: boolean;
+  /** Explicit stance toward the subject (overrides negative). */
+  valence?: Valence;
 }
 
 export interface StoreResult {
@@ -43,6 +49,7 @@ export interface SearchResult {
   id: string;
   repoId: string;
   type: MemoryType;
+  valence?: Valence;
   content: string;
   summary?: string;
   oneLiner?: string;
@@ -169,11 +176,15 @@ export class EidetClient {
     limit?: number;
     type?: MemoryType;
     tags?: string[];
+    valence?: Valence;
+    crossRepo?: boolean;
   }): Promise<SearchResult[]> {
     const params = new URLSearchParams({ repo, q: query });
     if (options?.limit) params.set('limit', String(options.limit));
     if (options?.type) params.set('type', options.type);
     if (options?.tags?.length) params.set('tags', options.tags.join(','));
+    if (options?.valence) params.set('valence', options.valence);
+    if (options?.crossRepo) params.set('cross_repo', 'true');
     const data = await this.get<{ results: SearchResult[] }>(`/api/eidet/search?${params}`);
     return data.results;
   }
@@ -193,8 +204,8 @@ export class EidetClient {
     return data.forgotten;
   }
 
-  async feedback(memoryId: string, wasUsed: boolean): Promise<boolean> {
-    const data = await this.post<{ applied: boolean }>('/api/eidet/feedback', { memoryId, wasUsed });
+  async feedback(memoryId: string, wasUsed: boolean, reason?: string): Promise<boolean> {
+    const data = await this.post<{ applied: boolean }>('/api/eidet/feedback', { memoryId, wasUsed, reason });
     return data.applied;
   }
 
@@ -232,6 +243,18 @@ export class EidetClient {
 
   async intake(repo: string): Promise<{ newCount: number; skippedCount: number }> {
     return this.post(`/api/eidet/intake?repo=${enc(repo)}`);
+  }
+
+  async intakeGit(
+    repo: string,
+    options?: { since?: string; maxCommits?: number; allCommits?: boolean; dryRun?: boolean },
+  ): Promise<{ newCount: number; skippedCount: number }> {
+    let url = `/api/eidet/intake/git?repo=${enc(repo)}`;
+    if (options?.since) url += `&since=${enc(options.since)}`;
+    if (options?.maxCommits != null) url += `&max_commits=${options.maxCommits}`;
+    if (options?.allCommits) url += '&all_commits=true';
+    if (options?.dryRun) url += '&dry_run=true';
+    return this.post(url);
   }
 
   async consolidate(repo: string): Promise<{ candidates: number; insightsCreated: number; insightsBoosted: number }> {
@@ -283,6 +306,15 @@ export class EidetClient {
 
   async status(): Promise<StatusResponse> {
     return this.get<StatusResponse>('/api/status');
+  }
+
+  async isAvailable(): Promise<boolean> {
+    try {
+      await this.health();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   // ─── HTTP helpers ────────────────────────────────────────────────

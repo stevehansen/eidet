@@ -29,10 +29,25 @@ public static class WriteValidator
 
     public static ValidationResult Validate(string content, MemoryType type = MemoryType.Observation)
     {
-        var secret = SecretScanRule.Check(content);
+        var secret = ScanSecrets(content);
         if (!secret.Passed) return secret;
         return CheckSignal(content, type);
     }
+
+    /// <summary>
+    /// The always-on 13-pattern secret scan, exposed on its own so surfaces that store
+    /// non-semantic content (e.g. memory-tool files) can run it WITHOUT the low-signal/
+    /// self-talk gates — those are semantic-store rules. Secret scanning itself is
+    /// never optional on any write path.
+    /// </summary>
+    public static ValidationResult ScanSecrets(string content) => SecretScanRule.Check(content);
+
+    /// <summary>
+    /// Replace every secret-pattern match with a stable <c>[REDACTED:type]</c> marker.
+    /// <paramref name="redactions"/> reports how many spans were rewritten.
+    /// </summary>
+    public static string RedactSecrets(string content, out int redactions) =>
+        SecretScanRule.Redact(content, out redactions);
 
     /// <summary>
     /// Validate <paramref name="opts"/> content and build a fresh <see cref="MemoryEntry"/> ready for
@@ -55,6 +70,7 @@ public static class WriteValidator
             RepoId = repoId,
             Type = opts.Type,
             Valence = opts.Valence,
+            Stage = opts.Stage,
             Content = opts.Content,
             Tags = opts.Tags?.ToList() ?? [],
             Importance = Math.Clamp(opts.Importance, 0f, 1f),
@@ -76,12 +92,14 @@ public static class WriteValidator
     /// Validate replacement content from <paramref name="edit"/> and build the supersession
     /// <see cref="MemoryEntry"/> that replaces <paramref name="original"/>. Carries forward stable
     /// counters (echo / fizzle / access) and the link / derived-from graph so curation edits don't
-    /// drop history. Called only when the content changed, so <c>edit.Content</c> is non-null.
+    /// drop history. A null <c>edit.Content</c> falls back to the original content, though callers
+    /// normally route metadata-only edits to the in-place path instead.
     /// </summary>
     public static EntryBuildResult BuildEditEntry(MemoryEntry original, EditOptions edit)
     {
         var effectiveType = edit.Type ?? original.Type;
-        var newContent = edit.Content!;
+        var effectiveStage = edit.Stage ?? original.Stage;
+        var newContent = edit.Content ?? original.Content;
         var validation = Validate(newContent, effectiveType);
         if (!validation.Passed) return EntryBuildResult.Rejected(validation.Reason ?? "rejected");
 
@@ -92,6 +110,7 @@ public static class WriteValidator
             RepoId = original.RepoId,
             Type = effectiveType,
             Valence = original.Valence,
+            Stage = effectiveStage,
             Content = newContent,
             Tags = edit.Tags?.ToList() ?? original.Tags,
             Importance = edit.Importance.HasValue ? Math.Clamp(edit.Importance.Value, 0f, 1f) : original.Importance,

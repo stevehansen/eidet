@@ -85,6 +85,12 @@ app.Configure(config =>
     config.AddCommand<IntakeCommand>("intake")
         .WithDescription("Ingest project files as seed memories");
 
+    config.AddCommand<IntakeGitCommand>("intake-git")
+        .WithDescription("Seed Procedure/Insight memories from git commit history");
+
+    config.AddCommand<IntakeClaudeMemoryCommand>("intake-claude-memory")
+        .WithDescription("Import Claude Code's native per-project memory as seed memories");
+
     config.AddCommand<MaintainCommand>("maintain")
         .WithDescription("Run maintenance pipeline");
 
@@ -163,6 +169,15 @@ app.Configure(config =>
 
         cfg.AddCommand<ConfigListCommand>("list")
             .WithDescription("List all config values");
+    });
+
+    config.AddBranch("bench", bench =>
+    {
+        bench.SetDescription("SWE Context Bench harness (offline fixture smoke by default)");
+        bench.SetDefaultCommand<BenchSmokeCommand>();
+
+        bench.AddCommand<BenchFullCommand>("full")
+            .WithDescription("Run against the real SWE Context Bench dataset (refuses to emit a number without it)");
     });
 
     config.AddBranch("ollama", ollama =>

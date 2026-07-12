@@ -134,8 +134,8 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         else
             AnsiConsole.MarkupLine($"  Auth:    [dim]Disabled[/] (localhost only)");
 
-        if (host.HookCount > 0)
-            AnsiConsole.MarkupLine($"  Hooks:   [yellow]{host.HookCount} configured[/]");
+        if (host.HooksEnabled)
+            AnsiConsole.MarkupLine("  Hooks:   [yellow]configured[/]");
 
         AnsiConsole.MarkupLine($"  API:     [green]http://{host.BindAddress}:{host.Port}[/]");
         AnsiConsole.MarkupLine($"  MCP:     http://{host.BindAddress}:{host.Port}/mcp");

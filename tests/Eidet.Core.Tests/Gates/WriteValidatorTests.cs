@@ -373,4 +373,40 @@ public class WriteValidatorTests
         Assert.True(built.IsBuilt);
         Assert.Null(built.Entry!.Drift); // the superseding version starts un-reviewed
     }
+
+    // ─── Decomposed secret scan (memory-tool write path) ──────────────────
+
+    [Fact]
+    public void ScanSecrets_FlagsSecretWithoutSignalGates()
+    {
+        // Short content: fails the signal gate in Validate but ScanSecrets alone passes —
+        // the memory-tool blob path runs ONLY the secret scan.
+        Assert.False(WriteValidator.Validate("ok").Passed);
+        Assert.True(WriteValidator.ScanSecrets("ok").Passed);
+
+        var hit = WriteValidator.ScanSecrets("key AKIAIOSFODNN7EXAMPLE here");
+        Assert.False(hit.Passed);
+        Assert.Equal("secret-scan", hit.FailedGate);
+        Assert.Contains("AWS access key", hit.Reason);
+    }
+
+    [Fact]
+    public void RedactSecrets_ReplacesMatchesWithStableMarker()
+    {
+        var redacted = WriteValidator.RedactSecrets("key AKIAIOSFODNN7EXAMPLE here", out var count);
+
+        Assert.Equal(1, count);
+        Assert.Equal("key [REDACTED:AWS access key] here", redacted);
+        Assert.True(WriteValidator.ScanSecrets(redacted).Passed); // marker itself is clean
+    }
+
+    [Fact]
+    public void RedactSecrets_CleanContentUntouched()
+    {
+        var content = "The auth module uses JWT with role-based access control";
+        var redacted = WriteValidator.RedactSecrets(content, out var count);
+
+        Assert.Equal(0, count);
+        Assert.Equal(content, redacted);
+    }
 }

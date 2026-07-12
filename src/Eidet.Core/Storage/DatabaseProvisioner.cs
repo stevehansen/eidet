@@ -6,6 +6,7 @@ using Raven.Client.Documents.Operations;
 using Raven.Client.Documents.Operations.ConnectionStrings;
 using Raven.Client.Documents.Operations.AI;
 using Raven.Client.Documents.Operations.Refresh;
+using Raven.Client.Documents.Operations.Revisions;
 using Raven.Client.Exceptions;
 using Raven.Client.Exceptions.Database;
 using Raven.Client.ServerWide;
@@ -57,6 +58,32 @@ public static class DatabaseProvisioner
         catch
         {
             // May fail on older RavenDB versions — scheduler will still work via polling fallback
+        }
+    }
+
+    /// <summary>
+    /// Enables a bounded revisions trail on the <c>MemoryFiles</c> collection. Memory-tool blobs
+    /// are overwritten in place (the byte-exact contract), so revisions are their only edit
+    /// history — unlike memories, which get supersession chains. Bounded to 10 per file so the
+    /// audit trail can't amplify write volume unboundedly. Idempotent — safe on every startup.
+    /// Note: this replaces the database's revisions configuration; nothing else in Eidet
+    /// configures revisions today.
+    /// </summary>
+    public static void EnsureMemoryFileRevisions(IDocumentStore store)
+    {
+        try
+        {
+            store.Maintenance.Send(new ConfigureRevisionsOperation(new RevisionsConfiguration
+            {
+                Collections = new Dictionary<string, RevisionsCollectionConfiguration>
+                {
+                    ["MemoryFiles"] = new() { Disabled = false, MinimumRevisionsToKeep = 10 },
+                },
+            }));
+        }
+        catch
+        {
+            // Non-fatal: the memory tool still works without revisions, just without the audit trail.
         }
     }
 

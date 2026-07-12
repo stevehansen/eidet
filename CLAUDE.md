@@ -24,17 +24,19 @@ Design decisions live in `docs/specs/`:
 
 ## Current Capabilities
 
-- **8 MCP tools**: 6 core session flow (context, recall, store, feedback, forget, link) + park/resolve (Loose Ends). Advanced operations (history, intake, consolidate, maintenance, edit, pack_export, pack_import) stay off the MCP surface — they run via the scheduler/maintenance pipeline and are reachable through the REST API, CLI, and Web UI. 15 tool handlers total, shared by REST + MCP via `ToolDispatcher`; MCP exposure is gated by `IToolHandler.McpExposed`.
+- **8 MCP tools**: 6 core session flow (context, recall, store, feedback, forget, link) + park/resolve (Loose Ends). Advanced operations (history, intake, intake_git, intake_claude_memory, consolidate, maintenance, edit, pack_export, pack_import) stay off the MCP surface — they run via the scheduler/maintenance pipeline and are reachable through the REST API, CLI, and Web UI. 17 tool handlers total, shared by REST + MCP via `ToolDispatcher`; MCP exposure is gated by `IToolHandler.McpExposed`.
 - **4 memory types**: Observation, Insight, Procedure, Heuristic — each with per-type retrieval budgets
 - **Storage**: RavenDB (embedded or external) with vector + full-text hybrid search on composite `SearchText` field
-- **Write gates**: `WriteValidator` chains rules (13 secret patterns + signal/low-signal + self-talk) — deterministic, local, always-on; single entry point from `MemoryService.StoreAsync` and `UpdateMemoryAsync`
+- **Write gates**: `WriteValidator` chains rules (13 secret patterns + signal/low-signal + self-talk) — deterministic, local, always-on; single entry point from `MemoryService.StoreAsync` and `UpdateMemoryAsync`; secret scan also runs per candidate inside the intake pipeline and on every memory-tool file write
+- **Integrity**: write-time `ConflictGate` + soft quarantine + append-only poison log; runtime post-forget verification (`IntegrityAuditor` over every read path, nightly `ForgetIntegrityStage`); config-gated `BudgetEviction`/`Deprecate` retention stages with derived `RetentionScore`
+- **Stage filter**: optional `FunctionalStage` dimension (`stage` on store/recall/edit) — None-as-wildcard hard pre-filter at recall
 - **Optional enrichment**: Ollama background workers generate one-liners, summaries, foresight hints, entity supplements
 - **Layers**: Local (rw) + Shared/Base (ro); auto-mount on pack import
 - **Interfaces**: MCP stdio, MCP HTTP, REST API, CLI, Web UI (`/ui`), SDKs (TS/Python/C#)
 - **Operations**: API key auth (4 scopes), hooks (6 lifecycle events), persistent scheduler (RavenDB Refresh), quality dashboard, backup/restore, usage analytics
-- **Curation**: Versioned `PUT` / REST edits (handler available off-MCP), AI-assisted enrichment via `/api/eidet/enrich`, Web UI inline editing
+- **Curation**: Versioned `PUT` / REST edits (handler available off-MCP) with `content_sha256` optimistic concurrency (`If-Match` → 409 on stale), structure-preserving `RedactAsync` content erasure, AI-assisted enrichment via `/api/eidet/enrich`, Web UI inline editing
 - **Pack format**: Human-readable markdown with YAML frontmatter — ScribeGate compatible
-- **Test coverage**: 646 tests (Core + Service + Integration)
+- **Test coverage**: 1212 tests (Core + Service + Integration + Bench + Benchmark)
 
 ## Installation
 
@@ -121,12 +123,17 @@ Base: `http://localhost:19380`
 | GET  | `/api/eidet/scheduled-tasks` | Scheduler state |
 | GET  | `/api/eidet/quality?repo=...` | Quality report |
 | POST | `/api/eidet` | Store memory |
-| PUT  | `/api/eidet/{id}` | Update (versioned on content change) |
+| PUT  | `/api/eidet/{id}` | Update (versioned on content change; `If-Match: "<sha256>"` precondition) |
+| POST | `/api/eidet/{id}/redact` | Scrub content to a tombstone (audit-tracked, off-MCP) |
 | POST | `/api/eidet/{id}/links` | Add cross-repo link |
 | POST | `/api/eidet/feedback` | Echo / fizzle |
 | POST | `/api/eidet/enrich` | On-demand Ollama enrichment |
 | POST | `/api/eidet/intake` | Ingest project files |
+| POST | `/api/eidet/intake/git` | Seed memories from git commit history |
+| POST | `/api/eidet/intake/claude-memory` | Import Claude Code native per-project memory |
 | POST | `/api/eidet/consolidate` | Consolidate observations → insights |
+| GET  | `/api/eidet/export?repo=...&format=agents` | Render memories as an AGENTS.md instruction file |
+| POST | `/api/eidet/memory-tool?repo=...` | Claude memory-tool (`memory_20250818`) command relay |
 | POST | `/api/maintenance` | Run maintenance pipeline |
 | POST | `/mcp?repo=...` | MCP JSON-RPC over HTTP |
 | GET  | `/ui` | Web UI SPA |

@@ -31,6 +31,13 @@ public class RepoUsage
     /// </summary>
     public DateTime? LastReflectedAt { get; set; }
 
+    /// <summary>
+    /// Git-intake watermark: SHA of the repo tip at the end of the last non-dry git-history
+    /// intake run; null = never run. Drives the incremental <c>Since</c> default so re-runs
+    /// only examine new commits.
+    /// </summary>
+    public string? GitIntakeLastSha { get; set; }
+
     public static string MakeId(string repoId) =>
         $"usage/{RepoIdNormalizer.Normalize(repoId).Replace('\\', '-').Replace('/', '-').Replace(':', '-')}";
 

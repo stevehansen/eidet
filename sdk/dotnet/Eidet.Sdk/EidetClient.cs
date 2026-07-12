@@ -34,10 +34,18 @@ public sealed class EidetClient : IDisposable
     }
 
     public async Task<List<SearchResult>> RecallAsync(string repo, string query, int limit = 10,
-        MemoryType? type = null, CancellationToken ct = default)
+        MemoryType? type = null, IEnumerable<string>? tags = null, Valence? valence = null,
+        bool crossRepo = false, CancellationToken ct = default)
     {
         var url = $"api/eidet/search?repo={Uri.EscapeDataString(repo)}&q={Uri.EscapeDataString(query)}&limit={limit}";
         if (type.HasValue) url += $"&type={type.Value.ToString().ToLowerInvariant()}";
+        if (valence.HasValue) url += $"&valence={valence.Value.ToString().ToLowerInvariant()}";
+        if (tags is not null)
+        {
+            var joined = string.Join(",", tags);
+            if (joined.Length > 0) url += $"&tags={Uri.EscapeDataString(joined)}";
+        }
+        if (crossRepo) url += "&cross_repo=true";
         var data = await GetAsync<SearchResponse>(url, ct);
         return data.Results;
     }
@@ -98,8 +106,22 @@ public sealed class EidetClient : IDisposable
     public async Task<IntakeResult> IntakeAsync(string repo, CancellationToken ct = default) =>
         await PostAsync<IntakeResult>($"api/eidet/intake?repo={Uri.EscapeDataString(repo)}", ct);
 
+    public async Task<IntakeResult> IntakeGitAsync(
+        string repo, GitIntakeOptions? options = null, bool dryRun = false, CancellationToken ct = default)
+    {
+        var url = $"api/eidet/intake/git?repo={Uri.EscapeDataString(repo)}";
+        if (!string.IsNullOrEmpty(options?.Since)) url += $"&since={Uri.EscapeDataString(options.Since)}";
+        if (options?.MaxCommits is { } maxCommits) url += $"&max_commits={maxCommits}";
+        if (options?.AllCommits == true) url += "&all_commits=true";
+        if (dryRun) url += "&dry_run=true";
+        return await PostAsync<IntakeResult>(url, ct);
+    }
+
     public async Task<ConsolidateResult> ConsolidateAsync(string repo, CancellationToken ct = default) =>
         await PostAsync<ConsolidateResult>($"api/eidet/consolidate?repo={Uri.EscapeDataString(repo)}", ct);
+
+    public async Task<Dictionary<string, JsonElement>> MaintenanceAsync(string repo, CancellationToken ct = default) =>
+        await PostAsync<Dictionary<string, JsonElement>>($"api/maintenance?repo={Uri.EscapeDataString(repo)}", ct);
 
     public async Task<string> ExportMarkdownAsync(string repo, CancellationToken ct = default)
     {
@@ -188,6 +210,8 @@ public class EidetException : Exception
 
 public enum MemoryType { Observation, Insight, Procedure, Heuristic }
 
+public enum Valence { Neutral, Affirming, Refuting, Cautionary }
+
 public record StoreRequest
 {
     public string Repo { get; init; } = "";
@@ -198,6 +222,10 @@ public record StoreRequest
     public string? Source { get; init; }
     public string? SessionId { get; init; }
     public string? Supersedes { get; init; }
+    /// <summary>Shorthand for a dead-end: sets valence=refuting, defaults type to heuristic, tags 'dead-end'.</summary>
+    public bool Negative { get; init; }
+    /// <summary>Explicit stance toward the subject (overrides <see cref="Negative"/>).</summary>
+    public Valence? Valence { get; init; }
 }
 
 public record StoreResult
@@ -233,6 +261,7 @@ public record SearchResult
     public string Id { get; init; } = "";
     public string RepoId { get; init; } = "";
     public MemoryType Type { get; init; }
+    public Valence Valence { get; init; }
     public string Content { get; init; } = "";
     public string? OneLiner { get; init; }
     public List<string> Tags { get; init; } = [];
@@ -292,6 +321,19 @@ public record IntakeResult
 {
     public int NewCount { get; init; }
     public int SkippedCount { get; init; }
+}
+
+/// <summary>Advanced knobs for <see cref="EidetClient.IntakeGitAsync"/>; the happy path passes null.</summary>
+public record GitIntakeOptions
+{
+    /// <summary>Exclusive lower-bound commit SHA (default: the server's per-repo watermark).</summary>
+    public string? Since { get; init; }
+
+    /// <summary>Upper bound on commits examined (server default 500).</summary>
+    public int? MaxCommits { get; init; }
+
+    /// <summary>Also mine non-Conventional-Commits messages.</summary>
+    public bool AllCommits { get; init; }
 }
 
 public record ConsolidateResult

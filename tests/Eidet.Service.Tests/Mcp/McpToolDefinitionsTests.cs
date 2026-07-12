@@ -21,9 +21,19 @@ public class McpToolDefinitionsTests
         AllHandlers().Where(h => h.McpExposed).Select(h => h.Schema).ToList();
 
     [Fact]
-    public void All_Registers15Handlers()
+    public void All_Registers17Handlers()
     {
-        Assert.Equal(15, Tools.Count);
+        Assert.Equal(17, Tools.Count);
+    }
+
+    [Fact]
+    public void StoreAndContext_Descriptions_MentionCompactionSurvival()
+    {
+        // #67: the store/context descriptions reinforce store-before-eviction / reload-after-restart.
+        var store = Tools.First(t => t.Name == "eidet_store");
+        var context = Tools.First(t => t.Name == "eidet_context");
+        Assert.Contains("compaction", store.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("compaction", context.Description, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -55,6 +65,8 @@ public class McpToolDefinitionsTests
     [Theory]
     [InlineData("eidet_history")]
     [InlineData("eidet_intake")]
+    [InlineData("eidet_intake_git")]
+    [InlineData("eidet_intake_claude_memory")]
     [InlineData("eidet_consolidate")]
     [InlineData("eidet_maintenance")]
     [InlineData("eidet_edit")]

@@ -54,8 +54,8 @@ const client = new EidetClient({
 
 | Method | Description |
 |--------|-------------|
-| `store(request)` | Store a memory (observation, insight, procedure, heuristic) |
-| `recall(repo, query, options?)` | Search memories by meaning and keywords |
+| `store(request)` | Store a memory (observation, insight, procedure, heuristic; `negative`/`valence` for dead-ends) |
+| `recall(repo, query, options?)` | Search memories by meaning and keywords (filters: type, tags, valence, crossRepo) |
 | `context(repo)` | Get compact session context (< 600 tokens) |
 | `get_memory(id)` | Get a specific memory by ID |
 | `forget(id, reason?)` | Soft-delete a memory |
@@ -70,6 +70,7 @@ const client = new EidetClient({
 | `exportMarkdown(repo)` | Export memories as markdown |
 | `health()` | Health check |
 | `status()` | Service status and stats |
+| `isAvailable()` | Check if the service is reachable |
 
 ## Requirements
 

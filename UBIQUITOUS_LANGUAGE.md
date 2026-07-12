@@ -82,6 +82,8 @@ Every store attempt passes through these gates, in order. Any gate can reject th
 | **Consolidation**  | A scheduled pass that merges related **Observations** into stable **Insights**                     | Compaction, rollup, summarization      |
 | **Maintenance**    | The periodic pipeline that runs **TTL expiry**, dedup, **FadeMem** decay, and **Enrichment**       | Housekeeping, cleanup, cron            |
 | **Intake**         | Bulk ingestion of project files (CLAUDE.md, README, docs) as seed **Memories**                     | Import, bootstrap, seeding             |
+| **Git-History Intake** | **Intake** that mines merged commit history into seed Procedure/Insight **Memories** — problem from the message, fix pattern from change stats, never raw diffs | Git import, commit harvesting          |
+| **Watermark**      | Per-repo cursor (`GitIntakeLastSha`) marking the newest commit a **Git-History Intake** run processed; the next run resumes past it | Checkpoint, cursor, marker             |
 
 ## Loose End lifecycle
 
@@ -96,6 +98,17 @@ Open work an **Agent** defers mid-task — distinct from a **Memory** (recalled 
 | **Resolved**        | The terminal state of a **Loose End**, carrying a **Resolution kind**                                               | Closed                            |
 | **Resolution kind** | Why/how a **Loose End** closed: **Done**, **Dropped**, **Promoted**, or **Superseded**                              | Status, outcome                   |
 | **Promote**         | Resolving a **Loose End** by graduating its substance into a **Memory** (**Observation**/**Insight**) or a linked external issue | Convert, save                     |
+
+## Memory-tool files
+
+Claude's `memory_20250818` scratch space served by Eidet — distinct from a **Memory** (knowledge) and a **Loose End** (open work). A **Memory file** is a faithful, byte-exact blob the model re-reads verbatim; it bypasses the **Signal gate**, **FadeMem** decay, and **Consolidation** by design, but never the **Secret scanner**.
+
+| Term               | Definition                                                                                                                | Aliases to avoid                       |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| **Memory file**    | A byte-exact, path-keyed, overwrite-in-place blob under `/memories`, stored per-repo in its own `memoryfiles/*` collection | Memory, note, document                 |
+| **Memory tool**    | Claude's `memory_20250818` command set (view/create/str_replace/insert/delete/rename) that Eidet serves as a backend       | Memory API, file tool                  |
+| **Translator**     | The single-entry Core module that executes memory-tool commands over **Memory files**; never rewrites bytes semantically   | Handler, dispatcher                    |
+| **Bridge**         | The opt-in, one-way shadow that promotes a written **Memory file** into a **Memory** through the full **Write gate** (off by default) | Sync, mirror, projection |
 
 ## Sharing
 

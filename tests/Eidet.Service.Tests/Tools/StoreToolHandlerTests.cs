@@ -161,6 +161,39 @@ public class StoreToolHandlerTests
         Assert.Contains("type is required", result.HumanSummary);
     }
 
+    // ─── Functional stage (#38) ───────────────────────────────────────
+
+    [Fact]
+    public async Task Store_Stage_ThreadsToEntry()
+    {
+        var handler = NewHandler(out var store);
+
+        var result = await Invoke(handler, new
+        {
+            content = "Run the failing test in isolation before touching the fix path",
+            type = "procedure",
+            stage = "test",
+        });
+
+        Assert.Equal(ToolStatus.Ok, result.Status);
+        Assert.Equal(FunctionalStage.Test, Assert.Single(store.Entries).Stage);
+    }
+
+    [Fact]
+    public async Task Store_NoStage_DefaultsToNone()
+    {
+        var handler = NewHandler(out var store);
+
+        var result = await Invoke(handler, new
+        {
+            content = "The auth module uses JWT RS256 with a 10-minute access-token TTL",
+            type = "insight",
+        });
+
+        Assert.Equal(ToolStatus.Ok, result.Status);
+        Assert.Equal(FunctionalStage.None, Assert.Single(store.Entries).Stage);
+    }
+
     private static StoreToolHandler NewHandler(out CapturingStore store)
     {
         store = new CapturingStore();

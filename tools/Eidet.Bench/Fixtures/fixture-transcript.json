@@ -1,0 +1,82 @@
+{
+  "format": "eidet-bench-transcript/v1",
+  "solves": {
+    "1d95da0fe97104d7d64fb5d8d4996b3f32175b6d54188ef1a1cb8de3020e24ec": {
+      "instanceId": "acme__parquet-tools-101",
+      "patch": "diff --git a/parquet_tools/page_reader.py b/parquet_tools/page_reader.py\n--- a/parquet_tools/page_reader.py\n\u002B\u002B\u002B b/parquet_tools/page_reader.py\n@@ -41,7 \u002B41,7 @@ def read_page(self, index):\n-        offset = self._page_offsets[index]\n\u002B        offset = min(self._page_offsets[index], self._row_group_end)\n",
+      "tokensUsed": 900
+    },
+    "28739813d6e1d142cc5e6cdb84bb4fb1f5d06c90a2f2a6fb906da3d5551b572b": {
+      "instanceId": "acme__parquet-tools-202",
+      "patch": "diff --git a/parquet_tools/alias_table.py b/parquet_tools/alias_table.py\n--- a/parquet_tools/alias_table.py\n\u002B\u002B\u002B b/parquet_tools/alias_table.py\n@@ -24,7 \u002B24,7 @@ def register_alias(self, alias):\n-    key = alias.lower()\n\u002B    key = transliterate(alias).lower()\n",
+      "tokensUsed": 1400
+    },
+    "2c3b2e185ba647cda0919ce9a3c17a71174ab7e49f62e658f73ca12407c49e58": {
+      "instanceId": "acme__parquet-tools-201",
+      "patch": "diff --git a/parquet_tools/page_writer.py b/parquet_tools/page_writer.py\n--- a/parquet_tools/page_writer.py\n\u002B\u002B\u002B b/parquet_tools/page_writer.py\n@@ -57,7 \u002B57,7 @@ def write_page(self, page):\n-        end = page.offset \u002B page.length\n\u002B        end = min(page.offset \u002B page.length, self._row_group_end)\n",
+      "tokensUsed": 1400
+    },
+    "52092aad4e3cb6c19272398e34aaa3ace88379e6ef2ba13e33907155da4f3ee1": {
+      "instanceId": "acme__parquet-tools-201",
+      "patch": "diff --git a/guess.py b/guess.py\n\u002B# speculative fix for acme__parquet-tools-201\n",
+      "tokensUsed": 700
+    },
+    "6497a485c81273c91d10f93d0355c80df27f1d8e4e91594f041de9362d2fe0cb": {
+      "instanceId": "acme__parquet-tools-202",
+      "patch": "diff --git a/guess.py b/guess.py\n\u002B# speculative fix for acme__parquet-tools-202\n",
+      "tokensUsed": 700
+    },
+    "a26cca22a37abbe768bef50fa14c91439cc3e7a18821018d1d5d5f0112054f8d": {
+      "instanceId": "acme__parquet-tools-102",
+      "patch": "diff --git a/parquet_tools/slugger.py b/parquet_tools/slugger.py\n--- a/parquet_tools/slugger.py\n\u002B\u002B\u002B b/parquet_tools/slugger.py\n@@ -12,7 \u002B12,7 @@ def slugify(name):\n-    return \u0022\u0022.join(c for c in name if c.isascii())\n\u002B    return transliterate(name)\n",
+      "tokensUsed": 900
+    },
+    "cc2202a2db9c12ae501bcfb551dca7fd1713ab43092e66da91af393ad1582648": {
+      "instanceId": "acme__parquet-tools-203",
+      "patch": "diff --git a/guess.py b/guess.py\n\u002B# speculative fix for acme__parquet-tools-203\n",
+      "tokensUsed": 700
+    },
+    "f603d2bd124aee5bc5c65051f48239449cf8dc4e67bfb956add9660c21849ca0": {
+      "instanceId": "acme__parquet-tools-203",
+      "patch": "diff --git a/guess.py b/guess.py\n\u002B# speculative fix for acme__parquet-tools-203\n",
+      "tokensUsed": 700
+    }
+  },
+  "verdicts": {
+    "1bc4b22cc6043c64c6e303fb696e06ebf182504f2a68a2e86a161542848e79f9": {
+      "instanceId": "acme__parquet-tools-201",
+      "failToPassPassed": true,
+      "passToPassPassed": true
+    },
+    "4b7d797a12caf5dabf5fb995c50de10d54ba6ec7c10c95751e1caa24fca0e30e": {
+      "instanceId": "acme__parquet-tools-201",
+      "failToPassPassed": false,
+      "passToPassPassed": true
+    },
+    "57a6af6ace2954af6c7c1eaf46d7c4d9a7c77968ce19ea89bd357b60cbfaccec": {
+      "instanceId": "acme__parquet-tools-101",
+      "failToPassPassed": true,
+      "passToPassPassed": true
+    },
+    "7e2bc7279b8ba57d987bfbe3957b96ce8a9cc21ae257f455131c2a1fbc5107f4": {
+      "instanceId": "acme__parquet-tools-202",
+      "failToPassPassed": true,
+      "passToPassPassed": true
+    },
+    "c46c3e532295c072ba965a493e150a42d5ff3f953e3bc54d2b664b7e6bf3e1d0": {
+      "instanceId": "acme__parquet-tools-202",
+      "failToPassPassed": false,
+      "passToPassPassed": true
+    },
+    "d862c0483dae53cf8d5538f16602530a410717f2592d6db5b5784dca7c2707d9": {
+      "instanceId": "acme__parquet-tools-203",
+      "failToPassPassed": false,
+      "passToPassPassed": true
+    },
+    "e4e07e32e21ca9d7d664248b1668a99874f94fdfbe537c9d9b324643189b0520": {
+      "instanceId": "acme__parquet-tools-102",
+      "failToPassPassed": true,
+      "passToPassPassed": true
+    }
+  }
+}

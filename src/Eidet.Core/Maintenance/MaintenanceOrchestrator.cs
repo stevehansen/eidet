@@ -1,6 +1,7 @@
 using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
 using Eidet.Core.Enrichment;
+using Eidet.Core.Integrity;
 using Eidet.Core.Maintenance.Stages;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
@@ -16,6 +17,8 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
     private readonly ReflectionEngine _reflection;
     private readonly IReadOnlyList<IMaintenanceStage> _stages;
     private readonly DriftReviewConfig _drift;
+    private readonly BudgetConfig _budget;
+    private readonly DeprecateConfig _deprecate;
 
     public MaintenanceOrchestrator(
         IEidetStore store,
@@ -25,7 +28,9 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
         IReadOnlyList<IMaintenanceStage>? stages = null,
         DriftReviewConfig? drift = null,
         ReflectionEngine? reflection = null,
-        ReflectionConfig? reflectionConfig = null)
+        ReflectionConfig? reflectionConfig = null,
+        BudgetConfig? budget = null,
+        DeprecateConfig? deprecate = null)
     {
         _store = store;
         _memory = memory;
@@ -40,6 +45,8 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
         _reflection = reflection ?? new ReflectionEngine(store, _enrichment, _memory, config: reflectionConfig);
         _stages = stages ?? DefaultStages();
         _drift = drift ?? new();
+        _budget = budget ?? new();
+        _deprecate = deprecate ?? new();
     }
 
     public static IReadOnlyList<IMaintenanceStage> DefaultStages() =>
@@ -49,6 +56,10 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
         new DedupSweepStage(),
         new ImportanceDecayStage(),
         new RoiDecayStage(),
+        // Retention stages run after Importance is final (decay + ROI). Deprecate first — targeted
+        // stale-procedure retirement — then BudgetEviction caps whatever survives.
+        new DeprecateStage(),
+        new BudgetEvictionStage(),
         new OrphanCleanupStage(),
         new EnrichmentCleanupStage(),
         new HeuristicEnrichmentBackfillStage(),
@@ -56,6 +67,9 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
         new DriftReviewStage(),
         new ConsolidationStage(),
         new ReflectionStage(),
+        // Runs last: audits the final post-maintenance state (after TTL expiry / dedup / consolidation
+        // have created their own supersessions and forgets this run).
+        new ForgetIntegrityStage(),
     ];
 
     public Task<MaintenanceReport> RunAsync(string repoPathOrId, CancellationToken ct = default) =>
@@ -82,11 +96,14 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
                 Consolidation = _consolidation,
                 Reflection = _reflection,
                 Dedup = dedup,
+                Auditor = new IntegrityAuditor(_memory, _store),
                 RepoId = repoId,
                 // Single derivation site: null ⇒ derive so the CLI path can't decay an inactive repo.
                 IsRepoActive = request.IsRepoActive ?? _memory.IsRepoActive(repoId),
                 ObservationRetentionDays = request.ObservationRetentionDays,
                 Drift = _drift,
+                Budget = _budget,
+                Deprecate = _deprecate,
             };
 
             // Map the requested enum sets to stage names once. Comparing by name (never parsing

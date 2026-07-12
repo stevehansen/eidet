@@ -42,6 +42,7 @@ internal sealed class MemoryWriteEndpoints
             supersedes = req.Supersedes,
             negative = req.Negative,
             valence = req.Valence,
+            stage = req.Stage,
         }, HttpJson.Options);
 
         var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_store", req.Repo, args, "rest", ct));
@@ -92,6 +93,13 @@ internal sealed class MemoryWriteEndpoints
             return;
         }
 
+        // Optimistic concurrency (#65): the If-Match header wins over the body field. Quotes/W- prefix
+        // are stripped so both `If-Match: "<sha>"` and a bare hash work.
+        var ifMatch = ctx.Request.Headers["If-Match"]?.Trim().Trim('"');
+        if (ifMatch is not null && ifMatch.StartsWith("W/", StringComparison.OrdinalIgnoreCase))
+            ifMatch = ifMatch[2..].Trim('"');
+        var expectedSha = !string.IsNullOrEmpty(ifMatch) ? ifMatch : req.ExpectedContentSha256;
+
         var args = JsonSerializer.SerializeToElement(new
         {
             id = decoded,
@@ -100,14 +108,44 @@ internal sealed class MemoryWriteEndpoints
             importance = req.Importance,
             confidence = req.Confidence,
             type = req.Type,
+            stage = req.Stage,
             oneLiner = req.OneLiner,
             summary = req.Summary,
             foresightHint = req.ForesightHint,
+            expectedContentSha256 = expectedSha,
         }, HttpJson.Options);
 
         var repo = ExtractRepoFromMemoryId(decoded) ?? "";
         var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_edit", repo, args, "rest", ct));
+        // Precondition failure surfaces as 409 (RestFormatter maps Conflict→409); the current hash rides
+        // in the response's duplicateId slot so the caller can re-read/merge.
         await RestFormatter.WriteAsync(ctx, result);
+    }
+
+    /// <summary>Hard content erasure of a single node (#65) — POST /api/eidet/{id}/redact. Off-MCP:
+    /// scoped to REST/CLI/Web UI. Scrubs content while preserving the audit node.</summary>
+    public async Task Redact(HttpListenerContext ctx, string id, CancellationToken ct)
+    {
+        var decoded = Uri.UnescapeDataString(id);
+        var req = await HttpJson.ReadAsync<RedactRequest>(ctx);
+        if (req is null || string.IsNullOrWhiteSpace(req.Reason))
+        {
+            await HttpJson.WriteAsync(ctx, new { error = "Missing required field: reason" }, 400);
+            return;
+        }
+
+        var ok = await _svc.RedactAsync(decoded, req.Reason, ct);
+        if (ok) await HttpJson.WriteAsync(ctx, new { redacted = true, id = decoded });
+        else await HttpJson.WriteAsync(ctx, new { error = "Memory not found" }, 404);
+    }
+
+    /// <summary>Extract the memory id from /api/eidet/{id}/{suffix} (id contains slashes).</summary>
+    public static string ExtractMemoryIdFromSuffixPath(string path, string suffix)
+    {
+        const string prefix = "/api/eidet/";
+        if (path.StartsWith(prefix) && path.EndsWith(suffix) && path.Length > prefix.Length + suffix.Length)
+            return path[prefix.Length..^suffix.Length];
+        return "";
     }
 
     public async Task CreateLink(HttpListenerContext ctx, CancellationToken ct)
