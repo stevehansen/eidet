@@ -121,6 +121,8 @@ internal sealed partial class GitCliAdapter : IGitHistorySource
             _ = int.TryParse(cols[0], out var added);   // "-" (binary) → 0
             _ = int.TryParse(cols[1], out var removed);
             var path = cols[2];
+            if (path.Length >= 2 && path[0] == '"' && path[^1] == '"')
+                path = path[1..^1]; // git quotes paths with spaces/non-ASCII
             // numstat carries no status letter; renames are recognizable by "=>", the rest
             // reports as Modified — Kind is informational, not load-bearing for mining.
             var kind = path.Contains("=>", StringComparison.Ordinal) ? ChangeKind.Renamed : ChangeKind.Modified;
@@ -161,9 +163,17 @@ internal sealed partial class GitCliAdapter : IGitHistorySource
             {
                 oldPath = line[6..];
             }
+            else if (line.StartsWith("--- \"a/", StringComparison.Ordinal))
+            {
+                oldPath = line[7..^1]; // git quotes paths with spaces/non-ASCII: --- "a/…"
+            }
             else if (line.StartsWith("+++ b/", StringComparison.Ordinal))
             {
                 currentPath = line[6..];
+            }
+            else if (line.StartsWith("+++ \"b/", StringComparison.Ordinal))
+            {
+                currentPath = line[7..^1];
             }
             else if (line.StartsWith("+++ ", StringComparison.Ordinal))
             {

@@ -41,6 +41,20 @@ public class GitCliParserTests
     }
 
     [Fact]
+    public void ParseLog_UnquotesNumstatPaths()
+    {
+        const string stdout =
+            "\x1e" + "ccc333\x1f" + "p1\x1f" + "steve@example.com\x1f" + "2026-07-10T10:00:00+02:00\x1f" +
+            "docs: rename\x1f" + "\x1f" + "\n" +
+            "1\t0\t\"docs/na\\303\\257ve.md\"\n";
+
+        var commits = GitCliAdapter.ParseLog(stdout);
+
+        Assert.Single(commits);
+        Assert.Equal("docs/na\\303\\257ve.md", commits[0].Files[0].Path);
+    }
+
+    [Fact]
     public void ParseDiff_YieldsHunksWithHeadersAndPaths()
     {
         const string stdout =
@@ -67,5 +81,32 @@ public class GitCliParserTests
 
         Assert.Equal("src/Gone.cs", hunks[1].Path); // deleted file falls back to the a/ path
         Assert.Equal(["-deleted content"], hunks[1].Lines);
+    }
+
+    [Fact]
+    public void ParseDiff_HandlesQuotedPaths()
+    {
+        // core.quotePath wraps non-ASCII paths in quotes with octal escapes; without unquoting,
+        // "--- \"a/…" matched no branch and the hunks were silently dropped.
+        const string stdout =
+            "diff --git \"a/src/na\\303\\257ve.cs\" \"b/src/na\\303\\257ve.cs\"\n" +
+            "--- \"a/src/na\\303\\257ve.cs\"\n" +
+            "+++ \"b/src/na\\303\\257ve.cs\"\n" +
+            "@@ -1,1 +1,1 @@\n" +
+            "-old\n" +
+            "+new\n" +
+            "diff --git \"a/src/gone na\\303\\257ve.cs\" \"b/src/gone na\\303\\257ve.cs\"\n" +
+            "--- \"a/src/gone na\\303\\257ve.cs\"\n" +
+            "+++ /dev/null\n" +
+            "@@ -1,1 +0,0 @@\n" +
+            "-deleted\n";
+
+        var hunks = GitCliAdapter.ParseDiff(stdout);
+
+        Assert.Equal(2, hunks.Count);
+        Assert.Equal("src/na\\303\\257ve.cs", hunks[0].Path);
+        Assert.Equal(["-old", "+new"], hunks[0].Lines);
+        Assert.Equal("src/gone na\\303\\257ve.cs", hunks[1].Path); // quoted deleted file still falls back
+        Assert.Equal(["-deleted"], hunks[1].Lines);
     }
 }

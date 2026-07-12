@@ -38,7 +38,10 @@ public static class RecallConsistencyGuard
         }
         else
         {
-            var pool = await store.GetTopScoredAsync(repoId, [discard.Type], PoolCap, ct);
+            // Query-aware pool: full-text hits for the intent, not top-by-importance — a scored
+            // pool could exclude the survivor entirely and falsely veto every merge in big repos.
+            var lexicalQuery = new MemoryQuery { Text = intent, Type = discard.Type, Limit = PoolCap };
+            var pool = await store.FullTextSearchAsync([repoId], lexicalQuery, ct);
             rankedIds = pool
                 .Where(e => e.Validity.IsValidAt(DateTime.UtcNow))
                 .OrderByDescending(e => WordSimilarity.Compute(intent, e.Content))

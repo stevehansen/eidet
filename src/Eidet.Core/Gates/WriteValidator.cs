@@ -92,13 +92,14 @@ public static class WriteValidator
     /// Validate replacement content from <paramref name="edit"/> and build the supersession
     /// <see cref="MemoryEntry"/> that replaces <paramref name="original"/>. Carries forward stable
     /// counters (echo / fizzle / access) and the link / derived-from graph so curation edits don't
-    /// drop history. Called only when the content changed, so <c>edit.Content</c> is non-null.
+    /// drop history. A null <c>edit.Content</c> falls back to the original content, though callers
+    /// normally route metadata-only edits to the in-place path instead.
     /// </summary>
     public static EntryBuildResult BuildEditEntry(MemoryEntry original, EditOptions edit)
     {
         var effectiveType = edit.Type ?? original.Type;
         var effectiveStage = edit.Stage ?? original.Stage;
-        var newContent = edit.Content!;
+        var newContent = edit.Content ?? original.Content;
         var validation = Validate(newContent, effectiveType);
         if (!validation.Passed) return EntryBuildResult.Rejected(validation.Reason ?? "rejected");
 

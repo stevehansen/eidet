@@ -186,10 +186,14 @@ public sealed class MemoryToolTranslator
     {
         var lines = new List<int>();
         if (oldStr.Length == 0) return lines;
+        var line = 1;
+        var scanned = 0; // count newlines incrementally, not from the start of the file each match
         var index = content.IndexOf(oldStr, StringComparison.Ordinal);
         while (index != -1)
         {
-            lines.Add(content.AsSpan(0, index).Count('\n') + 1);
+            line += content.AsSpan(scanned, index - scanned).Count('\n');
+            lines.Add(line);
+            scanned = index;
             index = content.IndexOf(oldStr, index + oldStr.Length, StringComparison.Ordinal);
         }
         return lines;

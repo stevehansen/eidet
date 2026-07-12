@@ -326,6 +326,18 @@ internal sealed class SemanticDedupStore : InMemoryEidetStore
         list.Add(nearDupId);
     }
 
+    // This fake simulates an embeddings-backed store, so the recall guard's vector arm must see
+    // hits too (zero-lexical-overlap paraphrases surface only via vectors). Ranking fidelity is
+    // irrelevant at test scale — live entries by importance stand in for similarity order.
+    public override async Task<List<MemoryEntry>> VectorSearchAsync(
+        IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
+    {
+        var hits = new List<MemoryEntry>();
+        foreach (var repoId in repoIds)
+            hits.AddRange(await GetTopScoredAsync(repoId, Enum.GetValues<MemoryType>(), query.Limit, ct));
+        return hits.Take(query.Limit).ToList();
+    }
+
     public override async Task<IReadOnlyList<MemoryEntry>> FindNearDuplicatesAsync(
         string repoId, MemoryEntry entry, float minSimilarity, int max, CancellationToken ct = default)
     {
