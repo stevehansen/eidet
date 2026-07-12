@@ -179,6 +179,13 @@ jobs:
           -p:Version=${{ steps.version.outputs.VERSION }}
           -o ./nupkg
 
+      - name: Pack Anthropic memory-tool adapter
+        run: >
+          dotnet pack sdk/dotnet/Eidet.Sdk.Anthropic/Eidet.Sdk.Anthropic.csproj
+          -c Release
+          -p:Version=${{ steps.version.outputs.VERSION }}
+          -o ./nupkg
+
       - name: NuGet login (OIDC)
         uses: nuget/login@v1
         id: nuget-login

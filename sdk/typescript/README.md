@@ -54,10 +54,12 @@ const client = new EidetClient({
 
 | Method | Description |
 |--------|-------------|
-| `store(request)` | Store a memory (observation, insight, procedure, heuristic; `negative`/`valence` for dead-ends) |
-| `recall(repo, query, options?)` | Search memories by meaning and keywords (filters: type, tags, valence, crossRepo) |
+| `store(request)` | Store a memory (observation, insight, procedure, heuristic; `negative`/`valence` for dead-ends, `stage` for subtask scoping) |
+| `recall(repo, query, options?)` | Search memories by meaning and keywords (filters: type, tags, valence, stage, crossRepo) |
 | `context(repo)` | Get compact session context (< 600 tokens) |
-| `get_memory(id)` | Get a specific memory by ID |
+| `get_memory(id)` | Get a specific memory by ID (includes `contentSha256` for optimistic concurrency) |
+| `update(id, changes)` | Update a memory (content changes create versions; `expectedContentSha256` precondition) |
+| `redact(id, reason)` | Scrub a memory's content to a tombstone |
 | `forget(id, reason?)` | Soft-delete a memory |
 | `feedback(memoryId, wasUsed)` | Echo (useful) or fizzle (irrelevant) feedback |
 | `history(id)` | Get version chain for a memory |
@@ -65,9 +67,11 @@ const client = new EidetClient({
 | `graph(repo, limit?)` | Graph data for visualization |
 | `repos()` | List all known repositories |
 | `intake(repo)` | Ingest project files as seed memories |
+| `intakeGit(repo, options?)` | Seed memories from git commit history |
+| `intakeClaudeMemory(repo, dryRun?)` | Import Claude Code's native per-project memory |
 | `consolidate(repo)` | Merge related observations into insights |
 | `maintenance(repo)` | Run maintenance pipeline |
-| `exportMarkdown(repo)` | Export memories as markdown |
+| `exportMarkdown(repo, format?)` | Export memories as markdown (`'agents'` for AGENTS.md shape) |
 | `health()` | Health check |
 | `status()` | Service status and stats |
 | `isAvailable()` | Check if the service is reachable |

@@ -148,6 +148,48 @@ public class StoreToolHandlerTests
     }
 
     [Fact]
+    public async Task Store_ConflictingHighTrustIncumbent_ReportsQuarantined()
+    {
+        var handler = NewHandler(out var store);
+        store.NearDuplicates.Add(new MemoryEntry
+        {
+            Id = "memories/test-repo/insight/incumbent1",
+            RepoId = "test-repo",
+            Type = MemoryType.Insight,
+            Valence = Valence.Affirming,
+            Provenance = MemoryProvenance.UserStated,
+            Content = "Npgsql connection pooling is stable under load and should stay enabled",
+        });
+
+        var result = await Invoke(handler, new
+        {
+            content = "Npgsql connection pooling deadlocks under load — do not enable it here",
+            valence = "refuting",
+        });
+
+        Assert.Equal(ToolStatus.Ok, result.Status);
+        Assert.Contains("quarantined", result.HumanSummary, StringComparison.OrdinalIgnoreCase);
+        var payload = JsonSerializer.SerializeToElement(result.Payload);
+        Assert.True(payload.GetProperty("quarantined").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Store_NoConflict_PayloadReportsNotQuarantined()
+    {
+        var handler = NewHandler(out _);
+
+        var result = await Invoke(handler, new
+        {
+            content = "The auth module uses JWT RS256 with a 10-minute access-token TTL",
+            type = "observation",
+        });
+
+        Assert.Equal(ToolStatus.Ok, result.Status);
+        var payload = JsonSerializer.SerializeToElement(result.Payload);
+        Assert.False(payload.GetProperty("quarantined").GetBoolean());
+    }
+
+    [Fact]
     public async Task Store_NoType_NoNegative_NoValence_ReturnsBadRequestTypeRequired()
     {
         var handler = NewHandler(out _);
@@ -213,6 +255,11 @@ public class StoreToolHandlerTests
     {
         public List<MemoryEntry> Entries { get; } = [];
         public MemoryEntry? NextDuplicate { get; set; }
+        public List<MemoryEntry> NearDuplicates { get; } = [];
+
+        public Task<IReadOnlyList<MemoryEntry>> FindNearDuplicatesAsync(
+            string repoId, MemoryEntry entry, float minSimilarity, int max, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<MemoryEntry>>(NearDuplicates);
 
         public Task<bool> TestConnectionAsync(CancellationToken ct = default) => Task.FromResult(true);
 

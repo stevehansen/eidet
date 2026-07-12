@@ -35,11 +35,12 @@ public sealed class EidetClient : IDisposable
 
     public async Task<List<SearchResult>> RecallAsync(string repo, string query, int limit = 10,
         MemoryType? type = null, IEnumerable<string>? tags = null, Valence? valence = null,
-        bool crossRepo = false, CancellationToken ct = default)
+        FunctionalStage? stage = null, bool crossRepo = false, CancellationToken ct = default)
     {
         var url = $"api/eidet/search?repo={Uri.EscapeDataString(repo)}&q={Uri.EscapeDataString(query)}&limit={limit}";
         if (type.HasValue) url += $"&type={type.Value.ToString().ToLowerInvariant()}";
         if (valence.HasValue) url += $"&valence={valence.Value.ToString().ToLowerInvariant()}";
+        if (stage.HasValue) url += $"&stage={stage.Value.ToString().ToLowerInvariant()}";
         if (tags is not null)
         {
             var joined = string.Join(",", tags);
@@ -58,6 +59,26 @@ public sealed class EidetClient : IDisposable
 
     public async Task<MemoryEntry> GetMemoryAsync(string id, CancellationToken ct = default) =>
         await GetAsync<MemoryEntry>($"api/eidet/{Uri.EscapeDataString(id)}", ct);
+
+    /// <summary>
+    /// Update a memory. Content changes create a versioned supersession; metadata edits update in
+    /// place. A stale <see cref="UpdateMemoryRequest.ExpectedContentSha256"/> precondition surfaces
+    /// as an <see cref="EidetException"/> with status 409.
+    /// </summary>
+    public async Task<UpdateResult> UpdateAsync(string id, UpdateMemoryRequest request, CancellationToken ct = default)
+    {
+        var res = await _http.PutAsJsonAsync($"api/eidet/{Uri.EscapeDataString(id)}", request, JsonOptions, ct);
+        return await ReadAsync<UpdateResult>(res, ct);
+    }
+
+    /// <summary>Scrub a memory's content to a tombstone (audit node preserved).</summary>
+    public async Task<bool> RedactAsync(string id, string reason, CancellationToken ct = default)
+    {
+        var res = await _http.PostAsJsonAsync($"api/eidet/{Uri.EscapeDataString(id)}/redact",
+            new { reason }, JsonOptions, ct);
+        var data = await ReadAsync<RedactResponse>(res, ct);
+        return data.Redacted;
+    }
 
     public async Task<bool> ForgetAsync(string id, string? reason = null, CancellationToken ct = default)
     {
@@ -117,15 +138,26 @@ public sealed class EidetClient : IDisposable
         return await PostAsync<IntakeResult>(url, ct);
     }
 
+    /// <summary>Import Claude Code's native per-project memory (MEMORY.md) as seed memories.</summary>
+    public async Task<IntakeResult> IntakeClaudeMemoryAsync(string repo, bool dryRun = false, CancellationToken ct = default)
+    {
+        var url = $"api/eidet/intake/claude-memory?repo={Uri.EscapeDataString(repo)}";
+        if (dryRun) url += "&dry_run=true";
+        return await PostAsync<IntakeResult>(url, ct);
+    }
+
     public async Task<ConsolidateResult> ConsolidateAsync(string repo, CancellationToken ct = default) =>
         await PostAsync<ConsolidateResult>($"api/eidet/consolidate?repo={Uri.EscapeDataString(repo)}", ct);
 
     public async Task<Dictionary<string, JsonElement>> MaintenanceAsync(string repo, CancellationToken ct = default) =>
         await PostAsync<Dictionary<string, JsonElement>>($"api/maintenance?repo={Uri.EscapeDataString(repo)}", ct);
 
-    public async Task<string> ExportMarkdownAsync(string repo, CancellationToken ct = default)
+    /// <summary>Render memories as markdown; format "agents" renders the AGENTS.md interop shape.</summary>
+    public async Task<string> ExportMarkdownAsync(string repo, string? format = null, CancellationToken ct = default)
     {
-        var res = await _http.GetAsync($"api/eidet/export?repo={Uri.EscapeDataString(repo)}", ct);
+        var url = $"api/eidet/export?repo={Uri.EscapeDataString(repo)}";
+        if (!string.IsNullOrEmpty(format)) url += $"&format={Uri.EscapeDataString(format)}";
+        var res = await _http.GetAsync(url, ct);
         res.EnsureSuccessStatusCode();
         return await res.Content.ReadAsStringAsync(ct);
     }
@@ -212,6 +244,9 @@ public enum MemoryType { Observation, Insight, Procedure, Heuristic }
 
 public enum Valence { Neutral, Affirming, Refuting, Cautionary }
 
+/// <summary>Functional subtask a memory applies to; <see cref="None"/> matches every stage.</summary>
+public enum FunctionalStage { None, Analyze, Locate, Edit, Test, Debug, Deploy }
+
 public record StoreRequest
 {
     public string Repo { get; init; } = "";
@@ -226,6 +261,8 @@ public record StoreRequest
     public bool Negative { get; init; }
     /// <summary>Explicit stance toward the subject (overrides <see cref="Negative"/>).</summary>
     public Valence? Valence { get; init; }
+    /// <summary>Functional subtask this memory applies to; omit for stage-agnostic knowledge.</summary>
+    public FunctionalStage? Stage { get; init; }
 }
 
 public record StoreResult
@@ -233,6 +270,31 @@ public record StoreResult
     public string? Id { get; init; }
     public string? Error { get; init; }
     public string? DuplicateId { get; init; }
+    /// <summary>True when the store contradicted a high-trust memory: stored but downranked until echoed.</summary>
+    public bool Quarantined { get; init; }
+}
+
+public record UpdateMemoryRequest
+{
+    /// <summary>New content — creates a versioned supersession; metadata-only edits update in place.</summary>
+    public string? Content { get; init; }
+    public List<string>? Tags { get; init; }
+    public float? Importance { get; init; }
+    public float? Confidence { get; init; }
+    public MemoryType? Type { get; init; }
+    public FunctionalStage? Stage { get; init; }
+    public string? OneLiner { get; init; }
+    public string? Summary { get; init; }
+    public string? ForesightHint { get; init; }
+    /// <summary>Optimistic-concurrency precondition: SHA256 of the content you read. Mismatch → 409, no edit.</summary>
+    public string? ExpectedContentSha256 { get; init; }
+}
+
+public record UpdateResult
+{
+    public bool Updated { get; init; }
+    public string Id { get; init; } = "";
+    public bool Superseded { get; init; }
 }
 
 public record MemoryEntry
@@ -240,6 +302,7 @@ public record MemoryEntry
     public string Id { get; init; } = "";
     public string RepoId { get; init; } = "";
     public MemoryType Type { get; init; }
+    public FunctionalStage Stage { get; init; }
     public string Content { get; init; } = "";
     public string? Summary { get; init; }
     public string? OneLiner { get; init; }
@@ -254,6 +317,9 @@ public record MemoryEntry
     public string? Provenance { get; init; }
     public string? Source { get; init; }
     public string? ForesightHint { get; init; }
+    /// <summary>Present on <see cref="EidetClient.GetMemoryAsync"/> only — round-trip as
+    /// <see cref="UpdateMemoryRequest.ExpectedContentSha256"/> on a subsequent update.</summary>
+    public string? ContentSha256 { get; init; }
 }
 
 public record SearchResult
@@ -262,6 +328,7 @@ public record SearchResult
     public string RepoId { get; init; } = "";
     public MemoryType Type { get; init; }
     public Valence Valence { get; init; }
+    public FunctionalStage Stage { get; init; }
     public string Content { get; init; } = "";
     public string? OneLiner { get; init; }
     public List<string> Tags { get; init; } = [];
@@ -414,6 +481,7 @@ public record UsageHourlyResponse
 internal record SearchResponse { public List<SearchResult> Results { get; init; } = []; }
 internal record ContextResponse { public string Context { get; init; } = ""; }
 internal record ForgetResponse { public bool Forgotten { get; init; } }
+internal record RedactResponse { public bool Redacted { get; init; } }
 internal record FeedbackResponse { public bool Applied { get; init; } }
 internal record HistoryResponse { public List<MemoryEntry> Chain { get; init; } = []; }
 internal record ReposResponse { public List<RepoItem> Repos { get; init; } = []; }

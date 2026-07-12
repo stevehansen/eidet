@@ -7,8 +7,8 @@ namespace Eidet.Service.Tools.Handlers;
 
 /// <summary>
 /// Stores a memory through <see cref="MemoryService.StoreAsync"/>. Honors WriteValidator gates
-/// (rejection → 422, duplicate → 409) and returns a structured payload <c>{ id }</c> for REST and
-/// a one-liner summary for MCP.
+/// (rejection → 422, duplicate → 409) and returns a structured payload <c>{ id, quarantined }</c>
+/// for REST and a one-liner summary for MCP.
 /// </summary>
 public sealed class StoreToolHandler : IToolHandler
 {
@@ -97,8 +97,10 @@ public sealed class StoreToolHandler : IToolHandler
             return ToolResult.Rejected(result.Reason!);
 
         return ToolResult.Ok(
-            payload: new { id = result.Id },
-            summary: $"Stored: {result.Id}",
+            payload: new { id = result.Id, quarantined = result.Quarantined },
+            summary: result.Quarantined
+                ? $"Stored (quarantined pending feedback): {result.Id}"
+                : $"Stored: {result.Id}",
             count: 1);
     }
 

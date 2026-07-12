@@ -52,10 +52,12 @@ using var client = new EidetClient("http://localhost:19380", apiKey: "your-api-k
 
 | Method | Description |
 |--------|-------------|
-| `StoreAsync(request)` | Store a memory (observation, insight, procedure, heuristic; `Negative`/`Valence` for dead-ends) |
-| `RecallAsync(repo, query, ...)` | Search memories by meaning and keywords (filters: type, tags, valence, crossRepo) |
+| `StoreAsync(request)` | Store a memory (observation, insight, procedure, heuristic; `Negative`/`Valence` for dead-ends, `Stage` for subtask scoping) |
+| `RecallAsync(repo, query, ...)` | Search memories by meaning and keywords (filters: type, tags, valence, stage, crossRepo) |
 | `GetContextAsync(repo)` | Get compact session context (< 600 tokens) |
-| `GetMemoryAsync(id)` | Get a specific memory by ID |
+| `GetMemoryAsync(id)` | Get a specific memory by ID (includes `ContentSha256` for optimistic concurrency) |
+| `UpdateAsync(id, request)` | Update a memory (content changes create versions; `ExpectedContentSha256` precondition) |
+| `RedactAsync(id, reason)` | Scrub a memory's content to a tombstone |
 | `ForgetAsync(id, reason?)` | Soft-delete a memory |
 | `FeedbackAsync(memoryId, wasUsed, reason?)` | Echo (useful) or fizzle (irrelevant) feedback |
 | `GetHistoryAsync(id)` | Get version chain for a memory |
@@ -63,9 +65,11 @@ using var client = new EidetClient("http://localhost:19380", apiKey: "your-api-k
 | `GetGraphAsync(repo, limit?)` | Graph data for visualization |
 | `GetReposAsync()` | List all known repositories |
 | `IntakeAsync(repo)` | Ingest project files as seed memories |
+| `IntakeGitAsync(repo, options?)` | Seed memories from git commit history |
+| `IntakeClaudeMemoryAsync(repo, dryRun?)` | Import Claude Code's native per-project memory |
 | `ConsolidateAsync(repo)` | Merge related observations into insights |
 | `MaintenanceAsync(repo)` | Run maintenance pipeline |
-| `ExportMarkdownAsync(repo)` | Export memories as markdown |
+| `ExportMarkdownAsync(repo, format?)` | Export memories as markdown (`"agents"` for AGENTS.md shape) |
 | `HealthAsync()` | Health check |
 | `StatusAsync()` | Service status and stats |
 | `IsAvailableAsync()` | Check if service is reachable |

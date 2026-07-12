@@ -4,6 +4,9 @@ export type MemoryType = 'observation' | 'insight' | 'procedure' | 'heuristic';
 
 export type Valence = 'neutral' | 'affirming' | 'refuting' | 'cautionary';
 
+/** Functional subtask a memory applies to; 'none' means stage-agnostic (matches every stage). */
+export type FunctionalStage = 'none' | 'analyze' | 'locate' | 'edit' | 'test' | 'debug' | 'deploy';
+
 export interface StoreRequest {
   repo: string;
   content: string;
@@ -17,18 +20,44 @@ export interface StoreRequest {
   negative?: boolean;
   /** Explicit stance toward the subject (overrides negative). */
   valence?: Valence;
+  /** Functional subtask this memory applies to; omit for stage-agnostic knowledge. */
+  stage?: FunctionalStage;
 }
 
 export interface StoreResult {
   id?: string;
   error?: string;
   duplicateId?: string;
+  /** True when the store contradicted a high-trust memory: stored but downranked until echoed. */
+  quarantined?: boolean;
+}
+
+export interface UpdateMemoryRequest {
+  /** New content — creates a versioned supersession; metadata-only edits update in place. */
+  content?: string;
+  tags?: string[];
+  importance?: number;
+  confidence?: number;
+  type?: MemoryType;
+  stage?: FunctionalStage;
+  oneLiner?: string;
+  summary?: string;
+  foresightHint?: string;
+  /** Optimistic-concurrency precondition: SHA256 of the content you read. Mismatch → 409, no edit. */
+  expectedContentSha256?: string;
+}
+
+export interface UpdateResult {
+  updated: boolean;
+  id: string;
+  superseded: boolean;
 }
 
 export interface MemoryEntry {
   id: string;
   repoId: string;
   type: MemoryType;
+  stage?: FunctionalStage;
   content: string;
   summary?: string;
   oneLiner?: string;
@@ -43,6 +72,8 @@ export interface MemoryEntry {
   provenance: string;
   source: string;
   foresightHint?: string;
+  /** Present on get_memory only — round-trip as expectedContentSha256 on a subsequent update. */
+  contentSha256?: string;
 }
 
 export interface SearchResult {
@@ -50,6 +81,7 @@ export interface SearchResult {
   repoId: string;
   type: MemoryType;
   valence?: Valence;
+  stage?: FunctionalStage;
   content: string;
   summary?: string;
   oneLiner?: string;
@@ -177,6 +209,7 @@ export class EidetClient {
     type?: MemoryType;
     tags?: string[];
     valence?: Valence;
+    stage?: FunctionalStage;
     crossRepo?: boolean;
   }): Promise<SearchResult[]> {
     const params = new URLSearchParams({ repo, q: query });
@@ -184,6 +217,7 @@ export class EidetClient {
     if (options?.type) params.set('type', options.type);
     if (options?.tags?.length) params.set('tags', options.tags.join(','));
     if (options?.valence) params.set('valence', options.valence);
+    if (options?.stage) params.set('stage', options.stage);
     if (options?.crossRepo) params.set('cross_repo', 'true');
     const data = await this.get<{ results: SearchResult[] }>(`/api/eidet/search?${params}`);
     return data.results;
@@ -196,6 +230,18 @@ export class EidetClient {
 
   async get_memory(id: string): Promise<MemoryEntry> {
     return this.get<MemoryEntry>(`/api/eidet/${enc(id)}`);
+  }
+
+  /** Update a memory. Content changes create a versioned supersession; a stale
+   *  expectedContentSha256 precondition surfaces as an EidetError with status 409. */
+  async update(id: string, changes: UpdateMemoryRequest): Promise<UpdateResult> {
+    return this.put<UpdateResult>(`/api/eidet/${enc(id)}`, changes);
+  }
+
+  /** Scrub a memory's content to a tombstone (audit node preserved). */
+  async redact(id: string, reason: string): Promise<boolean> {
+    const data = await this.post<{ redacted: boolean }>(`/api/eidet/${enc(id)}/redact`, { reason });
+    return data.redacted;
   }
 
   async forget(id: string, reason?: string): Promise<boolean> {
@@ -257,6 +303,13 @@ export class EidetClient {
     return this.post(url);
   }
 
+  /** Import Claude Code's native per-project memory (MEMORY.md) as seed memories. */
+  async intakeClaudeMemory(repo: string, dryRun?: boolean): Promise<{ newCount: number; skippedCount: number }> {
+    let url = `/api/eidet/intake/claude-memory?repo=${enc(repo)}`;
+    if (dryRun) url += '&dry_run=true';
+    return this.post(url);
+  }
+
   async consolidate(repo: string): Promise<{ candidates: number; insightsCreated: number; insightsBoosted: number }> {
     return this.post(`/api/eidet/consolidate?repo=${enc(repo)}`);
   }
@@ -265,8 +318,11 @@ export class EidetClient {
     return this.post(`/api/maintenance?repo=${enc(repo)}`);
   }
 
-  async exportMarkdown(repo: string): Promise<string> {
-    const res = await this.fetch(`/api/eidet/export?repo=${enc(repo)}`);
+  /** Render memories as markdown; format 'agents' renders the AGENTS.md interop shape. */
+  async exportMarkdown(repo: string, format?: 'agents'): Promise<string> {
+    let url = `/api/eidet/export?repo=${enc(repo)}`;
+    if (format) url += `&format=${format}`;
+    const res = await this.fetch(url);
     return res.text();
   }
 
@@ -343,6 +399,15 @@ export class EidetClient {
     const res = await this.fetch(path, {
       method: 'POST',
       body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) throw new EidetError(res.status, await res.text());
+    return res.json() as Promise<T>;
+  }
+
+  private async put<T>(path: string, body: unknown): Promise<T> {
+    const res = await this.fetch(path, {
+      method: 'PUT',
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new EidetError(res.status, await res.text());
     return res.json() as Promise<T>;

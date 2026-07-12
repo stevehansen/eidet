@@ -58,10 +58,12 @@ client = EidetClient(url="http://localhost:19380", api_key="your-api-key")
 
 | Method | Description |
 |--------|-------------|
-| `store(repo, content, ...)` | Store a memory (observation, insight, procedure, heuristic; `negative`/`valence` for dead-ends) |
-| `recall(repo, query, **kwargs)` | Search memories by meaning and keywords (filters: type, tags, valence, cross_repo) |
+| `store(repo, content, ...)` | Store a memory (observation, insight, procedure, heuristic; `negative`/`valence` for dead-ends, `stage` for subtask scoping) |
+| `recall(repo, query, **kwargs)` | Search memories by meaning and keywords (filters: type, tags, valence, stage, cross_repo) |
 | `context(repo)` | Get compact session context (< 600 tokens) |
-| `get_memory(id)` | Get a specific memory by ID |
+| `get_memory(id)` | Get a specific memory by ID (includes `contentSha256` for optimistic concurrency) |
+| `update(memory_id, **kwargs)` | Update a memory (content changes create versions; `expected_content_sha256` precondition) |
+| `redact(memory_id, reason)` | Scrub a memory's content to a tombstone |
 | `forget(id, reason?)` | Soft-delete a memory |
 | `feedback(memory_id, was_used)` | Echo (useful) or fizzle (irrelevant) feedback |
 | `history(id)` | Get version chain for a memory |
@@ -69,9 +71,11 @@ client = EidetClient(url="http://localhost:19380", api_key="your-api-key")
 | `graph(repo, limit?)` | Graph data for visualization |
 | `repos()` | List all known repositories |
 | `intake(repo)` | Ingest project files as seed memories |
+| `intake_git(repo, **kwargs)` | Seed memories from git commit history |
+| `intake_claude_memory(repo, dry_run?)` | Import Claude Code's native per-project memory |
 | `consolidate(repo)` | Merge related observations into insights |
 | `maintenance(repo)` | Run maintenance pipeline |
-| `export_markdown(repo)` | Export memories as markdown |
+| `export_markdown(repo, format?)` | Export memories as markdown (`"agents"` for AGENTS.md shape) |
 | `health()` | Health check |
 | `status()` | Service status and stats |
 | `is_available()` | Check if the service is reachable |

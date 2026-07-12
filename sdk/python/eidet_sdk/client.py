@@ -23,6 +23,17 @@ class Valence(str, Enum):
     CAUTIONARY = "cautionary"
 
 
+class FunctionalStage(str, Enum):
+    """Functional subtask a memory applies to; a memory with no stage matches every stage."""
+
+    ANALYZE = "analyze"
+    LOCATE = "locate"
+    EDIT = "edit"
+    TEST = "test"
+    DEBUG = "debug"
+    DEPLOY = "deploy"
+
+
 @dataclass
 class StoreRequest:
     repo: str
@@ -35,6 +46,7 @@ class StoreRequest:
     supersedes: str | None = None
     negative: bool = False
     valence: Valence | str | None = None
+    stage: FunctionalStage | str | None = None
 
 
 class EidetError(Exception):
@@ -78,6 +90,7 @@ class EidetClient:
         supersedes: str | None = None,
         negative: bool = False,
         valence: Valence | str | None = None,
+        stage: FunctionalStage | str | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "repo": repo,
@@ -96,6 +109,8 @@ class EidetClient:
             body["negative"] = True
         if valence:
             body["valence"] = str(valence.value) if isinstance(valence, Valence) else valence
+        if stage:
+            body["stage"] = str(stage.value) if isinstance(stage, FunctionalStage) else stage
         return self._post("/api/eidet", body)
 
     def recall(
@@ -107,6 +122,7 @@ class EidetClient:
         type: MemoryType | str | None = None,
         tags: list[str] | None = None,
         valence: Valence | str | None = None,
+        stage: FunctionalStage | str | None = None,
         cross_repo: bool = False,
     ) -> list[dict[str, Any]]:
         params: dict[str, str] = {"repo": repo, "q": query, "limit": str(limit)}
@@ -116,6 +132,8 @@ class EidetClient:
             params["tags"] = ",".join(tags)
         if valence:
             params["valence"] = str(valence.value) if isinstance(valence, Valence) else valence
+        if stage:
+            params["stage"] = str(stage.value) if isinstance(stage, FunctionalStage) else stage
         if cross_repo:
             params["cross_repo"] = "true"
         data = self._get("/api/eidet/search", params=params)
@@ -127,6 +145,51 @@ class EidetClient:
 
     def get_memory(self, memory_id: str) -> dict[str, Any]:
         return self._get(f"/api/eidet/{memory_id}")
+
+    def update(
+        self,
+        memory_id: str,
+        *,
+        content: str | None = None,
+        tags: list[str] | None = None,
+        importance: float | None = None,
+        confidence: float | None = None,
+        type: MemoryType | str | None = None,
+        stage: FunctionalStage | str | None = None,
+        one_liner: str | None = None,
+        summary: str | None = None,
+        foresight_hint: str | None = None,
+        expected_content_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        """Update a memory. Content changes create a versioned supersession; a stale
+        expected_content_sha256 precondition raises EidetError with status 409."""
+        body: dict[str, Any] = {}
+        if content is not None:
+            body["content"] = content
+        if tags is not None:
+            body["tags"] = tags
+        if importance is not None:
+            body["importance"] = importance
+        if confidence is not None:
+            body["confidence"] = confidence
+        if type is not None:
+            body["type"] = str(type.value) if isinstance(type, MemoryType) else type
+        if stage is not None:
+            body["stage"] = str(stage.value) if isinstance(stage, FunctionalStage) else stage
+        if one_liner is not None:
+            body["oneLiner"] = one_liner
+        if summary is not None:
+            body["summary"] = summary
+        if foresight_hint is not None:
+            body["foresightHint"] = foresight_hint
+        if expected_content_sha256 is not None:
+            body["expectedContentSha256"] = expected_content_sha256
+        return self._put(f"/api/eidet/{memory_id}", body)
+
+    def redact(self, memory_id: str, reason: str) -> bool:
+        """Scrub a memory's content to a tombstone (audit node preserved)."""
+        data = self._post(f"/api/eidet/{memory_id}/redact", {"reason": reason})
+        return data.get("redacted", False)
 
     def forget(self, memory_id: str, reason: str | None = None) -> bool:
         params = {"reason": reason} if reason else {}
@@ -191,14 +254,25 @@ class EidetClient:
             url += "&dry_run=true"
         return self._post(url)
 
+    def intake_claude_memory(self, repo: str, *, dry_run: bool = False) -> dict[str, Any]:
+        """Import Claude Code's native per-project memory (MEMORY.md) as seed memories."""
+        url = f"/api/eidet/intake/claude-memory?repo={repo}"
+        if dry_run:
+            url += "&dry_run=true"
+        return self._post(url)
+
     def consolidate(self, repo: str) -> dict[str, Any]:
         return self._post(f"/api/eidet/consolidate?repo={repo}")
 
     def maintenance(self, repo: str) -> dict[str, Any]:
         return self._post(f"/api/maintenance?repo={repo}")
 
-    def export_markdown(self, repo: str) -> str:
-        res = self._client.get("/api/eidet/export", params={"repo": repo})
+    def export_markdown(self, repo: str, format: str | None = None) -> str:
+        """Render memories as markdown; format="agents" renders the AGENTS.md interop shape."""
+        params = {"repo": repo}
+        if format:
+            params["format"] = format
+        res = self._client.get("/api/eidet/export", params=params)
         res.raise_for_status()
         return res.text
 
@@ -251,6 +325,12 @@ class EidetClient:
 
     def _post(self, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         res = self._client.post(path, json=body)
+        if not res.is_success:
+            raise EidetError(res.status_code, res.text)
+        return res.json()
+
+    def _put(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        res = self._client.put(path, json=body)
         if not res.is_success:
             raise EidetError(res.status_code, res.text)
         return res.json()

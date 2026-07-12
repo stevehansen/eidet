@@ -36,7 +36,7 @@ Design decisions live in `docs/specs/`:
 - **Operations**: API key auth (4 scopes), hooks (6 lifecycle events), persistent scheduler (RavenDB Refresh), quality dashboard, backup/restore, usage analytics
 - **Curation**: Versioned `PUT` / REST edits (handler available off-MCP) with `content_sha256` optimistic concurrency (`If-Match` → 409 on stale), structure-preserving `RedactAsync` content erasure, AI-assisted enrichment via `/api/eidet/enrich`, Web UI inline editing
 - **Pack format**: Human-readable markdown with YAML frontmatter — ScribeGate compatible
-- **Test coverage**: 1212 tests (Core + Service + Integration + Bench + Benchmark)
+- **Test coverage**: 1216 tests (Core + Service + Integration + Bench + Benchmark)
 
 ## Installation
 
