@@ -13,10 +13,12 @@ RUN case "$TARGETARCH" in \
 COPY Eidet.slnx ./
 COPY src/Eidet.Core/Eidet.Core.csproj src/Eidet.Core/
 COPY src/Eidet.Service/Eidet.Service.csproj src/Eidet.Service/
+COPY tools/Eidet.Bench/Eidet.Bench.csproj tools/Eidet.Bench/
 RUN dotnet restore src/Eidet.Service/Eidet.Service.csproj -r $(cat /tmp/rid)
 
 # Copy source and publish
 COPY src/ src/
+COPY tools/ tools/
 RUN dotnet publish src/Eidet.Service/Eidet.Service.csproj \
     -c Release -r $(cat /tmp/rid) --self-contained true \
     -p:PublishSingleFile=true \
