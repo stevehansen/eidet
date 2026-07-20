@@ -24,6 +24,7 @@ public class EidetApiServer
     private readonly MemoryWriteEndpoints _memoryWrite;
     private readonly MemoryBulkEndpoints _memoryBulk;
     private readonly LooseEndEndpoints _looseEndEndpoints;
+    private readonly CanonEndpoints _canonEndpoints;
     private readonly LayerEndpoints _layerEndpoints;
     private readonly MaintenanceEndpoints _maintenanceEndpoints;
     private readonly QualityEndpoint _qualityEndpoint;
@@ -51,6 +52,7 @@ public class EidetApiServer
         _memoryWrite = new MemoryWriteEndpoints(svc, dispatcher);
         _memoryBulk = new MemoryBulkEndpoints(dispatcher, options.Export, options.Usage);
         _looseEndEndpoints = new LooseEndEndpoints(dispatcher, options.LooseEnds);
+        _canonEndpoints = new CanonEndpoints(options.Canon);
         _layerEndpoints = new LayerEndpoints(options.Layers, options.LayerSync);
         _maintenanceEndpoints = new MaintenanceEndpoints(dispatcher);
         _qualityEndpoint = new QualityEndpoint(options.Quality, options.Usage);
@@ -196,6 +198,18 @@ public class EidetApiServer
             (ctx, path, ct) => _looseEndEndpoints.Resolve(ctx, LooseEndEndpoints.ExtractIdFromResolvePath(path), ct));
         r.MapPost("/api/eidet/loose-ends", (ctx, _, ct) => _looseEndEndpoints.Park(ctx, ct));
         r.MapGet("/api/eidet/loose-ends", (ctx, _, ct) => _looseEndEndpoints.List(ctx, ct));
+
+        // Canon (curated knowledge base) — off-MCP Operator surface; the slash-bearing draft id is carried
+        // in the path, so approve/reject register before the plain drafts routes and all before the catch-all.
+        r.Map("POST", p => p.StartsWith("/api/eidet/canon/drafts/") && p.EndsWith("/approve"),
+            (ctx, path, ct) => _canonEndpoints.Approve(ctx, CanonEndpoints.ExtractIdFromVerbPath(path, "/approve"), ct));
+        r.Map("POST", p => p.StartsWith("/api/eidet/canon/drafts/") && p.EndsWith("/reject"),
+            (ctx, path, ct) => _canonEndpoints.Reject(ctx, CanonEndpoints.ExtractIdFromVerbPath(path, "/reject"), ct));
+        r.MapPost("/api/eidet/canon/regenerate", (ctx, _, ct) => _canonEndpoints.Regenerate(ctx, ct));
+        r.MapPost("/api/eidet/canon/bulk-approve", (ctx, _, ct) => _canonEndpoints.BulkApprove(ctx, ct));
+        r.MapGet("/api/eidet/canon/drafts", (ctx, _, ct) => _canonEndpoints.ListDrafts(ctx, ct));
+        r.Map("GET", p => p.StartsWith("/api/eidet/canon/drafts/"),
+            (ctx, path, ct) => _canonEndpoints.GetDraft(ctx, CanonEndpoints.ExtractIdFromGetPath(path), ct));
 
         // Layers
         r.MapGet("/api/eidet/layers", (ctx, _, ct) => _layerEndpoints.GetLayers(ctx, ct));

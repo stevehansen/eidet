@@ -1,3 +1,4 @@
+using Eidet.Core.Canon;
 using Eidet.Core.Domain;
 using Eidet.Core.Enrichment;
 using Eidet.Core.Memory;
@@ -94,15 +95,18 @@ public sealed class ConsolidationEngine
             // Never boost an insight that takes the opposite hard stance from this bucket — a
             // conflicting bucket falls through to create its own insight instead, so both
             // stances coexist (mirrors the write-path polarity guards).
+            // A canon:* page is a human-curated memory; consolidation must never boost or contaminate its
+            // lineage — skip the boost and fall through to a fresh insight (mirrors the valence-conflict guard).
             var existingInsight = await _store.FindDuplicateAsync(repoId, representative.Content, 0.85f, ct);
             if (existingInsight is not null && existingInsight.Type == MemoryType.Insight &&
-                !ValencePolarity.Conflicts(existingInsight.Valence, bucketValence))
+                !ValencePolarity.Conflicts(existingInsight.Valence, bucketValence) &&
+                !CanonTags.IsCanonPage(existingInsight))
             {
                 // Anti-laundering (boost path): only trusted sources may lift a trusted insight. An
                 // attacker must not be able to raise a good insight's importance — or contaminate its
                 // lineage — by injecting low-trust (Pack/Intake) observations that happen to match it.
                 // No trusted contributors → skip the boost entirely (a "compression-amplified toxin").
-                var trusted = bucket.Where(IsTrustedSource).ToList();
+                var trusted = bucket.Where(ProvenanceRules.IsTrusted).ToList();
                 if (trusted.Count == 0) continue;
 
                 existingInsight.Importance = Math.Min(1.0f, existingInsight.Importance + 0.05f * trusted.Count);
@@ -130,7 +134,7 @@ public sealed class ConsolidationEngine
                 // recall. This stops an attacker laundering a poisoned observation into a fully
                 // trusted insight ("compression-amplified toxin"). The audit trail — Source and
                 // DerivedFrom — is preserved untouched.
-                var provenance = ProvenanceFor(bucket);
+                var provenance = ProvenanceRules.ForContributors(bucket);
 
                 var now = DateTime.UtcNow;
                 var insight = new MemoryEntry
@@ -158,18 +162,6 @@ public sealed class ConsolidationEngine
         return 0;
     }
 
-    /// <summary>An observation counts as a trusted source unless its origin is a known poisoning
-    /// surface (Pack/Intake), i.e. its provenance trust floor is the full 1.0.</summary>
-    private static bool IsTrustedSource(MemoryEntry obs) =>
-        MemoryTrust.ProvenanceTrust(obs.Provenance) >= 1.0;
-
-    /// <summary>Anti-laundering provenance stamp: any untrusted contributor demotes the emission to the
-    /// least-trusted contributor's provenance; an all-trusted bucket earns <c>Consolidation</c>.</summary>
-    private static MemoryProvenance ProvenanceFor(IReadOnlyList<MemoryEntry> bucket) =>
-        bucket.Any(o => !IsTrustedSource(o))
-            ? bucket.OrderBy(o => MemoryTrust.ProvenanceTrust(o.Provenance)).First().Provenance
-            : MemoryProvenance.Consolidation;
-
     /// <summary>The cluster's functional stage: the most common non-<c>None</c> stage among its sources
     /// (ties broken by enum order for determinism), or <c>None</c> when no source carries one. Stage does
     /// NOT partition consolidation groups (#38 decision) — this only classifies an already-formed bucket.</summary>
@@ -193,7 +185,7 @@ public sealed class ConsolidationEngine
         Valence bucketValence, List<string> unionTags, float proposedImportance, MemoryEntry representative,
         List<string> observationIds, ConsolidationResult result, CancellationToken ct)
     {
-        var provenance = ProvenanceFor(bucket);
+        var provenance = ProvenanceRules.ForContributors(bucket);
         var now = DateTime.UtcNow;
 
         var stepsContent = string.Join("\n", bucket

@@ -32,6 +32,10 @@ internal static class HttpJson
     {
         using var reader = new StreamReader(ctx.Request.InputStream, ctx.Request.ContentEncoding);
         var body = await reader.ReadToEndAsync();
+        // A missing body is an omitted payload, not malformed JSON: routes with optional bodies
+        // (e.g. canon approve) advertise "req is null" as the no-body case, so make it true —
+        // Deserialize would throw on the empty string and surface as a 500.
+        if (string.IsNullOrWhiteSpace(body)) return null;
         return JsonSerializer.Deserialize<T>(body, Options);
     }
 

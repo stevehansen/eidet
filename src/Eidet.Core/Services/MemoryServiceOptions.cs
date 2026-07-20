@@ -13,6 +13,11 @@ public sealed record StoreOptions(string RepoId, string Content, MemoryType Type
     public MemoryProvenance? Provenance { get; init; }
     public Valence Valence { get; init; } = Valence.Neutral;
     public FunctionalStage Stage { get; init; } = FunctionalStage.None;
+
+    /// <summary>Lineage ids for a synthesized memory (Canon page members). Carried onto
+    /// <see cref="Domain.MemoryEntry.DerivedFrom"/> by <c>WriteValidator.BuildEntry</c> so a synthesis can
+    /// record its provenance graph without a second write or a bypass of the gate.</summary>
+    public IReadOnlyList<string>? DerivedFrom { get; init; }
 }
 
 /// <summary>20% surface for <see cref="MemoryService.RecallAsync(string, RecallOptions, CancellationToken)"/>.</summary>

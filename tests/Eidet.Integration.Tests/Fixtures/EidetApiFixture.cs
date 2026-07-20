@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
+using Eidet.Core.Canon;
+using Eidet.Core.Canon.Sources;
 using Eidet.Core.Configuration;
 using Eidet.Core.LooseEnds;
 using Eidet.Core.LooseEnds.Promotion;
@@ -54,6 +56,11 @@ public class EidetApiFixture : IAsyncLifetime
                 new RavenLooseEndStore(_store), new MemoryServicePromotionAdapter(memorySvc), TimeProvider.System);
             memorySvc.LooseEnds = looseEndSvc;
 
+            var canonSvc = new CanonService(
+                new RavenCanonDraftStore(_store), new MemoryServiceCanonAdapter(memorySvc, eidetStore),
+                new ICanonDraftSource[] { new EntityAggregationDraftSource(eidetStore), new UbiquitousLanguageDraftSource() },
+                eidetStore, TimeProvider.System);
+
             var port = GetFreePort();
             BaseUrl = $"http://127.0.0.1:{port}";
 
@@ -68,6 +75,7 @@ public class EidetApiFixture : IAsyncLifetime
                 Maintenance = maintenanceRunner,
                 Export = exportSvc,
                 LooseEnds = looseEndSvc,
+                Canon = canonSvc,
                 BindAddress = "127.0.0.1",
                 Port = port,
                 Layers = layerSvc,

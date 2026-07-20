@@ -1,3 +1,4 @@
+using Eidet.Core.Canon;
 using Eidet.Core.Configuration;
 using Eidet.Core.Enrichment;
 using Eidet.Core.LooseEnds;
@@ -23,6 +24,7 @@ public sealed record EidetApiServerOptions
     public required IMaintenanceRunner Maintenance { get; init; }
     public required ExportService Export { get; init; }
     public required LooseEndService LooseEnds { get; init; }
+    public required CanonService Canon { get; init; }
     public required string BindAddress { get; init; }
     public required int Port { get; init; }
 
