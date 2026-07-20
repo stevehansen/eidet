@@ -180,6 +180,17 @@ app.Configure(config =>
             .WithDescription("Run against the real SWE Context Bench dataset (refuses to emit a number without it)");
     });
 
+    config.AddBranch("enrichment", enrichment =>
+    {
+        enrichment.SetDescription("Configure the enrichment backend (Ollama / LM Studio / OpenAI-compatible)");
+
+        enrichment.AddCommand<EnrichmentSetupCommand>("setup")
+            .WithDescription("Interactive wizard: detect backends, pick provider and model, apply live");
+
+        enrichment.AddCommand<EnrichmentReloadCommand>("reload")
+            .WithDescription("Tell the running service to reapply enrichment config without a restart");
+    });
+
     config.AddBranch("ollama", ollama =>
     {
         ollama.SetDescription("Manage Ollama models for enrichment");

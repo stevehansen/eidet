@@ -1,6 +1,6 @@
 # Eidet - STRIDE Threat Model
 
-**Version:** 1.11
+**Version:** 1.12
 **Created:** 2026-04-12
 **Author:** Steve Hansen
 **Next Review:** 2027-04-12
@@ -11,7 +11,7 @@
 
 ### 1.1 Application Description
 
-Eidet is a local-first long-term memory service for AI coding agents. It provides persistent, semantic memory across coding sessions using a local RavenDB database (embedded or external), optional Ollama LLM enrichment, and exposes functionality through a REST API, MCP server (stdio + HTTP), CLI commands, and an embedded Web UI.
+Eidet is a local-first long-term memory service for AI coding agents. It provides persistent, semantic memory across coding sessions using a local RavenDB database (embedded or external), optional local LLM enrichment (Ollama or any OpenAI-compatible server, e.g. LM Studio), and exposes functionality through a REST API, MCP server (stdio + HTTP), CLI commands, and an embedded Web UI.
 
 ### 1.2 User Types
 
@@ -217,6 +217,7 @@ Eidet is a local-first long-term memory service for AI coding agents. It provide
 | E-4 | Cross-repo memory pollution | Authenticated user stores memories for repos they don't own | 2 | 2 | 4 | V8 | RepoId is caller-specified with no ownership verification. Local-only scope makes this low risk (all repos belong to same user). |
 | E-5 | Install command runs system commands | `eidet install` executes schtasks.exe, launchctl, or systemctl | 1 | 3 | 3 | V15 | Commands are hardcoded (not user-controlled). Binary path is constructed from install directory. Runs at user privilege level, not elevated. |
 | E-6 | Unauthorized access via the memory-tool endpoint | The new `POST /api/eidet/memory-tool` ingestion surface could have shipped auth-exempt (like `/ui`/health), letting any caller read/write another repo's memory files when auth is enabled or the bind is non-localhost | 2 | 3 | 6 | V6, V8 | **Endpoint honors the existing API-key auth + network-binding guard** — it routes through `ApiAuthGate` like every data endpoint and is NOT on the exempt list; `ApiKeyService.GetRequiredScope` resolves `POST /api/eidet/memory-tool` to `write:all` (covered by test). Repo scoping remains caller-specified with no ownership verification, same accepted posture as E-4. |
+| E-7 | Live enrichment config reload as an activation vector | `POST /api/config/enrichment/reload` lets a caller apply an already-tampered config.json Enrichment section (e.g. redirect memory content to an attacker-controlled "enrichment" URL) without waiting for a service restart | 1 | 3 | 3 | V6, V8 | Endpoint takes no payload — it only re-reads local config.json, the same trust anchor as T-2 (tampering it already implies local compromise). Routes through `ApiAuthGate`; the `/api/config` prefix resolves to the `admin` scope (covered by test). Localhost binding guard applies when auth is off. Only the Enrichment section is reapplied. |
 
 **Countermeasures in place:**
 - Hook processes run without shell (UseShellExecute=false, no command injection)
@@ -311,6 +312,7 @@ Known gaps (tracked above): no pack signature verification (T-1, T-7 attack surf
 | 1.9 | 2026-07-11 | Steve Hansen (Claude Code session) | Git-history intake (#40): new ingestion trust boundary TB-10; added T-16 memory poisoning via crafted commit messages (score 4, TB-10 arrival of the T-6/T-7 pattern) and I-7 secret disclosure via commit-history ingestion (score 6, mitigated). Closed the pre-existing intake write-gate bypass (#63): `WriteValidator` now runs per candidate in the intake orchestrator sink for ALL intake sources, skip-not-abort, with redacted skip surfacing. Controls recorded: PATTERN-not-raw-diff storage, lazy per-candidate diff fetch confined to `GitCliAdapter`, hex-validated SHA subprocess arguments, reuse of provisional `Intake` provenance (no new trust-bearing enum value). |
 | 1.10 | 2026-07-11 | Steve Hansen (Claude Code session) | Interop intake (#66): AGENTS.md ingest (repo-local, auto-applies, rides the per-candidate sink scan) + Claude Code native memory import (out-of-repo read — added I-8, score 4, opt-in verb, path-constrained to the resolved per-project memory dir; TB-6 description extended) + AGENTS.md export (`eidet export --format agents`, existing export surface, no new boundary). |
 | 1.11 | 2026-07-11 | Steve Hansen (Claude Code session) | Claude memory-tool backend (#41): new external ingestion surface (`memory_20250818` over `POST /api/eidet/memory-tool` + `Eidet.Sdk.Anthropic` adapter, faithful blobs in `memoryfiles/*`). Added T-17 path traversal via memory-tool paths (`MemoryPath` choke point), I-9 secrets persisted via memory-tool writes (always-on `ScanSecrets`, Reject default / opt-in Redact), D-7 unbounded file growth (`MaxFileBytes` cap; file-count cap recommended), E-6 unauthorized access via the endpoint (behind `ApiAuthGate`, `write:all`). Data classification + §2.7 note + controls summary row for memory-tool files. |
+| 1.12 | 2026-07-20 | Steve Hansen (Claude Code session) | Live enrichment config reload: added E-7 (score 3) for the new admin-scoped `POST /api/config/enrichment/reload` endpoint (re-reads local config.json only, no payload). §1.1 description updated for OpenAI-compatible enrichment backends (LM Studio). |
 
 ---
 

@@ -150,34 +150,58 @@ public sealed class SetupCommand : AsyncCommand<SetupCommand.Settings>
             }
         }
 
-        // ── Step 2: Ollama (optional) ────────────────────────────────────
+        // ── Step 2: Enrichment backend (optional) ────────────────────────
 
         AnsiConsole.WriteLine();
-        var ollamaConnected = false;
-        try
-        {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            var resp = await http.GetAsync($"{config.Enrichment.Url.TrimEnd('/')}/api/version", cancellation);
-            ollamaConnected = resp.IsSuccessStatusCode;
-        }
-        catch { }
+        var backends = await EnrichmentDetector.DetectAsync(config.Enrichment, cancellation);
 
-        if (ollamaConnected)
+        if (backends.Count == 0)
         {
-            AnsiConsole.MarkupLine($"  [green]✓[/] Ollama detected at {config.Enrichment.Url}");
-            if (!settings.NonInteractive)
-            {
-                config.Enrichment.Enabled = AnsiConsole.Confirm("  Enable Ollama enrichment?", defaultValue: true);
-            }
-            else
-            {
-                config.Enrichment.Enabled = true;
-            }
-            changed = true;
+            AnsiConsole.MarkupLine("  [dim]No enrichment backend found (Ollama or LM Studio — optional).[/]");
+            AnsiConsole.MarkupLine("  [dim]Configure later with: eidet enrichment setup[/]");
         }
         else
         {
-            AnsiConsole.MarkupLine("  [dim]Ollama not found (enrichment disabled — optional)[/]");
+            foreach (var d in backends)
+                AnsiConsole.MarkupLine($"  [green]✓[/] {Markup.Escape(d.Describe())} detected");
+
+            // Single hit configures itself; a tie asks. Non-interactive keeps
+            // DetectAsync's Ollama-first ordering — the pre-detection default.
+            var backend = backends[0];
+            if (backends.Count > 1 && !settings.NonInteractive)
+            {
+                var descriptions = backends.Select(d => d.Describe()).ToList();
+                var picked = AnsiConsole.Prompt(new SelectionPrompt<string>()
+                    .Title("  Multiple backends found — which one should Eidet use?")
+                    .AddChoices(descriptions));
+                backend = backends[descriptions.IndexOf(picked)];
+            }
+
+            var enable = settings.NonInteractive
+                || AnsiConsole.Confirm($"  Enable {backend.Label} enrichment?", defaultValue: true);
+            if (enable)
+            {
+                config.Enrichment.Enabled = true;
+                config.Enrichment.Provider = backend.Provider;
+                config.Enrichment.Url = backend.Url;
+
+                // Ollama keeps the configured model (pullable later); an OpenAI-compatible
+                // server only works with a model id from its own list.
+                if (backend.Provider == EnrichmentProvider.OpenAiCompatible && backend.Models.Count > 0
+                    && !backend.Models.Contains(config.Enrichment.Model, StringComparer.OrdinalIgnoreCase))
+                {
+                    config.Enrichment.Model = settings.NonInteractive || backend.Models.Count == 1
+                        ? backend.Models[0]
+                        : AnsiConsole.Prompt(new SelectionPrompt<string>()
+                            .Title("  Model:").PageSize(15).AddChoices(backend.Models));
+                    AnsiConsole.MarkupLine($"  Model: {Markup.Escape(config.Enrichment.Model)}");
+                }
+            }
+            else
+            {
+                config.Enrichment.Enabled = false;
+            }
+            changed = true;
         }
 
         // ── Step 3: Save config ──────────────────────────────────────────

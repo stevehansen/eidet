@@ -124,6 +124,7 @@ public class ApiKeyServiceTests
     public void GetRequiredScope_AdminOperations()
     {
         Assert.Equal("admin", ApiKeyService.GetRequiredScope("POST", "/api/maintenance"));
+        Assert.Equal("admin", ApiKeyService.GetRequiredScope("POST", "/api/config/enrichment/reload"));
     }
 
     [Fact]

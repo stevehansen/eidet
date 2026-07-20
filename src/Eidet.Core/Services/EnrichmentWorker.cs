@@ -29,10 +29,12 @@ public sealed class EnrichmentWorker : IDisposable
 
     /// <summary>
     /// Creates the subscription (idempotent) and starts the background worker.
-    /// Does nothing if enrichment is not available.
+    /// Does nothing if enrichment is not available or the worker already runs —
+    /// safe to call again after an enrichment config reload enables enrichment.
     /// </summary>
     public async Task StartAsync(CancellationToken ct)
     {
+        if (_workerTask is not null) return;
         if (!_enrichment.IsAvailable) return;
 
         await EnsureSubscriptionAsync(ct);

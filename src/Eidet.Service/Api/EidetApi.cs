@@ -67,6 +67,12 @@ public class EidetApiServer
 
     public string BaseUrl => _baseUrl;
 
+    /// <summary>
+    /// Applies a fresh enrichment config to the running host. Settable after construction
+    /// because the host is built around this server (same pattern as MemoryService.LooseEnds).
+    /// </summary>
+    public Func<CancellationToken, Task<EnrichmentReloadResult>>? EnrichmentReloadHandler { get; set; }
+
     public async Task RunAsync(CancellationToken ct)
     {
         _listener.Start();
@@ -127,6 +133,26 @@ public class EidetApiServer
         }
     }
 
+    private async Task ReloadEnrichment(HttpListenerContext ctx, CancellationToken ct)
+    {
+        if (EnrichmentReloadHandler is null)
+        {
+            await HttpJson.WriteAsync(ctx, new { error = "Enrichment reload not available in this host" }, 503);
+            return;
+        }
+
+        var result = await EnrichmentReloadHandler(ct);
+        await HttpJson.WriteAsync(ctx, new
+        {
+            reloaded = true,
+            enabled = result.Enabled,
+            provider = result.Provider,
+            url = result.Url,
+            model = result.Model,
+            healthy = result.Healthy,
+        });
+    }
+
     private ApiRouter BuildRouter()
     {
         var r = new ApiRouter();
@@ -152,6 +178,8 @@ public class EidetApiServer
         r.MapPost("/api/eidet/consolidate", (ctx, _, ct) => _memoryBulk.Consolidate(ctx, ct));
         r.MapPost("/api/eidet/reflect", (ctx, _, ct) => _memoryBulk.Reflect(ctx, ct));
         r.MapPost("/api/maintenance", (ctx, _, ct) => _maintenanceEndpoints.Maintenance(ctx, ct));
+        // Admin scope enforced by the /api/config prefix rule in ApiKeyService.GetRequiredScope
+        r.MapPost("/api/config/enrichment/reload", (ctx, _, ct) => ReloadEnrichment(ctx, ct));
         r.MapGet("/api/eidet/export", (ctx, _, ct) => _memoryBulk.Export(ctx, ct));
         r.MapPost("/api/eidet/packs/export", (ctx, _, ct) => _memoryBulk.PackExport(ctx, ct));
         r.MapPost("/api/eidet/packs/import", (ctx, _, ct) => _memoryBulk.PackImport(ctx, ct));

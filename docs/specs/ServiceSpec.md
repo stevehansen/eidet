@@ -207,6 +207,7 @@ All endpoints on `localhost:19380` (configurable). Provided for tool integration
 | `GET` | `/api/config` | Read configuration |
 | `PUT` | `/api/config` | Update configuration |
 | `POST` | `/api/maintenance` | Trigger maintenance run |
+| `POST` | `/api/config/enrichment/reload` | Reapply enrichment config on the running service (admin scope) |
 
 ---
 
@@ -222,9 +223,10 @@ Interactive wizard that:
    - If found: suggests using it, offers to create database
    - If not found: offers embedded mode or installation help
 2. **Tests RavenDB connection** — creates test document, verifies vector search works
-3. **Detects Ollama** — checks localhost:11434
-   - If found: suggests enabling enrichment, tests model availability
-   - If not found: explains benefits, offers skip (enrichment is optional)
+3. **Detects enrichment backends** — probes both Ollama (localhost:11434, `/api/version`) and OpenAI-compatible servers such as LM Studio (localhost:1234, `/v1/models`), plus the currently configured URL
+   - Exactly one found: suggests enabling it; a tie asks which to use (non-interactive prefers Ollama)
+   - OpenAI-compatible servers get their model picked from the live `/v1/models` list (a model id from the server is required for it to work at all)
+   - None found: explains benefits, offers skip (enrichment is optional; `eidet enrichment setup` configures it later)
 4. **Configures MCP** — detects Claude Code, Claude Desktop, offers to add MCP config
 5. **Installs service** — registers as system service, starts it
 6. **Runs first intake** — if a project directory was provided, runs intake immediately
@@ -625,6 +627,23 @@ eidet instructions                     # Print memory usage instructions (stdout
 eidet instructions --install           # Append to ~/.claude/CLAUDE.md
 eidet instructions --project           # Create in project CLAUDE.md
 ```
+
+### Enrichment Configuration
+
+```bash
+eidet enrichment setup                 # Interactive wizard: detect Ollama/LM Studio, pick
+                                       # provider + URL + model (from the backend's live model
+                                       # list), save all keys atomically, offer live-apply
+eidet enrichment reload                # Tell the running service to reapply the Enrichment
+                                       # config section without a restart (POST
+                                       # /api/config/enrichment/reload; --api-key <KEY> when
+                                       # auth is enabled — requires admin scope)
+```
+
+The wizard exists so the four coupled keys (`enrichment.enabled/provider/url/model`) can never
+end up half-edited the way sequential `eidet config set` calls can. Live reload swaps the
+enrichment adapter, retargets the health monitor probe, and starts the enrich-on-store worker
+if enrichment just became enabled; drift-review/reflection settings still need a restart.
 
 ### Ollama Management
 

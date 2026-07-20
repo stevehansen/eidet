@@ -24,11 +24,11 @@ public sealed class HealthMonitor : IDisposable
     public event Action<string, bool, string>? OnStatusChanged;
 
     private readonly IEidetStore _store;
-    private readonly HttpClient? _enrichmentHttp;
-    private readonly bool _enrichmentEnabled;
-    private readonly string _enrichmentModel;
-    private readonly string _enrichmentUrl;
-    private readonly string _probePath;
+    private HttpClient? _enrichmentHttp;
+    private bool _enrichmentEnabled;
+    private string _enrichmentModel;
+    private string _enrichmentUrl;
+    private string _probePath;
     private readonly string _ravenUrl;
     private readonly Timer _timer;
     private readonly CancellationToken _ct;
@@ -71,6 +71,30 @@ public sealed class HealthMonitor : IDisposable
     }
 
     public HealthState CurrentState => new(_ravenHealthy, _enrichmentHealthy);
+
+    /// <summary>
+    /// Points the enrichment probe at a new backend after an enrichment config reload and
+    /// announces the new target via <see cref="OnStatusChanged"/>. A probe already in flight
+    /// on the old client lands in the tick's catch and is dropped.
+    /// </summary>
+    public void ReconfigureEnrichment(bool enabled, EnrichmentProvider provider, string model, string url, bool healthy)
+    {
+        var oldHttp = _enrichmentHttp;
+        _enrichmentModel = model;
+        _enrichmentUrl = url;
+        _probePath = ProbePathFor(provider);
+        _enrichmentHttp = enabled
+            ? new HttpClient { BaseAddress = new Uri(url.TrimEnd('/')), Timeout = TimeSpan.FromSeconds(5) }
+            : null;
+        _enrichmentEnabled = enabled;
+        _enrichmentHealthy = healthy;
+        oldHttp?.Dispose();
+
+        var detail = !enabled ? "Disabled (config reload)"
+            : healthy ? $"Reloaded — Connected ({model} @ {url})"
+            : $"Reloaded — Unavailable ({model} @ {url})";
+        OnStatusChanged?.Invoke("Enrichment", !enabled || healthy, detail);
+    }
 
     public void Start()
     {

@@ -368,6 +368,84 @@ public class EnrichmentServiceTests
         Assert.IsType<OllamaEnrichmentAdapter>(GetPort(svc));
     }
 
+    // ─── Reconfigure (live enrichment config reload) ─────────────────────
+
+    [Fact]
+    public void Reconfigure_SwapsAdapterAndModelName()
+    {
+        using var svc = EnrichmentService.CreateNull();
+        Assert.Null(svc.ModelName);
+
+        svc.Reconfigure(new EnrichmentConfig
+        {
+            Enabled = true,
+            Provider = EnrichmentProvider.OpenAiCompatible,
+            Url = "http://localhost:1234",
+            Model = "google/gemma-4-12b",
+        });
+
+        Assert.IsType<OpenAiEnrichmentAdapter>(GetPort(svc));
+        Assert.Equal("google/gemma-4-12b", svc.ModelName);
+    }
+
+    [Fact]
+    public void Reconfigure_Disabled_SwapsToNullAdapter_AndClearsModelName()
+    {
+        var cfg = new EnrichmentConfig { Enabled = true, Provider = EnrichmentProvider.Ollama, Url = "http://localhost:11434", Model = "gemma4" };
+        using var svc = EnrichmentService.CreateFromConfig(cfg);
+        Assert.Equal("gemma4", svc.ModelName);
+
+        svc.Reconfigure(new EnrichmentConfig { Enabled = false });
+
+        Assert.IsType<NullEnrichmentAdapter>(GetPort(svc));
+        Assert.Null(svc.ModelName);
+        Assert.False(svc.IsAvailable);
+    }
+
+    [Fact]
+    public void Reconfigure_DisposesOwnedOldAdapter()
+    {
+        var adapter = new DisposeTrackingAdapter();
+        using var svc = new EnrichmentService(adapter);
+
+        svc.Reconfigure(new EnrichmentConfig { Enabled = false });
+
+        Assert.True(adapter.Disposed);
+    }
+
+    [Fact]
+    public void Reconfigure_DoesNotDisposeUnownedOldAdapter()
+    {
+        var adapter = new DisposeTrackingAdapter();
+        using var svc = new EnrichmentService(adapter, ownsPort: false);
+
+        svc.Reconfigure(new EnrichmentConfig { Enabled = false });
+
+        Assert.False(adapter.Disposed);
+    }
+
+    [Fact]
+    public void Reconfigure_ThenDispose_DisposesTheNewAdapter()
+    {
+        // The swapped-in adapter is always owned, even when the original port was not.
+        var original = new DisposeTrackingAdapter();
+        var svc = new EnrichmentService(original, ownsPort: false);
+        svc.Reconfigure(new EnrichmentConfig { Enabled = true, Provider = EnrichmentProvider.Ollama, Url = "http://localhost:19999", Model = "gemma4" });
+
+        svc.Dispose(); // disposes the OllamaEnrichmentAdapter, not the unowned original
+
+        Assert.False(original.Disposed);
+    }
+
+    private sealed class DisposeTrackingAdapter : IEnrichmentPort, IDisposable
+    {
+        public bool Disposed { get; private set; }
+        public bool IsAvailable => true;
+        public Task<string?> CompleteAsync(EnrichmentRequest request, CancellationToken ct = default) => Task.FromResult<string?>(null);
+        public Task<bool> CheckHealthAsync(CancellationToken ct = default) => Task.FromResult(true);
+        public void Dispose() => Disposed = true;
+    }
+
     // ─── EnrichmentPrompts.Build parity ───────────────────────────────────
     // Guards against the two adapters diverging: the shared builder must produce
     // exactly the prompt text the original per-adapter logic produced.

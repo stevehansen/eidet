@@ -11,8 +11,9 @@ namespace Eidet.Core.Enrichment;
 /// </summary>
 public sealed class EnrichmentService : IDisposable
 {
-    private readonly IEnrichmentPort _port;
-    private readonly bool _ownsPort;
+    private IEnrichmentPort _port;
+    private bool _ownsPort;
+    private readonly object _swapLock = new();
 
     public EnrichmentService(IEnrichmentPort port, bool ownsPort = true, string? modelName = null)
     {
@@ -33,16 +34,45 @@ public sealed class EnrichmentService : IDisposable
     /// </summary>
     public static EnrichmentService CreateFromConfig(EnrichmentConfig cfg)
     {
-        if (!cfg.Enabled) return CreateNull();
+        var (port, model) = CreatePort(cfg);
+        return new EnrichmentService(port, modelName: model);
+    }
+
+    private static (IEnrichmentPort Port, string? ModelName) CreatePort(EnrichmentConfig cfg)
+    {
+        if (!cfg.Enabled) return (new NullEnrichmentAdapter(), null);
         return cfg.Provider == EnrichmentProvider.OpenAiCompatible
-            ? new EnrichmentService(new OpenAiEnrichmentAdapter(cfg.Url, cfg.Model), modelName: cfg.Model)
-            : CreateOllama(cfg.Url, cfg.Model);
+            ? (new OpenAiEnrichmentAdapter(cfg.Url, cfg.Model), cfg.Model)
+            : (new OllamaEnrichmentAdapter(cfg.Url, cfg.Model), cfg.Model);
+    }
+
+    /// <summary>
+    /// Swaps the backing adapter to whatever <paramref name="cfg"/> asks for — the same mapping
+    /// as <see cref="CreateFromConfig"/> — so a running service can apply enrichment config
+    /// changes (enabled/provider/url/model) without a restart. Every consumer holding this
+    /// facade sees the new backend on its next call; a call already in flight on the old
+    /// adapter fails softly (adapters swallow transport errors) and that enrichment is skipped.
+    /// </summary>
+    public void Reconfigure(EnrichmentConfig cfg)
+    {
+        var (port, model) = CreatePort(cfg);
+        IEnrichmentPort old;
+        bool disposeOld;
+        lock (_swapLock)
+        {
+            old = _port;
+            disposeOld = _ownsPort;
+            _port = port;
+            _ownsPort = true;
+            ModelName = model;
+        }
+        if (disposeOld && old is IDisposable d) d.Dispose();
     }
 
     public bool IsAvailable => _port.IsAvailable;
 
     /// <summary>Model identifier recorded on drift reviews; null when enrichment is disabled.</summary>
-    public string? ModelName { get; }
+    public string? ModelName { get; private set; }
 
     public Task<bool> CheckHealthAsync(CancellationToken ct = default) => _port.CheckHealthAsync(ct);
 

@@ -30,7 +30,7 @@ Design decisions live in `docs/specs/`:
 - **Write gates**: `WriteValidator` chains rules (13 secret patterns + signal/low-signal + self-talk) — deterministic, local, always-on; single entry point from `MemoryService.StoreAsync` and `UpdateMemoryAsync`; secret scan also runs per candidate inside the intake pipeline and on every memory-tool file write
 - **Integrity**: write-time `ConflictGate` + soft quarantine + append-only poison log; runtime post-forget verification (`IntegrityAuditor` over every read path, nightly `ForgetIntegrityStage`); config-gated `BudgetEviction`/`Deprecate` retention stages with derived `RetentionScore`
 - **Stage filter**: optional `FunctionalStage` dimension (`stage` on store/recall/edit) — None-as-wildcard hard pre-filter at recall
-- **Optional enrichment**: Ollama background workers generate one-liners, summaries, foresight hints, entity supplements
+- **Optional enrichment**: local LLM background workers (Ollama or any OpenAI-compatible server, e.g. LM Studio) generate one-liners, summaries, foresight hints, entity supplements; `eidet enrichment setup` wizard detects backends and configures atomically, `eidet enrichment reload` applies config to the running service without a restart
 - **Layers**: Local (rw) + Shared/Base (ro); auto-mount on pack import
 - **Interfaces**: MCP stdio, MCP HTTP, REST API, CLI, Web UI (`/ui`), SDKs (TS/Python/C#)
 - **Operations**: API key auth (4 scopes), hooks (6 lifecycle events), persistent scheduler (RavenDB Refresh), quality dashboard, backup/restore, usage analytics
@@ -135,6 +135,7 @@ Base: `http://localhost:19380`
 | GET  | `/api/eidet/export?repo=...&format=agents` | Render memories as an AGENTS.md instruction file |
 | POST | `/api/eidet/memory-tool?repo=...` | Claude memory-tool (`memory_20250818`) command relay |
 | POST | `/api/maintenance` | Run maintenance pipeline |
+| POST | `/api/config/enrichment/reload` | Reapply enrichment config on the running service (admin scope) |
 | POST | `/mcp?repo=...` | MCP JSON-RPC over HTTP |
 | GET  | `/ui` | Web UI SPA |
 

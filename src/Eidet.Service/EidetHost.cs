@@ -13,6 +13,9 @@ using Raven.Client.Documents;
 
 namespace Eidet.Service;
 
+/// <summary>What an enrichment config reload applied, as reported to the caller.</summary>
+public sealed record EnrichmentReloadResult(bool Enabled, string Provider, string Url, string Model, bool Healthy);
+
 /// <summary>
 /// Shared hosting logic used by both the console ServeCommand and the Windows Service.
 /// </summary>
@@ -24,21 +27,22 @@ public sealed class EidetHost : IDisposable
     private readonly ScheduledTaskService _scheduler;
     private readonly EnrichmentWorker _enrichmentWorker;
     private readonly EidetApiServer _apiServer;
+    private readonly EidetConfig _config;
     private HealthMonitor? _healthMonitor;
 
     public string BindAddress { get; }
     public int Port { get; }
     public StorageMode StorageMode { get; }
-    public bool EnrichmentEnabled { get; }
-    public EnrichmentProvider EnrichmentProvider { get; }
+    public bool EnrichmentEnabled { get; private set; }
+    public EnrichmentProvider EnrichmentProvider { get; private set; }
     public bool EnrichmentHealthy { get; private set; }
-    public string EnrichmentModel { get; }
+    public string EnrichmentModel { get; private set; }
     public bool AuthEnabled { get; }
     public int ApiKeyCount { get; }
     public int MaintenanceIntervalHours { get; }
     public int ConsolidationIntervalHours { get; }
     public string RavenUrl { get; }
-    public string EnrichmentUrl { get; }
+    public string EnrichmentUrl { get; private set; }
     public bool HooksEnabled { get; }
 
     private EidetHost(IDocumentStore store, IEidetStore eidetStore, EnrichmentService enrichment,
@@ -52,6 +56,7 @@ public sealed class EidetHost : IDisposable
         _scheduler = scheduler;
         _enrichmentWorker = enrichmentWorker;
         _apiServer = apiServer;
+        _config = config;
         BindAddress = bind;
         Port = port;
         StorageMode = config.Storage.Mode;
@@ -143,7 +148,35 @@ public sealed class EidetHost : IDisposable
         });
         var enrichmentWorker = new EnrichmentWorker(store, enrichment, memorySvc);
 
-        return new EidetHost(store, eidetStore, enrichment, scheduler, enrichmentWorker, apiServer, config, actualBind, actualPort);
+        var host = new EidetHost(store, eidetStore, enrichment, scheduler, enrichmentWorker, apiServer, config, actualBind, actualPort);
+        apiServer.EnrichmentReloadHandler = host.ReloadEnrichmentAsync;
+        return host;
+    }
+
+    /// <summary>
+    /// Re-reads the Enrichment section of config.json and applies it to the running service:
+    /// swaps the enrichment adapter (every consumer shares the facade), retargets the health
+    /// monitor's probe, and starts the enrich-on-store worker when enrichment just became
+    /// enabled. Only the Enrichment section is reapplied — everything else needs a restart.
+    /// </summary>
+    public async Task<EnrichmentReloadResult> ReloadEnrichmentAsync(CancellationToken ct = default)
+    {
+        var fresh = ConfigManager.Load().Enrichment;
+        _config.Enrichment = fresh; // shared root config — keeps /api/status truthful
+        _enrichment.Reconfigure(fresh);
+
+        EnrichmentEnabled = fresh.Enabled;
+        EnrichmentProvider = fresh.Provider;
+        EnrichmentModel = fresh.Model;
+        EnrichmentUrl = fresh.Url;
+        EnrichmentHealthy = fresh.Enabled && await _enrichment.CheckHealthAsync(ct);
+
+        if (fresh.Enabled)
+            await _enrichmentWorker.StartAsync(ct); // no-op when already running or backend down
+
+        _healthMonitor?.ReconfigureEnrichment(fresh.Enabled, fresh.Provider, fresh.Model, fresh.Url, EnrichmentHealthy);
+
+        return new EnrichmentReloadResult(fresh.Enabled, fresh.Provider.ToString(), fresh.Url, fresh.Model, EnrichmentHealthy);
     }
 
     public async Task<bool> CheckEnrichmentAsync(CancellationToken ct = default)

@@ -43,6 +43,70 @@ public class HealthMonitorTests
     }
 
     [Fact]
+    public void ReconfigureEnrichment_FiresStatusChanged_WithNewTarget()
+    {
+        using var cts = new CancellationTokenSource();
+        using var monitor = new HealthMonitor(
+            new StubStore(healthy: true), enrichmentEnabled: true,
+            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            initialEnrichmentHealthy: true, cts.Token);
+
+        var events = new List<(string Component, bool Healthy, string Detail)>();
+        monitor.OnStatusChanged += (c, h, d) => events.Add((c, h, d));
+
+        monitor.ReconfigureEnrichment(enabled: true, EnrichmentProvider.OpenAiCompatible,
+            "google/gemma-4-12b", "http://localhost:1234", healthy: true);
+
+        var e = Assert.Single(events);
+        Assert.Equal("Enrichment", e.Component);
+        Assert.True(e.Healthy);
+        Assert.Contains("google/gemma-4-12b", e.Detail);
+        Assert.Contains("http://localhost:1234", e.Detail);
+        Assert.True(monitor.CurrentState.EnrichmentHealthy);
+    }
+
+    [Fact]
+    public void ReconfigureEnrichment_Disabled_ReportsDisabled()
+    {
+        using var cts = new CancellationTokenSource();
+        using var monitor = new HealthMonitor(
+            new StubStore(healthy: true), enrichmentEnabled: true,
+            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            initialEnrichmentHealthy: true, cts.Token);
+
+        var events = new List<(string Component, bool Healthy, string Detail)>();
+        monitor.OnStatusChanged += (c, h, d) => events.Add((c, h, d));
+
+        monitor.ReconfigureEnrichment(enabled: false, EnrichmentProvider.Ollama,
+            "gemma4", "http://localhost:11434", healthy: false);
+
+        var e = Assert.Single(events);
+        Assert.True(e.Healthy); // disabled is not a problem state
+        Assert.Contains("Disabled", e.Detail);
+        Assert.False(monitor.CurrentState.EnrichmentHealthy);
+    }
+
+    [Fact]
+    public void ReconfigureEnrichment_UnhealthyBackend_ReportsUnavailable()
+    {
+        using var cts = new CancellationTokenSource();
+        using var monitor = new HealthMonitor(
+            new StubStore(healthy: true), enrichmentEnabled: false,
+            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            initialEnrichmentHealthy: false, cts.Token);
+
+        var events = new List<(string Component, bool Healthy, string Detail)>();
+        monitor.OnStatusChanged += (c, h, d) => events.Add((c, h, d));
+
+        monitor.ReconfigureEnrichment(enabled: true, EnrichmentProvider.OpenAiCompatible,
+            "qwen", "http://localhost:1234", healthy: false);
+
+        var e = Assert.Single(events);
+        Assert.False(e.Healthy);
+        Assert.Contains("Unavailable", e.Detail);
+    }
+
+    [Fact]
     public void Dispose_DoesNotThrow()
     {
         using var cts = new CancellationTokenSource();
