@@ -110,6 +110,19 @@ Claude's `memory_20250818` scratch space served by Eidet — distinct from a **M
 | **Translator**     | The single-entry Core module that executes memory-tool commands over **Memory files**; never rewrites bytes semantically   | Handler, dispatcher                    |
 | **Bridge**         | The opt-in, one-way shadow that promotes a written **Memory file** into a **Memory** through the full **Write gate** (off by default) | Sync, mirror, projection |
 
+## Canon (curated knowledge base)
+
+The human-approved subset of a **Repo**'s **Memories**, structured as domain and glossary pages — distinct from the store as a whole (all knowledge) and from the **Portal** (a live view). A **Canon page** *is* a **Memory** and participates in **Recall**; a **Canon draft** is not, and lives in its own `canondrafts/*` collection until an **Operator** **Approves** it.
+
+| Term             | Definition                                                                                              | Aliases to avoid                       |
+| ---------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| **Canon**        | The human-approved subset of **Memories** (**Domain** and **Term** pages) that renders as the repo's knowledge base | KB, wiki, docs                         |
+| **Canon page**   | A **Memory** holding an **Approved** synthesis; `type=Insight`, `canon:*` tagged, `derivedFrom` = members | Concept doc, article                   |
+| **Domain**       | A **Canon page** synthesizing a tag-defined cluster of **Memories**; its own tags declare the membership | Topic, area, cluster                   |
+| **Term**         | A **Canon page** defining one glossary entry (an **Entity** or authored term)                            | Glossary entry, definition             |
+| **Canon draft**  | An LLM-proposed (or UL-seeded) synthesis awaiting **Operator** review; never a **Memory** until **Approved** | Proposal, pending page                 |
+| **Approve**      | The **Operator** act graduating a **Canon draft** into a **Canon page** through the full **Write gate**  | Promote (reserved for **Loose Ends**), accept, merge |
+
 ## Sharing
 
 | Term               | Definition                                                                                         | Aliases to avoid                       |
@@ -142,6 +155,8 @@ Claude's `memory_20250818` scratch space served by Eidet — distinct from a **M
 - A **Loose End** belongs to one **Repo** and the **Local layer** only; it is never written to a **Pack** or **Shared layer**.
 - A **Loose End** stays **Open** until an **Agent** **Resolves** it; nothing closes it automatically — unlike a **Memory**, it does not **FadeMem**-decay or undergo **TTL expiry**.
 - **Resolving** a **Loose End** as **Promoted** produces a **Memory**; **Resolving** it as **Dropped** is *not* the same as **Forget** (which retires a **Memory**).
+- A **Canon page** is a **Memory** and participates in **Recall**; a **Canon draft** is not — it lives in `canondrafts/*` until **Approved**, and **Approve** is the *only* write path into `canon:*`.
+- **Consolidation** and dedup skip **Canon pages** — they are already human-approved syntheses.
 
 ## Example dialogue
 
@@ -185,3 +200,7 @@ Claude's `memory_20250818` scratch space served by Eidet — distinct from a **M
 - **"Done"** — overloaded: a **Loose End** **Resolution kind** (closed-as-handled) AND a **Signal gate** low-signal pattern (the bare word "done" is rejected as **Memory** **Content**). Same word, unrelated meanings.
 - **"Park" vs. "Store"** — both persist, but **Park** creates a **Loose End** (terse, **Secret scanner** only) and **Store** creates a **Memory** (full **Write gate**). They are exposed as distinct MCP tools (`eidet_park`/`eidet_resolve` vs. `eidet_store`/`eidet_forget`).
 - **"Promote" vs. "Supersession"** — both link entries, but **Promote** graduates a **Loose End** into a **Memory** (cross-concept) while **Supersession** replaces a **Memory** with a newer version of itself (same concept).
+- **"Canon" vs. the memory store** — every **Memory** is knowledge, but **Canon** is only the curated, **Operator**-approved subset (**Domain**/**Term** pages). Don't call the whole store a knowledge base.
+- **"Approve" vs. "Promote"** — parallel shape, distinct concepts: **Approve** graduates a **Canon draft** into a **Canon page**; **Promote** graduates a **Loose End** into a **Memory**. Keep the verbs separate.
+- **"Domain"** (Canon) vs. "domain" (DDD-speak) — the **Canon** term means a tag-clustered page; lowercase "domain" in design conversation usually means the business domain. Qualify when ambiguous ("Canon Domain").
+- **"Canon draft" vs. "Loose End"** — both are pending items outside `memories/*`, but a **Canon draft** is proposed *knowledge* awaiting review while a **Loose End** is open *work* awaiting action.

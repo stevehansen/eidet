@@ -18,6 +18,7 @@ Design decisions live in `docs/specs/`:
 | [PortalSpec.md](docs/specs/PortalSpec.md) | Per-repo Portal — generated, audited Web UI state view (`/api/eidet/portal`); live render, source-traceable claims |
 | [LooseEndSpec.md](docs/specs/LooseEndSpec.md) | *(Designed)* Loose Ends — park/resolve open-work via `eidet_park`/`eidet_resolve`; separate `looseends/*` collection, no decay, wake-up slice + recall ride-along, promote-to-memory |
 | [ValenceSpec.md](docs/specs/ValenceSpec.md) | *(Designed)* Negative knowledge — `Valence` stance dimension (Neutral/Affirming/Refuting/Cautionary) orthogonal to `MemoryType`; `negative:true` sugar on `eidet_store`, polarity guards on dup-gate/dedup/consolidation, ✗/⚠ surfacing |
+| [CanonSpec.md](docs/specs/CanonSpec.md) | *(Designed)* Canon — curated knowledge base: propose→review→approve loop over domain/glossary syntheses, drafts in `canondrafts/*`, approved pages as `canon:*` memories, Portal convergence, OKF v0.1 bundle export |
 
 - Architecture deep dive: [docs/deep-dive.md](docs/deep-dive.md)
 - Phase-by-phase implementation history: [docs/phases.md](docs/phases.md)
