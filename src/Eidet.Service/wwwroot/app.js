@@ -1745,8 +1745,12 @@
         body: JSON.stringify({ repo: repoPathMap[currentRepo] || currentRepo, source: source }),
       });
       var body = await res.json();
-      result.textContent = 'Approved ' + (body.approved || 0) + ', failed ' + (body.failed || 0);
-      loadCanon();
+      if (res.ok) {
+        result.textContent = 'Approved ' + (body.approved || 0) + ', failed ' + (body.failed || 0);
+        loadCanon();
+      } else {
+        result.textContent = 'Bulk approve failed: ' + (body.error || res.status);
+      }
     } catch (e) {
       result.textContent = 'Error: ' + e.message;
     }
