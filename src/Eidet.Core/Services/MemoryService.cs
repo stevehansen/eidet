@@ -111,6 +111,11 @@ public sealed class MemoryService
         // Duplicate detection runs before the gate — no point firing PreStore for content
         // we're going to deduplicate against an existing entry.
         var duplicate = await _store.FindDuplicateAsync(normalizedRepoId, opts.Content, DuplicateThreshold, ct);
+        // A correction whose nearest match IS its own target is not a duplicate — replacing the
+        // incumbent with near-identical content is exactly what a supersession does (e.g. a canon
+        // page re-approved after a small edit). A match on any OTHER memory still dedupes below.
+        if (duplicate is not null && isCorrection && duplicate.Id == opts.Supersedes)
+            duplicate = null;
         // Polarity guard: a content-similar match that takes the OPPOSITE hard stance is a real
         // contradiction, not a duplicate — let it through so "X does not work" survives alongside "X works".
         if (duplicate is not null && !ValencePolarity.Conflicts(duplicate.Valence, entry.Valence))

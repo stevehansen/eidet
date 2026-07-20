@@ -36,6 +36,7 @@ Design decisions live in `docs/specs/`:
 - **Interfaces**: MCP stdio, MCP HTTP, REST API, CLI, Web UI (`/ui`), SDKs (TS/Python/C#)
 - **Operations**: API key auth (4 scopes), hooks (6 lifecycle events), persistent scheduler (RavenDB Refresh), quality dashboard, backup/restore, usage analytics
 - **Curation**: Versioned `PUT` / REST edits (handler available off-MCP) with `content_sha256` optimistic concurrency (`If-Match` → 409 on stale), structure-preserving `RedactAsync` content erasure, AI-assisted enrichment via `/api/eidet/enrich`, Web UI inline editing
+- **Canon (P1, Terms)**: curated knowledge base — deterministic term drafts (entity aggregation + `UBIQUITOUS_LANGUAGE.md` seed) staged in a `canondrafts/*` side collection, reviewed in the Web UI Canon panel, and Approved into `canon:term:<slug>` `Insight` memories through the full write gate (the sole write edge, via `ICanonMintPort`); regeneration is damped/idempotent, consolidation + dedup skip `canon:*` pages, and draft prose is secret-scanned at creation. REST/Web-UI only (no MCP surface)
 - **Pack format**: Human-readable markdown with YAML frontmatter — ScribeGate compatible
 - **Test coverage**: 1216 tests (Core + Service + Integration + Bench + Benchmark)
 
@@ -135,6 +136,12 @@ Base: `http://localhost:19380`
 | POST | `/api/eidet/consolidate` | Consolidate observations → insights |
 | GET  | `/api/eidet/export?repo=...&format=agents` | Render memories as an AGENTS.md instruction file |
 | POST | `/api/eidet/memory-tool?repo=...` | Claude memory-tool (`memory_20250818`) command relay |
+| GET  | `/api/eidet/canon/drafts?repo=...` | List pending Canon drafts |
+| GET  | `/api/eidet/canon/drafts/{id}` | Canon draft detail (hydrated citations) |
+| POST | `/api/eidet/canon/drafts/{id}/approve` | Approve a Canon draft (optional `{ editedContent }`) → mints a `canon:*` page |
+| POST | `/api/eidet/canon/drafts/{id}/reject` | Reject a Canon draft (`{ reason }`) with cooldown |
+| POST | `/api/eidet/canon/regenerate` | Regenerate Canon drafts (damped, idempotent) |
+| POST | `/api/eidet/canon/bulk-approve` | Approve all pending drafts from one source (`{ repo, source }`) |
 | POST | `/api/maintenance` | Run maintenance pipeline |
 | POST | `/api/config/enrichment/reload` | Reapply enrichment config on the running service (admin scope) |
 | POST | `/mcp?repo=...` | MCP JSON-RPC over HTTP |

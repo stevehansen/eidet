@@ -18,6 +18,7 @@
     setupNavigation();
     setupEventListeners();
     setupCurationListeners();
+    setupCanonListeners();
     setupPortalControls();
     await loadServiceInfo();
     await loadRepos();
@@ -61,6 +62,7 @@
       if (name === 'memory' && arg) showDetail(arg);
     }
     else if (pageId === 'portal') loadPortal();
+    else if (pageId === 'canon') loadCanon();
     else if (pageId === 'graph') loadGraph();
     else if (pageId === 'timeline') loadTimeline();
     else if (pageId === 'usage') loadUsage();
@@ -1560,6 +1562,194 @@
       localStorage.setItem('eidet.portal.provenance', on ? '1' : '0');
       document.getElementById('page-portal').classList.toggle('show-provenance', on);
     });
+  }
+
+  // ─── Canon ─────────────────────────────────────────────────────────
+
+  var currentCanonDraft = null; // the draft currently open in the detail panel
+
+  // Canon's file-backed source (UL.md) needs the raw filesystem path, not the normalized id — pass the
+  // original path when we know it; the RepoId is normalized server-side either way.
+  function canonRepoParam() {
+    return encodeURIComponent(repoPathMap[currentRepo] || currentRepo);
+  }
+
+  function setupCanonListeners() {
+    document.getElementById('canonRegenerate').addEventListener('click', regenerateCanonDrafts);
+    document.getElementById('canonBulkApproveUl').addEventListener('click', function () {
+      bulkApproveCanon('ubiquitous-language');
+    });
+  }
+
+  async function loadCanon() {
+    if (!currentRepo) return;
+    var list = document.getElementById('canonDraftList');
+    list.innerHTML = '<div class="loading">Loading...</div>';
+    document.getElementById('canonActionResult').textContent = '';
+
+    try {
+      var data = await api('/api/eidet/canon/drafts?repo=' + canonRepoParam() + '&limit=100');
+      var drafts = data.drafts || [];
+      if (drafts.length === 0) {
+        list.innerHTML = '<div class="empty-state">No pending Canon drafts. Try "Regenerate drafts".</div>';
+        return;
+      }
+      list.innerHTML = drafts.map(canonDraftItemHtml).join('');
+      list.querySelectorAll('.canon-draft-item').forEach(function (item) {
+        item.addEventListener('click', function () {
+          list.querySelectorAll('.canon-draft-item').forEach(function (i) { i.classList.remove('selected'); });
+          this.classList.add('selected');
+          showCanonDraft(this.dataset.id);
+        });
+      });
+    } catch (_) {
+      list.innerHTML = '<div class="empty-state">Error loading Canon drafts</div>';
+    }
+  }
+
+  // Draft summaries are server-generated but Title/Slug originate in untrusted member content — escape all.
+  function canonDraftItemHtml(d) {
+    var badges = '<span class="memory-type insight">' + escHtml(d.kind) + '</span>';
+    if (d.replacesExisting) badges += '<span class="canon-badge">supersedes</span>';
+    var meta = d.memberCount + ' citation' + (d.memberCount === 1 ? '' : 's');
+    return '<div class="memory-item canon-draft-item" data-id="' + escAttr(d.id) + '">' +
+      '<div class="memory-header">' + badges +
+      '<span class="memory-date">' + formatDate(d.proposedAt) + '</span></div>' +
+      '<div class="memory-content">' + escHtml(d.title) + '</div>' +
+      '<div class="memory-tags"><span class="tag">' + escHtml(d.slug) + '</span>' +
+      '<span class="canon-meta">' + escHtml(meta) + '</span></div>' +
+      '</div>';
+  }
+
+  async function showCanonDraft(id) {
+    var panel = document.getElementById('canonDetailPanel');
+    panel.innerHTML = '<div class="loading">Loading...</div>';
+    try {
+      var detail = await api('/api/eidet/canon/drafts/' + encodeURIComponent(id));
+      currentCanonDraft = detail;
+      renderCanonDetail(detail);
+    } catch (_) {
+      panel.innerHTML = '<div class="detail-placeholder">Could not load draft</div>';
+    }
+  }
+
+  // Render-trust gate: draft prose and citation text are untrusted content — every field is escaped
+  // (textContent for the editor, escHtml for prose/citations). Citations link into the memory route.
+  function renderCanonDetail(detail) {
+    var panel = document.getElementById('canonDetailPanel');
+    var head = detail.head;
+
+    var html = '<div class="detail-actions">';
+    html += '<button class="btn btn-success" onclick="window.__canonApprove()">Approve</button>';
+    html += '<button class="btn btn-warning" onclick="window.__canonReject()">Reject</button>';
+    html += '</div>';
+
+    html += '<div class="detail-section"><label>Title</label><div class="value">' + escHtml(head.title) + '</div></div>';
+    html += '<div class="detail-section"><label>Tag</label><span class="tag">' +
+      escHtml('canon:' + head.kind.toLowerCase() + ':' + head.slug) + '</span></div>';
+
+    html += '<div class="detail-section"><label>Proposed content (editable)</label>' +
+      '<textarea id="canonEditContent" class="form-control form-textarea" rows="8"></textarea></div>';
+
+    html += '<div class="detail-section"><label>Citations (' + detail.citations.length + ')</label>';
+    if (detail.citations.length === 0) {
+      html += '<div class="value canon-empty">No cited memories (authored term).</div>';
+    } else {
+      html += '<ul class="canon-citations">';
+      detail.citations.forEach(function (c) {
+        html += '<li><a href="' + escAttr(c.href) + '">' +
+          '<span class="memory-type ' + escAttr(String(c.type).toLowerCase()) + '">' + escHtml(c.type) + '</span> ' +
+          escHtml(c.oneLiner) + '</a></li>';
+      });
+      html += '</ul>';
+    }
+    html += '</div>';
+
+    html += '<div id="canonDetailResult" class="form-result"></div>';
+    panel.innerHTML = html;
+    // Set the editor value via textContent (never innerHTML) so proposed prose can't inject markup.
+    document.getElementById('canonEditContent').value = detail.proposedContent;
+  }
+
+  window.__canonApprove = async function () {
+    if (!currentCanonDraft) return;
+    var result = document.getElementById('canonDetailResult');
+    var edited = document.getElementById('canonEditContent').value;
+    result.textContent = 'Approving...';
+    try {
+      var res = await fetch(API + '/api/eidet/canon/drafts/' + encodeURIComponent(currentCanonDraft.head.id) + '/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ editedContent: edited }),
+      });
+      var body = await res.json();
+      if (res.ok && body.success) {
+        result.textContent = 'Approved → ' + (body.mintedMemoryId || 'memory minted');
+        currentCanonDraft = null;
+        loadCanon();
+        document.getElementById('canonDetailPanel').innerHTML = '<div class="detail-placeholder">Select a draft to review</div>';
+      } else {
+        result.textContent = 'Approve failed: ' + (body.reason || res.status);
+      }
+    } catch (e) {
+      result.textContent = 'Error: ' + e.message;
+    }
+  };
+
+  window.__canonReject = async function () {
+    if (!currentCanonDraft) return;
+    var reason = prompt('Reject reason:');
+    if (!reason) return;
+    var result = document.getElementById('canonDetailResult');
+    result.textContent = 'Rejecting...';
+    try {
+      var res = await fetch(API + '/api/eidet/canon/drafts/' + encodeURIComponent(currentCanonDraft.head.id) + '/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason }),
+      });
+      var body = await res.json();
+      if (res.ok && body.success) {
+        currentCanonDraft = null;
+        loadCanon();
+        document.getElementById('canonDetailPanel').innerHTML = '<div class="detail-placeholder">Draft rejected</div>';
+      } else {
+        result.textContent = 'Reject failed: ' + (body.reason || res.status);
+      }
+    } catch (e) {
+      result.textContent = 'Error: ' + e.message;
+    }
+  };
+
+  async function regenerateCanonDrafts() {
+    if (!currentRepo) return;
+    var result = document.getElementById('canonActionResult');
+    result.textContent = 'Regenerating...';
+    try {
+      var data = await apiPost('/api/eidet/canon/regenerate?repo=' + canonRepoParam());
+      result.textContent = (data.drafts || 0) + ' draft(s) created or refreshed';
+      loadCanon();
+    } catch (e) {
+      result.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  async function bulkApproveCanon(source) {
+    if (!currentRepo) return;
+    var result = document.getElementById('canonActionResult');
+    result.textContent = 'Approving ' + source + ' drafts...';
+    try {
+      var res = await fetch(API + '/api/eidet/canon/bulk-approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo: repoPathMap[currentRepo] || currentRepo, source: source }),
+      });
+      var body = await res.json();
+      result.textContent = 'Approved ' + (body.approved || 0) + ', failed ' + (body.failed || 0);
+      loadCanon();
+    } catch (e) {
+      result.textContent = 'Error: ' + e.message;
+    }
   }
 
   // ─── Timeline ────────────────────────────────────────────────────

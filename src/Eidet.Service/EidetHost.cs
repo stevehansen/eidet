@@ -1,3 +1,5 @@
+using Eidet.Core.Canon;
+using Eidet.Core.Canon.Sources;
 using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
 using Eidet.Core.Enrichment;
@@ -105,6 +107,17 @@ public sealed class EidetHost : IDisposable
         var looseEndSvc = new LooseEndService(looseEndStore, promotion, TimeProvider.System);
         memorySvc.LooseEnds = looseEndSvc;
 
+        // Canon: drafts in their own collection, minted into memories/* only via the gated adapter. The
+        // sources own their reads (store, UL.md); the service reads the store only for citation hydration.
+        var canonDraftStore = new RavenCanonDraftStore(store);
+        var canonMint = new MemoryServiceCanonAdapter(memorySvc, eidetStore);
+        var canonSources = new ICanonDraftSource[]
+        {
+            new EntityAggregationDraftSource(eidetStore),
+            new UbiquitousLanguageDraftSource(),
+        };
+        var canonSvc = new CanonService(canonDraftStore, canonMint, canonSources, eidetStore, TimeProvider.System);
+
         var intakeSvc = new IntakeService(eidetStore, memory: memorySvc);
         var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memory: memorySvc);
         var reflectionEngine = new ReflectionEngine(
@@ -133,6 +146,7 @@ public sealed class EidetHost : IDisposable
             Maintenance = maintenanceRunner,
             Export = exportSvc,
             LooseEnds = looseEndSvc,
+            Canon = canonSvc,
             BindAddress = actualBind,
             Port = actualPort,
             Layers = layerSvc,

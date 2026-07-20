@@ -1,3 +1,4 @@
+using Eidet.Core.Canon;
 using Eidet.Core.Domain;
 using Eidet.Core.Enrichment;
 using Eidet.Core.Memory;
@@ -48,7 +49,11 @@ public sealed class DedupEngine
 
         foreach (var type in types)
         {
-            var entries = await _store.GetTopScoredAsync(repoId, [type], options.CandidatesPerType, ct);
+            // A canon:* page is a human-curated memory; dedup must never fold it into (or away for) a
+            // machine near-duplicate — exclude it from the candidate set (valence-guard precedent).
+            var entries = (await _store.GetTopScoredAsync(repoId, [type], options.CandidatesPerType, ct))
+                .Where(e => !CanonTags.IsCanonPage(e))
+                .ToList();
             var byId = entries.ToDictionary(e => e.Id);
             var claimed = new HashSet<string>();
 

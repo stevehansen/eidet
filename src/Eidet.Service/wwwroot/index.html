@@ -24,6 +24,9 @@
         <a href="#portal" class="nav-link" data-page="portal">
           <span class="icon">&#9788;</span> Portal
         </a>
+        <a href="#canon" class="nav-link" data-page="canon">
+          <span class="icon">&#128220;</span> Canon
+        </a>
         <a href="#browser" class="nav-link" data-page="browser">
           <span class="icon">&#128269;</span> Browser
         </a>
@@ -85,6 +88,24 @@
           </article>
         </div>
         <div class="portal-tooltip" id="portalTooltip" hidden></div>
+      </section>
+
+      <!-- Canon -->
+      <section id="page-canon" class="page">
+        <h2>Canon <span class="canon-gloss">curated knowledge base</span></h2>
+        <div class="canon-toolbar">
+          <button id="canonRegenerate" class="btn btn-primary">Regenerate drafts</button>
+          <button id="canonBulkApproveUl" class="btn" title="Approve every pending draft seeded from UBIQUITOUS_LANGUAGE.md">Approve all UL terms</button>
+          <span id="canonActionResult" class="canon-action-result"></span>
+        </div>
+        <div class="browser-layout">
+          <div class="memory-list" id="canonDraftList">
+            <div class="empty-state">Select a repository to load Canon drafts</div>
+          </div>
+          <div class="detail-panel" id="canonDetailPanel">
+            <div class="detail-placeholder">Select a draft to review</div>
+          </div>
+        </div>
       </section>
 
       <!-- Browser -->

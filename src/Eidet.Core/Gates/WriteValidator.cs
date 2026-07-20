@@ -82,6 +82,7 @@ public static class WriteValidator
             IsLatest = true,
             Provenance = resolvedProvenance,
             Confidence = resolvedProvenance == MemoryProvenance.AgentInferred ? 0.6f : 0.7f,
+            DerivedFrom = opts.DerivedFrom?.ToList() ?? [],
             Entities = EntityExtractor.Extract(opts.Content),
             OneLiner = EntityExtractor.GenerateHeuristicOneLiner(opts.Content),
         };
