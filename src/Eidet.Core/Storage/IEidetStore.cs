@@ -132,6 +132,24 @@ public interface IEidetStore
 
     Task<Dictionary<MemoryType, int>> GetCountsByTypeAsync(string repoId, CancellationToken ct = default);
     Task<List<MemoryEntry>> GetTopScoredAsync(string repoId, MemoryType[] types, int limit, CancellationToken ct = default);
+
+    /// <summary>
+    /// Memories still awaiting enrichment (<c>Summary == null</c>), valid + latest only, oldest
+    /// first. The retry feed for the nightly enrichment sweep: the EnrichmentWorker's subscription
+    /// acks a doc even when enrichment fails and never re-sends it, so everything the worker missed
+    /// must be re-selectable here. Default <c>[]</c> so fakes need not opt in.
+    /// </summary>
+    Task<List<MemoryEntry>> GetUnenrichedAsync(string repoId, int limit, CancellationToken ct = default) =>
+        Task.FromResult(new List<MemoryEntry>());
+
+    /// <summary>
+    /// Count and oldest <c>CreatedAt</c> of memories awaiting enrichment — across all repos when
+    /// <paramref name="repoId"/> is null. The backlog signal for <c>/api/status</c>: a non-null
+    /// oldest that keeps aging means something is stuck. Default zero so fakes need not opt in.
+    /// </summary>
+    Task<UnenrichedStats> GetUnenrichedStatsAsync(string? repoId = null, CancellationToken ct = default) =>
+        Task.FromResult(new UnenrichedStats(0, null));
+
     Task<bool> TestConnectionAsync(CancellationToken ct = default);
     Task<DatabaseInfo?> GetDatabaseInfoAsync(CancellationToken ct = default);
     Task EnsureIndexesAsync(CancellationToken ct = default);
@@ -153,3 +171,6 @@ public record DatabaseInfo(
     string ServerVersion,
     long DocumentCount,
     bool IndexExists);
+
+/// <summary>Enrichment backlog: how many memories lack a Summary, and how old the oldest is.</summary>
+public record UnenrichedStats(int Count, DateTime? OldestCreatedAt);

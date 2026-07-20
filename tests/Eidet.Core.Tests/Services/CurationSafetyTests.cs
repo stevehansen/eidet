@@ -94,13 +94,16 @@ public class CurationSafetyTests
         Assert.True(await svc.RedactAsync(entry.Id, "GDPR erasure request 42"));
 
         var after = await store.GetAsync(entry.Id);
-        // Scrubbed payload.
+        // Scrubbed payload. Summary becomes "" (not null): null means "awaiting enrichment"
+        // to the worker subscription, the nightly sweep, and the unenriched stats.
         Assert.StartsWith("[redacted:", after!.Content);
         Assert.Contains("GDPR erasure request 42", after.Content);
-        Assert.Null(after.Summary);
+        Assert.Equal("", after.Summary);
         Assert.Null(after.OneLiner);
         Assert.Null(after.ForesightHint);
         Assert.Empty(after.Entities);
+        // And therefore the tombstone never re-enters the enrichment backlog.
+        Assert.DoesNotContain(await store.GetUnenrichedAsync(Repo, 10), e => e.Id == entry.Id);
         // Preserved audit structure.
         Assert.Equal(entry.Id, after.Id);
         Assert.True(after.IsLatest);

@@ -38,7 +38,7 @@ Design decisions live in `docs/specs/`:
 - **Curation**: Versioned `PUT` / REST edits (handler available off-MCP) with `content_sha256` optimistic concurrency (`If-Match` → 409 on stale), structure-preserving `RedactAsync` content erasure, AI-assisted enrichment via `/api/eidet/enrich`, Web UI inline editing
 - **Canon (P1, Terms)**: curated knowledge base — deterministic term drafts (entity aggregation + `UBIQUITOUS_LANGUAGE.md` seed) staged in a `canondrafts/*` side collection, reviewed in the Web UI Canon panel, and Approved into `canon:term:<slug>` `Insight` memories through the full write gate (the sole write edge, via `ICanonMintPort`); regeneration is damped/idempotent, consolidation + dedup skip `canon:*` pages, and draft prose is secret-scanned at creation. REST/Web-UI only (no MCP surface)
 - **Pack format**: Human-readable markdown with YAML frontmatter — ScribeGate compatible
-- **Test coverage**: 1216 tests (Core + Service + Integration + Bench + Benchmark)
+- **Test coverage**: 1262 tests (Core + Service + Integration + Bench + Benchmark)
 
 ## Installation
 

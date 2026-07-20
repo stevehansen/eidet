@@ -393,6 +393,38 @@ public class RavenEidetStore : IEidetStore
         return results.Where(e => e.IsLatest).ToList();
     }
 
+    // Both unenriched queries run against a collection auto-index rather than Memories_Search:
+    // Summary/IsLatest aren't in the static index, and extending it would force a full reindex
+    // of the corpus for a maintenance-only query path.
+
+    public async Task<List<MemoryEntry>> GetUnenrichedAsync(string repoId, int limit, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+        return await session.Query<MemoryEntry>()
+            .Where(e => e.RepoId == repoId && e.Summary == null && e.Validity.ValidUntil == null && e.IsLatest)
+            .OrderBy(e => e.CreatedAt)
+            .Take(limit)
+            .ToListAsync(ct);
+    }
+
+    public async Task<UnenrichedStats> GetUnenrichedStatsAsync(string? repoId = null, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+
+        var count = await Query().CountAsync(ct);
+        if (count == 0) return new UnenrichedStats(0, null);
+
+        var oldest = await Query().OrderBy(e => e.CreatedAt).FirstOrDefaultAsync(ct);
+        return new UnenrichedStats(count, oldest?.CreatedAt);
+
+        IQueryable<MemoryEntry> Query()
+        {
+            var q = session.Query<MemoryEntry>()
+                .Where(e => e.Summary == null && e.Validity.ValidUntil == null && e.IsLatest);
+            return repoId is null ? q : q.Where(e => e.RepoId == repoId);
+        }
+    }
+
     public async Task<bool> TestConnectionAsync(CancellationToken ct = default)
     {
         try

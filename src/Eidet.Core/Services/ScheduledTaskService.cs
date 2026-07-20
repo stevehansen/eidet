@@ -209,7 +209,10 @@ public sealed class ScheduledTaskService : IDisposable
                 switch (task.TaskType)
                 {
                     case ScheduledTaskType.Maintenance:
-                        await _maintenance.RunAsync(repoId);
+                        var report = await _maintenance.RunAsync(repoId);
+                        EidetLog.Info($"[maintenance] {repoId}: {report}");
+                        foreach (var failure in report.Failures)
+                            EidetLog.Warn($"[maintenance] {repoId}: stage {failure.Name} failed: {failure.Error}");
                         break;
 
                     case ScheduledTaskType.Consolidation:

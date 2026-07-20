@@ -21,6 +21,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
 
         string? ravenVersion = null;
         long? docCount = null;
+        UnenrichedStats? backlog = null;
 
         try
         {
@@ -33,6 +34,9 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
                 ravenVersion = info.ServerVersion;
                 docCount = info.DocumentCount;
             }
+
+            if (config.Enrichment.Enabled)
+                backlog = await ravenStore.GetUnenrichedStatsAsync(ct: cancellation);
         }
         catch { }
 
@@ -93,6 +97,8 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
                     enabled = config.Enrichment.Enabled,
                     provider = config.Enrichment.Provider.ToString(),
                     url = config.Enrichment.Url,
+                    unenriched = backlog?.Count,
+                    oldestUnenriched = backlog?.OldestCreatedAt,
                 },
                 versionHistory = versionHistory.TakeLast(5).Select(e => new
                 {
@@ -141,7 +147,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
             if (ravenVersion != null)
                 AnsiConsole.MarkupLine($"  RavenDB:    v{ravenVersion}");
 
-            AnsiConsole.MarkupLine($"  Enrichment: {(config.Enrichment.Enabled ? $"{config.Enrichment.Provider} @ {config.Enrichment.Url}" : "[dim]Disabled[/]")}");
+            AnsiConsole.MarkupLine($"  Enrichment: {(config.Enrichment.Enabled ? $"{config.Enrichment.Provider} @ {config.Enrichment.Url}{FormatBacklog(backlog)}" : "[dim]Disabled[/]")}");
             AnsiConsole.MarkupLine($"  Config:     {ConfigManager.GetConfigPath()}");
             AnsiConsole.MarkupLine($"  Logs:       {Path.Combine(ConfigManager.GetConfigDir(), "logs", "eidet.log")}");
             AnsiConsole.MarkupLine($"  MCP:        {FormatMcpClients(mcpClients)}");
@@ -162,6 +168,19 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Enrichment backlog suffix: nothing when unknown or empty; count + age of the oldest
+    /// unenriched memory otherwise. An oldest that keeps aging across runs means a stuck doc.
+    /// </summary>
+    private static string FormatBacklog(UnenrichedStats? backlog)
+    {
+        if (backlog is not { Count: > 0 }) return "";
+        var age = backlog.OldestCreatedAt is { } oldest
+            ? $", oldest {Math.Max(0, (DateTime.UtcNow - oldest).TotalDays):F0}d"
+            : "";
+        return $" — [yellow]{backlog.Count} unenriched{age}[/]";
     }
 
     /// <summary>

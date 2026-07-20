@@ -7,6 +7,13 @@ namespace Eidet.Core.Domain;
 /// </summary>
 public class MemoryEntry
 {
+    /// <summary>
+    /// Content prefix marking a redaction tombstone (written by <c>MemoryService.RedactAsync</c>).
+    /// A tombstone is permanently un-enrichable: enrichment refuses it so the scrubbed payload is
+    /// never re-described by an LLM.
+    /// </summary>
+    public const string RedactedPrefix = "[redacted:";
+
     public string Id { get; set; } = "";
 
     // Namespace isolation

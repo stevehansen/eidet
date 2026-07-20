@@ -76,6 +76,39 @@ public class EnrichmentServiceTests
         Assert.False(await svc.EnrichMemoryAsync(entry));
     }
 
+    [Fact]
+    public async Task EnrichMemory_RedactionTombstone_ReturnsFalseWithoutCalls()
+    {
+        var adapter = new InMemoryEnrichmentAdapter().SetResponse(EnrichmentPrompt.Summary, "paraphrased tombstone");
+        using var svc = new EnrichmentService(adapter);
+        var entry = new MemoryEntry { Content = $"{MemoryEntry.RedactedPrefix} GDPR @ 2026-01-01]", Id = "id" };
+
+        Assert.False(await svc.EnrichMemoryAsync(entry));
+        Assert.Null(entry.Summary);
+    }
+
+    [Fact]
+    public async Task EnrichMemory_AllEntitiesDuplicate_ReportsNoChange()
+    {
+        // Only the entities branch is open (everything else already filled); the model returns
+        // an entity the entry already has — that must not count as a change, or the caller
+        // rewrites the doc every run.
+        var adapter = new InMemoryEnrichmentAdapter().SetResponse(EnrichmentPrompt.Entities, "entitya");
+        using var svc = new EnrichmentService(adapter);
+        var entry = new MemoryEntry
+        {
+            Content = "some content",
+            Id = "id",
+            Summary = "s",
+            OneLiner = "custom one-liner",
+            ForesightHint = "h",
+            Entities = ["EntityA"],
+        };
+
+        Assert.False(await svc.EnrichMemoryAsync(entry));
+        Assert.Equal(["EntityA"], entry.Entities);
+    }
+
     // ─── EnrichMemoryAsync fills only missing fields ─────────────────────
 
     [Fact]

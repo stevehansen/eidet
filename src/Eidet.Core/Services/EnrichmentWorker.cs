@@ -9,6 +9,8 @@ namespace Eidet.Core.Services;
 /// Background worker that enriches new memories via RavenDB data subscription.
 /// Triggers immediately when a memory is stored (no waiting for maintenance).
 /// Non-blocking — runs as a background task with retry on failure.
+/// No per-doc retry: a doc whose enrichment fails is still acked and the subscription never
+/// re-sends it — the nightly OllamaEnrichmentStage sweep re-selects whatever is still unenriched.
 /// </summary>
 public sealed class EnrichmentWorker : IDisposable
 {

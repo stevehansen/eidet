@@ -516,6 +516,36 @@ internal class InMemoryEidetStore : IEidetStore
         }
     }
 
+    // Real backing impls (default interface impls return []) so the enrichment-sweep stage
+    // and backlog stats can be exercised without RavenDB.
+    public Task<List<MemoryEntry>> GetUnenrichedAsync(string repoId, int limit, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            var results = Unenriched()
+                .Where(e => string.Equals(e.RepoId, repoId, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(e => e.CreatedAt)
+                .Take(limit)
+                .ToList();
+            return Task.FromResult(results);
+        }
+    }
+
+    public Task<UnenrichedStats> GetUnenrichedStatsAsync(string? repoId = null, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            var matches = Unenriched()
+                .Where(e => repoId is null || string.Equals(e.RepoId, repoId, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            return Task.FromResult(new UnenrichedStats(
+                matches.Count, matches.Count == 0 ? null : matches.Min(e => e.CreatedAt)));
+        }
+    }
+
+    private IEnumerable<MemoryEntry> Unenriched() =>
+        _entries.Values.Where(e => e.Summary is null && e.IsLatest && e.Validity.ValidUntil is null);
+
     public Task<bool> TestConnectionAsync(CancellationToken ct = default) => Task.FromResult(true);
     public Task<DatabaseInfo?> GetDatabaseInfoAsync(CancellationToken ct = default) => Task.FromResult<DatabaseInfo?>(null);
     public Task EnsureIndexesAsync(CancellationToken ct = default) => Task.CompletedTask;

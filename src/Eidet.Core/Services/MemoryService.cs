@@ -385,7 +385,7 @@ public sealed class MemoryService
     {
         var entry = await _store.GetAsync(id, ct);
         if (entry is null) return false;
-        if (entry.Content.StartsWith("[redacted:", StringComparison.Ordinal)) return true; // idempotent
+        if (entry.Content.StartsWith(MemoryEntry.RedactedPrefix, StringComparison.Ordinal)) return true; // idempotent
 
         var now = DateTime.UtcNow;
         return await RunWriteAsync(
@@ -394,8 +394,11 @@ public sealed class MemoryService
             {
                 // Scrub the sensitive payload. SearchText/SearchVector are index projections of these
                 // fields, so re-indexing after this write drops the scrubbed content from search too.
-                entry.Content = $"[redacted: {reason} @ {now:O}]";
-                entry.Summary = null;
+                entry.Content = $"{MemoryEntry.RedactedPrefix} {reason} @ {now:O}]";
+                // Empty string, not null: Summary == null means "awaiting enrichment" to the
+                // EnrichmentWorker subscription, the nightly sweep, and the unenriched stats — a
+                // tombstone must not re-enter any of those queues.
+                entry.Summary = "";
                 entry.OneLiner = null;
                 entry.ForesightHint = null;
                 entry.Entities = [];
@@ -868,6 +871,10 @@ public sealed class MemoryService
 
     public Task<DatabaseInfo?> GetStoreInfoAsync(CancellationToken ct = default) =>
         _store.GetDatabaseInfoAsync(ct);
+
+    /// <summary>Service-wide enrichment backlog (all repos) — the /api/status signal.</summary>
+    public Task<UnenrichedStats> GetUnenrichedStatsAsync(CancellationToken ct = default) =>
+        _store.GetUnenrichedStatsAsync(null, ct);
 
     public Task<Dictionary<MemoryType, int>> GetCountsByTypeAsync(string repoId, CancellationToken ct = default) =>
         _store.GetCountsByTypeAsync(repoId, ct);

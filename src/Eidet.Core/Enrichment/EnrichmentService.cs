@@ -84,6 +84,9 @@ public sealed class EnrichmentService : IDisposable
     {
         if (!IsAvailable) return false;
         if (string.IsNullOrWhiteSpace(entry.Content)) return false;
+        // A redaction tombstone must never be re-described by the model — its scrubbed
+        // payload would leak back into Summary/SearchText via the LLM's paraphrase.
+        if (entry.Content.StartsWith(MemoryEntry.RedactedPrefix, StringComparison.Ordinal)) return false;
 
         var changed = false;
 
@@ -120,15 +123,14 @@ public sealed class EnrichmentService : IDisposable
         if (entry.Entities.Count < 2)
         {
             var llmEntities = await ExtractEntitiesAsync(entry.Content, ct);
-            if (llmEntities.Count > 0)
+            var existing = new HashSet<string>(entry.Entities, StringComparer.OrdinalIgnoreCase);
+            foreach (var e in llmEntities)
             {
-                var existing = new HashSet<string>(entry.Entities, StringComparer.OrdinalIgnoreCase);
-                foreach (var e in llmEntities)
+                if (existing.Add(e))
                 {
-                    if (existing.Add(e))
-                        entry.Entities.Add(e);
+                    entry.Entities.Add(e);
+                    changed = true;
                 }
-                changed = true;
             }
         }
 

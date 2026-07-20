@@ -29,6 +29,9 @@ public class EidetApiFixture : IAsyncLifetime
     public string RepoId { get; } = $"test-repo-{Guid.NewGuid():N}"[..24];
     public bool Available { get; private set; }
 
+    /// <summary>The store behind the API, for tests that exercise RavenDB query translation directly.</summary>
+    public IEidetStore Store { get; private set; } = null!;
+
     public async Task InitializeAsync()
     {
         try
@@ -41,6 +44,7 @@ public class EidetApiFixture : IAsyncLifetime
 
             // Wire services
             var eidetStore = new RavenEidetStore(_store);
+            Store = eidetStore;
             var layerSvc = new LayerService(eidetStore);
             var memorySvc = new MemoryService(eidetStore, layerSvc);
             var intakeSvc = new IntakeService(eidetStore, memory: memorySvc);

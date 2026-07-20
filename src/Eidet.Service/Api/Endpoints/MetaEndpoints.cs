@@ -41,6 +41,7 @@ internal sealed class MetaEndpoints
         if (_config?.Enrichment.Enabled == true && _enrichment is not null)
         {
             var healthy = await _enrichment.CheckHealthAsync(ct);
+            var backlog = await _svc.GetUnenrichedStatsAsync(ct);
             ollamaStatus = new
             {
                 enabled = true,
@@ -48,6 +49,8 @@ internal sealed class MetaEndpoints
                 provider = _config.Enrichment.Provider.ToString(),
                 model = _config.Enrichment.Model,
                 url = _config.Enrichment.Url,
+                unenriched = backlog.Count,
+                oldestUnenriched = backlog.OldestCreatedAt,
             };
         }
         else if (_config is not null)
