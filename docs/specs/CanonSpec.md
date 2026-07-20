@@ -2,7 +2,7 @@
 
 > **Scope**: **Canon** — the human-approved subset of a repo's memories, structured as domain overviews and glossary terms, produced by a propose → review → approve curation loop, stored back as first-class memories, and (final phase) rendered as an [OKF v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) bundle for humans and non-Eidet consumers.
 >
-> *Status: 📐 designed — grilled 2026-07-20, 9 decisions locked (§Resolved Design Decisions). Supersedes the KnowledgeBaseSpec.md sketch. Not implemented.*
+> *Status: 📐 designed — grilled 2026-07-20, 9 decisions locked (§Resolved Design Decisions). Supersedes the KnowledgeBaseSpec.md sketch. Not implemented. P1 interface designed (§P1 Interface) → [#75](https://github.com/stevehansen/eidet/issues/75).*
 
 ---
 
@@ -134,6 +134,28 @@ Future: an `OkfBundleExtractor` intake path (known `type` → `MemoryType`, unkn
 | **P2 — Domains** | `TagOverlapGrouper` clustering, `NameCluster`/`SynthesizeDomain` enrichment ops, fingerprint staleness + cooldown damper, `CanonProposalStage` wiring |
 | **P3 — Convergence** | Portal Glossary/Domains read `canon:*`; echo/fizzle handling for canon pages (fizzle → re-review draft?) |
 | **P4 — OKF** | Bundle export (CLI directory), `eidet://` link emission; OKF import extractor + REST zip on explicit demand |
+
+## P1 Interface (designed 2026-07-20)
+
+Chosen from a 4-way design fan-out (minimal / flexible / common-case / ports-and-adapters); full interface, testing strategy, and rejected designs in [#75](https://github.com/stevehansen/eidet/issues/75). Shape (`Eidet.Core.Canon`):
+
+```csharp
+// CanonDraft: id "canondrafts/{repo}/{kind}/{slug}" (slug = damper anchor);
+// Status adds transient Approving (claim state, LooseEnd Resolving twin)
+public interface ICanonDraftStore { /* Store/Get/Update/List/FindBySlug + atomic TryClaimForApproveAsync */ }
+public interface ICanonMintPort  { /* MintAsync(draft, editedContent) — SOLE gated edge (IPromotionPort twin) */ }
+public interface ICanonDraftSource {                       // P2/P3 extension seam; orchestrator never changes
+    string Name { get; }
+    bool AppliesTo(CanonProposalContext ctx);
+    IAsyncEnumerable<CanonDraftCandidate> ProposeAsync(CanonProposalContext ctx, CancellationToken ct = default);
+}
+public sealed class CanonService(ICanonDraftStore, ICanonMintPort, IEnumerable<ICanonDraftSource>, TimeProvider) {
+    // 80% reviewer loop: ListPendingAsync / GetDraftAsync (hydrated Citations) / ApproveAsync / RejectAsync
+    // 20%: RegenerateDraftsAsync (damped, idempotent; P2 stage body) / BulkApproveAsync (UL-seeded terms)
+}
+```
+
+P1 sources: `EntityAggregationDraftSource` (over `IEidetStore`), `UbiquitousLanguageDraftSource` (UL.md) — sources own their reads (no service-level read ports). Companion edits ride the same PR: `StoreOptions.DerivedFrom` (+ `WriteValidator.BuildEntry` carry), `ProvenanceFor` → public `ProvenanceRules.ForContributors`, `canon:*` candidate-set guard in consolidation/dedup, `CanonEndpoints` before the `EidetApi.cs` catch-all, STRIDE.md notes below.
 
 ## Risks (STRIDE ride-along notes for the implementation PR)
 
