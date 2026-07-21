@@ -57,7 +57,11 @@ public sealed class LooseEndService
             RepoId = repoId,
             Note = opts.Note,
             Tags = opts.Tags?.ToList() ?? [],
-            Priority = opts.Priority,
+            // Clamp caller-supplied priority to the valid 1–3 range (STRIDE T-10, #77): priority is the
+            // wake-up-slice sort key, so an unclamped value lets any write-capable caller float a parked
+            // note to the top of every session's agent context. Clamped here — the single park choke point
+            // for MCP, REST, and direct callers — rather than at any one surface.
+            Priority = Math.Clamp(opts.Priority, 1, 3),
             Source = opts.Source,
             CreatedAt = now,
         };

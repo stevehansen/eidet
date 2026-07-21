@@ -385,6 +385,32 @@ public class LooseEndServiceTests
         Assert.False(await endStore.TryClaimForResolveAsync("looseends/repo-a/deadbeefdead"));
     }
 
+    // ─── 5c. Priority clamp (STRIDE T-10, #77) ──────────────────────────
+
+    [Theory]
+    [InlineData(0, 1)]          // below range → clamped up to high
+    [InlineData(-5, 1)]         // negative → high
+    [InlineData(int.MinValue, 1)]
+    [InlineData(4, 3)]          // above range → clamped down to low
+    [InlineData(999, 3)]
+    [InlineData(int.MaxValue, 3)]
+    [InlineData(1, 1)]          // in-range values pass through unchanged
+    [InlineData(2, 2)]
+    [InlineData(3, 3)]
+    public async Task Park_ClampsPriorityToOneToThree(int requested, int expected)
+    {
+        var svc = NewService(out var endStore, out _, new FakeTimeProvider(T0));
+
+        var parked = await svc.ParkAsync(new ParkOptions("repo-a", "some open work to revisit later")
+        {
+            Priority = requested,
+        });
+        Assert.True(parked.Success);
+
+        var stored = await endStore.GetAsync(parked.Id!);
+        Assert.Equal(expected, stored!.Priority);
+    }
+
     // ─── 6. Wake-up cap & budget ────────────────────────────────────────
 
     [Fact]
