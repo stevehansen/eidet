@@ -20,6 +20,27 @@ public readonly record struct AlphaEwmaUpdate(double Target, double Lambda, doub
 public interface IEidetStore
 {
     Task<MemoryEntry?> GetAsync(string id, CancellationToken ct = default);
+
+    /// <summary>
+    /// Resolves several memories in one round trip. EVERY requested id is present as a key, with a null
+    /// value for "no such document" — the citation checks need to tell a missing target apart from one
+    /// that resolved, and an id merely absent from the result would conflate the two. Ids are matched
+    /// case-insensitively, as RavenDB matches them.
+    /// The default implementation loops <see cref="GetAsync"/> so fakes need not opt in; the point of
+    /// overriding it is the round trip, not the semantics.
+    /// </summary>
+    async Task<IReadOnlyDictionary<string, MemoryEntry?>> GetManyAsync(
+        IReadOnlyCollection<string> ids, CancellationToken ct = default)
+    {
+        var resolved = new Dictionary<string, MemoryEntry?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in ids)
+        {
+            if (ct.IsCancellationRequested) break;
+            resolved[id] = await GetAsync(id, ct);
+        }
+        return resolved;
+    }
+
     Task<string> StoreAsync(MemoryEntry entry, CancellationToken ct = default);
     Task UpdateAsync(MemoryEntry entry, CancellationToken ct = default);
     Task<bool> ForgetAsync(string id, CancellationToken ct = default);
@@ -128,6 +149,21 @@ public interface IEidetStore
     /// path. Default <c>[]</c> so fakes need not opt in.
     /// </summary>
     Task<IReadOnlyList<MemoryEntry>> GetInvalidatedAsync(string repoId, int max, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
+
+    /// <summary>
+    /// Live memories whose provenance was never established — the field is absent (a document written
+    /// before it existed) or stored as <c>Unknown</c> — and whose <c>Source</c> is one of
+    /// <paramref name="repairableSources"/>. OLDEST first.
+    ///
+    /// Both halves of that contract exist to make the nightly repair's progress monotone, and neither is
+    /// incidental. Oldest-first, because every other read path in the system samples newest-first and the
+    /// documents needing repair are by definition the oldest. Filtered to repairable sources, because a
+    /// memory this build cannot derive a provenance for would otherwise sit at the head of that queue
+    /// every night and starve the ones it can fix. Default <c>[]</c> so fakes need not opt in.
+    /// </summary>
+    Task<IReadOnlyList<MemoryEntry>> GetUnprovenancedAsync(
+        string repoId, IReadOnlyCollection<string> repairableSources, int limit, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
 
     Task<Dictionary<MemoryType, int>> GetCountsByTypeAsync(string repoId, CancellationToken ct = default);

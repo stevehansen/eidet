@@ -255,8 +255,10 @@ public class IntakeService
                 return;
             }
 
-            var hash = ComputeContentHash(candidate.Content);
-            var id = $"memories/{_ctx.RepoId}/{candidate.Type.ToString().ToLowerInvariant()}/{hash}";
+            // Content-addressed so re-ingesting an unchanged file collides with the existing document and
+            // skips below. Minted through MemoryIdGenerator (not locally) so the content-commitment check
+            // recognizes the convention instead of reading every intake memory as rewritten content.
+            var id = MemoryIdGenerator.GenerateContentAddressed(_ctx.RepoId, candidate.Type, candidate.Content);
             var existing = await _store.GetAsync(id, ct);
             if (existing != null)
             {
@@ -306,12 +308,6 @@ public class IntakeService
             item.SkipReason = reason;
             _result.Items.Add(item);
             _result.SkippedCount++;
-        }
-
-        private static string ComputeContentHash(string content)
-        {
-            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(content));
-            return Convert.ToHexString(bytes)[..12].ToLowerInvariant();
         }
     }
 }

@@ -98,7 +98,10 @@ public static partial class MarkdownPackFormat
         };
         if (entry.Tags.Count > 0)
             meta.Add($"tags={string.Join(",", entry.Tags)}");
-        if (entry.Provenance != MemoryProvenance.AgentInferred)
+        // AgentInferred is omitted as the historical wire default. Unknown is omitted because it must never
+        // cross the wire at all (#80): a foreign install has to apply ITS own default rather than inherit
+        // our failure to establish provenance, and the importer's clamp then holds it at the Pack floor.
+        if (entry.Provenance is not (MemoryProvenance.AgentInferred or MemoryProvenance.Unknown))
             meta.Add($"provenance={entry.Provenance.ToString().ToLowerInvariant()}");
         if (entry.Valence != Valence.Neutral)
             meta.Add($"valence={entry.Valence.ToString().ToLowerInvariant()}");

@@ -76,7 +76,8 @@ public class MemoryServiceTests
         Assert.Equal(MemoryProvenance.Pack, ProvenanceResolver.FromSource("pack"));
         Assert.Equal(MemoryProvenance.Pack, ProvenanceResolver.FromSource("bundle")); // legacy alias
         Assert.Equal(MemoryProvenance.System, ProvenanceResolver.FromSource("system"));
-        Assert.Equal(MemoryProvenance.AgentInferred, ProvenanceResolver.FromSource("unknown"));
+        // An unrecognized source no longer resolves to a trusted origin (#80).
+        Assert.Equal(MemoryProvenance.Unknown, ProvenanceResolver.FromSource("unknown"));
     }
 
     [Fact]

@@ -30,6 +30,9 @@ public class GraphDataTests
         Assert.Equal("", edge.From);
         Assert.Equal("", edge.To);
         Assert.Equal("", edge.Relation);
+        // Ok is the default so every pre-#80 edge shape (and every link edge, which is still filtered to
+        // visible nodes) reads as healthy without being set explicitly.
+        Assert.Equal(GraphEdgeStatus.Ok, edge.Status);
     }
 
     [Fact]

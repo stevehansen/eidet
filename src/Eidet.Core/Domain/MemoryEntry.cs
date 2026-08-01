@@ -39,7 +39,12 @@ public class MemoryEntry
     public string? ForgetReason { get; set; }
 
     // Provenance
-    public MemoryProvenance Provenance { get; set; } = MemoryProvenance.AgentInferred;
+    /// <summary>
+    /// Defaults to <see cref="MemoryProvenance.Unknown"/>, not to a trusted origin: an entry that never
+    /// had provenance established (a pre-field document, a hand-built row) must not be indistinguishable
+    /// from one an agent vouched for. Every honest write path sets this explicitly.
+    /// </summary>
+    public MemoryProvenance Provenance { get; set; } = MemoryProvenance.Unknown;
     public string Source { get; set; } = "";
     public string? SourceSessionId { get; set; }
     public List<string> DerivedFrom { get; set; } = [];

@@ -32,6 +32,12 @@ public class EidetApiFixture : IAsyncLifetime
     /// <summary>The store behind the API, for tests that exercise RavenDB query translation directly.</summary>
     public IEidetStore Store { get; private set; } = null!;
 
+    /// <summary>
+    /// The raw RavenDB store, for tests that must produce document shapes no write path can produce —
+    /// notably a document missing a field the current model declares.
+    /// </summary>
+    public IDocumentStore Raven => _store!;
+
     public async Task InitializeAsync()
     {
         try

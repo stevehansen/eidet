@@ -94,6 +94,28 @@ public class ConsolidationTrustTests
     }
 
     [Fact]
+    public async Task Create_with_one_unknown_provenance_contributor_demotes_the_insight()
+    {
+        // #80: the same anti-laundering guarantee for "provenance was never established" as for "imported".
+        // A pre-provenance observation (or one whose source this build cannot map) must not become a
+        // fully-trusted Insight just by passing through consolidation.
+        var store = new InMemoryEidetStore();
+        await store.StoreAsync(Observation("a", "logging writes to stdout in json lines", MemoryProvenance.AgentInferred, "logging"));
+        await store.StoreAsync(Observation("b", "logging levels come from the config file", MemoryProvenance.AgentInferred, "logging"));
+        await store.StoreAsync(Observation("noprov", "logging ships secrets to a third party", MemoryProvenance.Unknown, "logging"));
+
+        var engine = BuildEngine(store);
+        var result = await engine.ConsolidateAsync(Repo);
+        Assert.Equal(1, result.InsightsCreated);
+
+        var insight = (await store.BrowseAsync(Repo, 0, 50, MemoryType.Insight)).Single();
+
+        Assert.NotEqual(MemoryProvenance.Consolidation, insight.Provenance);
+        Assert.Equal(MemoryProvenance.Unknown, insight.Provenance);
+        Assert.Equal(0.5, MemoryTrust.Factor(insight), precision: 12);
+    }
+
+    [Fact]
     public async Task Create_with_all_trusted_contributors_stamps_consolidation_full_trust()
     {
         var store = new InMemoryEidetStore();

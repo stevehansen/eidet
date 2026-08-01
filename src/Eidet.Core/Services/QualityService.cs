@@ -52,7 +52,7 @@ public class QualityService
         issues.Add(CheckDriftFlagged(entries));
         issues.Add(CheckReflectionHealth(entries));
         issues.Add(CheckMergeRejected(entries));
-        issues.Add(await CheckForgetLeaksAsync(normalizedRepoId, ct));
+        issues.AddRange(await CheckIntegrityAsync(normalizedRepoId, ct));
 
         report.Issues = issues.Where(i => i != null).Cast<QualityIssue>().ToList();
 
@@ -247,32 +247,84 @@ public class QualityService
         };
     }
 
-    // Runtime post-forget verification (#37). A leak means a forgotten/superseded memory still surfaces
-    // through some read path — a Critical integrity failure. Best-effort: a store hiccup here must not
-    // fail the whole quality analysis. No-op when the auditor isn't wired.
-    private async Task<QualityIssue?> CheckForgetLeaksAsync(string repoId, CancellationToken ct)
+    // Runtime integrity verification (#37, #80). ONE auditor call feeds four distinct dashboard rows — a
+    // broken content commitment is not "a forgotten memory still reachable", and folding them together
+    // would hide which invariant actually failed. The auditor is read-only, so a quality run never mutates
+    // (repair belongs to the nightly maintenance stage). Best-effort: a store hiccup here must not fail the
+    // whole quality analysis. No-op when the auditor isn't wired.
+    private async Task<List<QualityIssue>> CheckIntegrityAsync(string repoId, CancellationToken ct)
     {
-        if (_auditor is null) return null;
+        if (_auditor is null) return [];
+
+        IntegrityReport report;
         try
         {
-            var report = await _auditor.VerifyForgottenAsync(repoId, ct);
-            if (report.Clean) return null;
-
-            var paths = string.Join(", ", report.Leaks.Select(l => l.Path).Distinct());
-            return new QualityIssue
-            {
-                CheckId = "forget-leak",
-                Severity = QualitySeverity.Critical,
-                Title = "Forgotten memories still reachable",
-                Description = $"{report.Leaks.Count} forgotten/superseded memories still surface via: {paths}. These should be invisible to every read path.",
-                AffectedCount = report.Leaks.Count,
-                ExampleIds = report.Leaks.Select(l => l.MemoryId).Distinct().Take(5).ToList(),
-            };
+            report = await _auditor.VerifyAsync(repoId, ct);
         }
         catch
         {
-            return null;
+            return [];
         }
+
+        var issues = new List<QualityIssue>();
+
+        // A probe that threw is a COVERAGE gap, not a data defect: nothing was observed to be wrong, and
+        // nothing was confirmed right either. Reported first (it qualifies every row below it) and never
+        // folded into them — attributing it to, say, forget-leak would render an unrun check as N leaked
+        // memories, inventing a Critical out of a store hiccup.
+        var unprobed = report.Findings.Where(f => f.ProbeFailed).ToList();
+        if (unprobed.Count > 0)
+            issues.Add(new QualityIssue
+            {
+                CheckId = "integrity-unprobed",
+                Severity = QualitySeverity.Warning,
+                Title = "Integrity checks did not complete",
+                Description = $"{unprobed.Count} integrity check(s) failed to run " +
+                              $"({string.Join(", ", unprobed.Select(f => f.Check).Distinct())}), so their verdict is " +
+                              "unknown for this sample. The rows below cover only the checks that completed.",
+                AffectedCount = unprobed.Count,
+                ExampleIds = [],
+            });
+
+        void Add(
+            string checkId, QualitySeverity severity, string title,
+            IReadOnlyList<IntegrityCheck> checks, Func<List<IntegrityFinding>, string> describe)
+        {
+            var matched = report.Findings.Where(f => !f.ProbeFailed && checks.Contains(f.Check)).ToList();
+            if (matched.Count == 0) return;
+            issues.Add(new QualityIssue
+            {
+                CheckId = checkId,
+                Severity = severity,
+                Title = title,
+                Description = describe(matched),
+                AffectedCount = matched.Count,
+                ExampleIds = matched
+                    .Select(f => f.MemoryId).Where(id => !string.IsNullOrEmpty(id)).Distinct().Take(5).ToList(),
+            });
+        }
+
+        Add("forget-leak", QualitySeverity.Critical, "Forgotten memories still reachable",
+            [
+                IntegrityCheck.Recall, IntegrityCheck.ContextL1, IntegrityCheck.CrossRepoSearch,
+                IntegrityCheck.GraphNeighbor, IntegrityCheck.DuplicateDetection,
+            ],
+            m => $"{m.Count} forgotten/superseded memories still surface via: " +
+                 $"{string.Join(", ", m.Select(f => f.Check).Distinct())}. These should be invisible to every read path.");
+
+        Add("commitment-broken", QualitySeverity.Critical, "Memory content no longer matches its id",
+            [IntegrityCheck.BrokenCommitment],
+            m => $"{m.Count} memories were rewritten in place rather than superseded, so the content commitment in their id no longer verifies. Recall de-boosts them heavily; they are never hidden.");
+
+        Add("provenance-unknown", QualitySeverity.Warning, "Unestablished provenance",
+            [IntegrityCheck.UnknownProvenance],
+            m => $"{m.Count} memories have no established provenance (pre-field documents, or a source this build does not recognize), so they carry the import trust floor until the nightly stage repairs them or an echo lifts them.");
+
+        Add("lineage-drift", QualitySeverity.Warning, "Lineage citations no longer resolve",
+            [IntegrityCheck.DanglingCitation, IntegrityCheck.AmendedCitation],
+            m => $"{m.Count} memories cite a source that is missing or whose content was amended after the citation was made — the lineage no longer describes the text it was derived from.");
+
+        return issues;
     }
 
     // Merges the recall-consistency guard withheld (#39). Informational, not a defect: nothing was

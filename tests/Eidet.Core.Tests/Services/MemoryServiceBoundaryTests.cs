@@ -546,6 +546,26 @@ internal class InMemoryEidetStore : IEidetStore
     private IEnumerable<MemoryEntry> Unenriched() =>
         _entries.Values.Where(e => e.Summary is null && e.IsLatest && e.Validity.ValidUntil is null);
 
+    // Real backing impl (default interface impl is []) so the nightly provenance repair's backlog drain
+    // can be exercised without RavenDB. Mirrors RavenEidetStore: live only, source restricted to what the
+    // caller can act on, OLDEST first — the ordering is the whole point of the query.
+    public Task<IReadOnlyList<MemoryEntry>> GetUnprovenancedAsync(
+        string repoId, IReadOnlyCollection<string> repairableSources, int limit, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            var results = _entries.Values
+                .Where(e => string.Equals(e.RepoId, repoId, StringComparison.OrdinalIgnoreCase))
+                .Where(e => e.IsLatest && e.Validity.ValidUntil is null)
+                .Where(e => e.Provenance == MemoryProvenance.Unknown)
+                .Where(e => repairableSources.Contains(e.Source))
+                .OrderBy(e => e.CreatedAt)
+                .Take(limit)
+                .ToList();
+            return Task.FromResult<IReadOnlyList<MemoryEntry>>(results);
+        }
+    }
+
     public Task<bool> TestConnectionAsync(CancellationToken ct = default) => Task.FromResult(true);
     public Task<DatabaseInfo?> GetDatabaseInfoAsync(CancellationToken ct = default) => Task.FromResult<DatabaseInfo?>(null);
     public Task EnsureIndexesAsync(CancellationToken ct = default) => Task.CompletedTask;
@@ -566,7 +586,11 @@ internal class InMemoryEidetStore : IEidetStore
                 .Where(e => string.Equals(e.RepoId, repoId, StringComparison.OrdinalIgnoreCase))
                 .Where(e => e.Validity.ValidUntil is null);
             if (type.HasValue) q = q.Where(e => e.Type == type.Value);
-            return Task.FromResult(q.Skip(skip).Take(take).ToList());
+            // Newest-first, like RavenEidetStore. Insertion order here made every take look like a full
+            // scan, which hid a whole class of bug: anything that samples via Browse can only ever see the
+            // freshest N, and a fake that ignores that lets a newest-first sampler pass a test about the
+            // oldest documents.
+            return Task.FromResult(q.OrderByDescending(e => e.CreatedAt).Skip(skip).Take(take).ToList());
         }
     }
 

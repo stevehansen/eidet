@@ -159,6 +159,47 @@ public class MarkdownPackFormatTests
         Assert.DoesNotContain("provenance=", md);
     }
 
+    /// <summary>
+    /// Unknown must never cross the wire (#80). A pack is a cross-install artifact; exporting "we could
+    /// not establish provenance" would make the receiving install inherit OUR failure instead of applying
+    /// its own default. Omitting the key lets the importer decide, and its decision is Pack — the floor an
+    /// imported memory belongs on anyway.
+    /// </summary>
+    [Fact]
+    public void Serialize_OmitsUnknownProvenance()
+    {
+        var entry = CreateEntry(MemoryType.Insight, "A memory whose provenance was never established", oneLiner: "Test");
+        entry.Provenance = MemoryProvenance.Unknown;
+
+        var pack = new EidetPack
+        {
+            Id = "test", Name = "Test", Version = "1.0.0", Author = "test",
+            Entries = [entry]
+        };
+        var md = MarkdownPackFormat.Serialize(pack);
+
+        Assert.DoesNotContain("provenance=", md);
+        Assert.DoesNotContain("unknown", md, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RoundTrip_UnknownProvenance_LandsOnPackNotUnknown()
+    {
+        var entry = CreateEntry(MemoryType.Insight, "A memory whose provenance was never established", oneLiner: "Unestablished");
+        entry.Provenance = MemoryProvenance.Unknown;
+
+        var md = MarkdownPackFormat.Serialize(new EidetPack
+        {
+            Id = "test", Name = "Test", Version = "1.0.0", Author = "test",
+            Entries = [entry]
+        });
+        var restored = MarkdownPackFormat.Deserialize(md);
+
+        var imported = Assert.Single(restored.Entries);
+        Assert.Equal(MemoryProvenance.Pack, imported.Provenance);
+        Assert.NotEqual(MemoryProvenance.Unknown, imported.Provenance);
+    }
+
     [Fact]
     public void Serialize_CollectsAllTagsInFrontmatter()
     {

@@ -25,6 +25,20 @@ public class RavenEidetStore : IEidetStore
         return await session.LoadAsync<MemoryEntry>(id, ct);
     }
 
+    public async Task<IReadOnlyDictionary<string, MemoryEntry?>> GetManyAsync(
+        IReadOnlyCollection<string> ids, CancellationToken ct = default)
+    {
+        var resolved = new Dictionary<string, MemoryEntry?>(StringComparer.OrdinalIgnoreCase);
+        if (ids.Count == 0) return resolved;
+
+        using var session = _store.OpenAsyncSession();
+        // One round trip for the whole set; RavenDB returns a null value for an id that does not exist,
+        // which is exactly the distinction the caller needs.
+        foreach (var (id, entry) in await session.LoadAsync<MemoryEntry>(ids, ct))
+            resolved[id] = entry;
+        return resolved;
+    }
+
     public async Task<string> StoreAsync(MemoryEntry entry, CancellationToken ct = default)
     {
         if (entry.CreatedAt == default)
@@ -362,6 +376,40 @@ public class RavenEidetStore : IEidetStore
             .Take(max)
             .ToListAsync(ct);
         return results;
+    }
+
+    public async Task<IReadOnlyList<MemoryEntry>> GetUnprovenancedAsync(
+        string repoId, IReadOnlyCollection<string> repairableSources, int limit, CancellationToken ct = default)
+    {
+        if (repairableSources.Count == 0) return [];
+
+        // A collection auto-index, not Memories/Search: Source is not a field of that index, and adding
+        // one would re-map — and therefore re-embed — the entire corpus, since its SearchVector is
+        // computed inside the map.
+        using var session = _store.OpenAsyncSession();
+        return await session.Advanced.AsyncDocumentQuery<MemoryEntry>()
+            .WhereEquals("RepoId", repoId)
+            .AndAlso()
+            .WhereEquals("Validity.ValidUntil", (object?)null)
+            .AndAlso()
+            .WhereEquals("IsLatest", true)
+            .AndAlso()
+            .WhereIn("Source", repairableSources.Cast<object>())
+            .AndAlso()
+            // The literal "Unknown" OR no such property at all. A document written before the field
+            // existed carries no Provenance, and — verified against embedded RavenDB in
+            // ProvenanceBacklogQueryTests — an absent property does NOT satisfy `Provenance = null`;
+            // only `not exists(Provenance)` reaches it. Matching just the enum name, or trusting the null
+            // equality, would silently skip precisely the corpus this query exists to drain.
+            .OpenSubclause()
+            .WhereEquals("Provenance", nameof(MemoryProvenance.Unknown))
+            .OrElse()
+            .Not
+            .WhereExists("Provenance")
+            .CloseSubclause()
+            .OrderBy("CreatedAt")
+            .Take(limit)
+            .ToListAsync(ct);
     }
 
     public async Task<Dictionary<MemoryType, int>> GetCountsByTypeAsync(

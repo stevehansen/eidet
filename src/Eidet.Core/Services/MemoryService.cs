@@ -43,10 +43,15 @@ public sealed class MemoryService
     private const double AlphaMin = 0.15;
     private const double AlphaMax = 0.85;
 
+    // Distinct DerivedFrom targets /graph resolves outside its own window before calling a citation
+    // dangling — without this, every citation across a >limit corpus would render as Missing.
+    private const int CitationResolveCap = 200;
+
     private readonly IEidetStore _store;
     private readonly IHookRunner _hooks;
     private readonly IPoisonLog _poison;
     private readonly LayerService? _layers;
+    private readonly TimeProvider _clock;
     private readonly RecallCache _cache = new();
     private readonly RepoActivityTracker _activity = new();
 
@@ -59,13 +64,20 @@ public sealed class MemoryService
     /// </summary>
     public LooseEnds.LooseEndService? LooseEnds { get; set; }
 
+    /// <param name="clock">
+    /// Trailing and optional so no existing call site changes. Used ONLY by <see cref="RedactAsync"/>: the
+    /// amendment timestamp is part of the content shape the commitment check reads, so it has to be
+    /// assertable. Every other clock read in this file is deliberately left on <c>DateTime.UtcNow</c>.
+    /// </param>
     public MemoryService(
-        IEidetStore store, LayerService? layers = null, IHookRunner? hooks = null, IPoisonLog? poison = null)
+        IEidetStore store, LayerService? layers = null, IHookRunner? hooks = null, IPoisonLog? poison = null,
+        TimeProvider? clock = null)
     {
         _store = store;
         _layers = layers;
         _hooks = hooks ?? NullHookRunner.Instance;
         _poison = poison ?? NullPoisonLog.Instance;
+        _clock = clock ?? TimeProvider.System;
     }
 
     // ─── Mutations ───────────────────────────────────────────────────
@@ -202,13 +214,18 @@ public sealed class MemoryService
                         await ctx.WriteAsync(original, ct);
 
                         var now = DateTime.UtcNow;
+                        // Id minted over the content actually stored (not over `reason`) so the audit
+                        // record satisfies its own content commitment; provenance stamped explicitly so a
+                        // first-party system write is never mistaken for unestablished provenance.
+                        var auditContent = $"Forgot memory [{id}]: {reason}";
                         var observation = new MemoryEntry
                         {
-                            Id = MemoryIdGenerator.Generate(original.RepoId, MemoryType.Observation, reason, now),
+                            Id = MemoryIdGenerator.Generate(original.RepoId, MemoryType.Observation, auditContent, now),
                             RepoId = original.RepoId,
                             Type = MemoryType.Observation,
-                            Content = $"Forgot memory [{id}]: {reason}",
+                            Content = auditContent,
                             Source = "system",
+                            Provenance = MemoryProvenance.System,
                             SourceSessionId = sessionId,
                             CreatedAt = now,
                             Validity = new Validity { ValidFrom = now },
@@ -387,14 +404,16 @@ public sealed class MemoryService
         if (entry is null) return false;
         if (entry.Content.StartsWith(MemoryEntry.RedactedPrefix, StringComparison.Ordinal)) return true; // idempotent
 
-        var now = DateTime.UtcNow;
+        var now = _clock.GetUtcNow().UtcDateTime;
         return await RunWriteAsync(
             scope: entry.RepoId,
             body: async ctx =>
             {
                 // Scrub the sensitive payload. SearchText/SearchVector are index projections of these
                 // fields, so re-indexing after this write drops the scrubbed content from search too.
-                entry.Content = $"{MemoryEntry.RedactedPrefix} {reason} @ {now:O}]";
+                // Rendered through MemoryCommitment so this in-place rewrite classifies as Amended rather
+                // than as tampering — the id is deliberately kept so the chain stays walkable.
+                entry.Content = MemoryCommitment.Render("redacted", reason, now);
                 // Empty string, not null: Summary == null means "awaiting enrichment" to the
                 // EnrichmentWorker subscription, the nightly sweep, and the unenriched stats — a
                 // tombstone must not re-enter any of those queues.
@@ -404,13 +423,16 @@ public sealed class MemoryService
                 entry.Entities = [];
                 await ctx.WriteAsync(entry, ct);
 
+                // Same as the forget audit record: id over the stored content, provenance stamped.
+                var auditContent = $"Redacted memory [{id}]: {reason}";
                 var observation = new MemoryEntry
                 {
-                    Id = MemoryIdGenerator.Generate(entry.RepoId, MemoryType.Observation, "redact:" + reason, now),
+                    Id = MemoryIdGenerator.Generate(entry.RepoId, MemoryType.Observation, auditContent, now),
                     RepoId = entry.RepoId,
                     Type = MemoryType.Observation,
-                    Content = $"Redacted memory [{id}]: {reason}",
+                    Content = auditContent,
                     Source = "system",
+                    Provenance = MemoryProvenance.System,
                     CreatedAt = now,
                     Validity = new Validity { ValidFrom = now },
                     Importance = 0.1f,
@@ -907,14 +929,24 @@ public sealed class MemoryService
         }).ToList();
 
         var idSet = new HashSet<string>(entries.Select(e => e.Id), StringComparer.OrdinalIgnoreCase);
+        var missingTargets = await ResolveMissingCitationsAsync(entries, idSet, ct);
         var edges = new List<GraphEdge>();
 
         foreach (var e in entries)
         {
             foreach (var parentId in e.DerivedFrom)
             {
-                if (idSet.Contains(parentId))
-                    edges.Add(new GraphEdge { From = parentId, To = e.Id, Relation = "derived" });
+                // Emitted even when the target is unresolvable, flagged Missing. Dropping the edge made a
+                // dangling citation render identically to no citation at all (#80) — the failure looked like
+                // success. The canvas filters edges to visible node ids, so this is inert for the renderer
+                // and informative to API consumers.
+                edges.Add(new GraphEdge
+                {
+                    From = parentId,
+                    To = e.Id,
+                    Relation = "derived",
+                    Status = missingTargets.Contains(parentId) ? GraphEdgeStatus.Missing : GraphEdgeStatus.Ok,
+                });
             }
             foreach (var link in e.Links)
             {
@@ -924,6 +956,28 @@ public sealed class MemoryService
         }
 
         return new GraphData { Nodes = nodes, Edges = edges };
+    }
+
+    /// <summary>
+    /// The cited ids that resolve to nothing at all — as distinct from the ones that merely fall outside
+    /// this graph window. Conflating the two would flag most citations in any corpus larger than the window
+    /// as dangling, which is exactly the false alarm that would train readers to ignore the flag.
+    /// </summary>
+    private async Task<HashSet<string>> ResolveMissingCitationsAsync(
+        List<MemoryEntry> entries, HashSet<string> inWindow, CancellationToken ct)
+    {
+        var candidates = entries
+            .SelectMany(e => e.DerivedFrom)
+            .Where(id => !inWindow.Contains(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(CitationResolveCap)
+            .ToList();
+
+        // One batched round trip: this runs on a synchronous GET, and the cap is 200 — as a sequential
+        // per-id loop it turned one request into up to 200 database round trips.
+        var resolved = await _store.GetManyAsync(candidates, ct);
+        return new HashSet<string>(
+            resolved.Where(kv => kv.Value is null).Select(kv => kv.Key), StringComparer.OrdinalIgnoreCase);
     }
 
     public bool IsRepoActive(string repoId, int withinDays = 7) =>

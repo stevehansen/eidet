@@ -19,7 +19,12 @@ public static class ProvenanceRules
             : MemoryProvenance.Consolidation;
 
     /// <summary>A contributor is trusted unless its origin is a known poisoning surface (Pack/Intake),
-    /// i.e. its provenance trust floor is the full 1.0.</summary>
+    /// i.e. its provenance trust floor is the full 1.0.
+    ///
+    /// <see cref="MemoryProvenance.Unknown"/> deliberately FAILS this — it sits on the import floor — so a
+    /// synthesis drawn over pre-provenance or unrecognized-source memories is born demoted rather than
+    /// inheriting trust its contributors never earned. That is the intended behavior, not an oversight:
+    /// the anti-laundering guarantee has to hold for "we don't know" exactly as it does for "imported".</summary>
     public static bool IsTrusted(MemoryEntry contributor) =>
         MemoryTrust.ProvenanceTrust(contributor.Provenance) >= 1.0;
 }

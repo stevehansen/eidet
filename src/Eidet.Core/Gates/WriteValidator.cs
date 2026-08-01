@@ -81,7 +81,11 @@ public static class WriteValidator
             ParentMemoryId = opts.Supersedes,
             IsLatest = true,
             Provenance = resolvedProvenance,
-            Confidence = resolvedProvenance == MemoryProvenance.AgentInferred ? 0.6f : 0.7f,
+            // Unknown sits with AgentInferred at the lower confidence: a write whose source this build
+            // cannot map is LESS sure than a vouched-for one, so it must not gain confidence while losing
+            // trust (#80).
+            Confidence = resolvedProvenance is MemoryProvenance.AgentInferred or MemoryProvenance.Unknown
+                ? 0.6f : 0.7f,
             DerivedFrom = opts.DerivedFrom?.ToList() ?? [],
             Entities = EntityExtractor.Extract(opts.Content),
             OneLiner = EntityExtractor.GenerateHeuristicOneLiner(opts.Content),

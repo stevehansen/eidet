@@ -1,5 +1,10 @@
 using Eidet.Core.Domain;
+using Eidet.Core.Memory;
 using Eidet.Core.Services;
+// Reuses the suite's existing hand-rolled TimeProvider double (no
+// Microsoft.Extensions.TimeProvider.Testing dependency); aliased so the Canon namespace's other
+// test doubles stay out of scope here.
+using FakeClock = Eidet.Core.Tests.Canon.FakeTimeProvider;
 
 namespace Eidet.Core.Tests.Services;
 
@@ -145,6 +150,34 @@ public class CurationSafetyTests
         Assert.StartsWith("[redacted:", after!.Content);
         Assert.False(after.IsLatest);                  // still superseded
         Assert.NotNull(after.Validity.ValidUntil);     // validity interval preserved
+    }
+
+    // ─── redact: the tombstone timestamp is an injected clock read (#80) ──
+
+    /// <summary>
+    /// The amendment timestamp is part of the content shape <see cref="MemoryCommitment"/> reads, so it has
+    /// to be assertable rather than whatever <c>DateTime.UtcNow</c> happened to be. This is the only clock
+    /// read in MemoryService that is injectable, for exactly that reason.
+    /// </summary>
+    [Fact]
+    public async Task Redact_StampsTheInjectedClock_AndReadsAsAmended()
+    {
+        var when = new DateTimeOffset(2026, 6, 1, 8, 15, 30, TimeSpan.Zero);
+        var store = new InMemoryEidetStore();
+        var svc = new MemoryService(store, clock: new FakeClock(when));
+        var stored = await svc.StoreAsync(Repo, "a note carrying personal data that must be erased", MemoryType.Insight);
+
+        Assert.True(await svc.RedactAsync(stored.Id!, "GDPR erasure request 42"));
+
+        var after = (await store.GetAsync(stored.Id!))!;
+        Assert.Equal(
+            MemoryCommitment.Render("redacted", "GDPR erasure request 42", when.UtcDateTime),
+            after.Content);
+        Assert.Contains("2026-06-01T08:15:30.0000000Z", after.Content);
+        // And the rewrite classifies as a sanctioned amendment, not as tampering — so recall does not
+        // de-boost a memory for honoring an erasure request.
+        Assert.Equal(CommitmentStatus.Amended, MemoryCommitment.Check(after));
+        Assert.Equal(1.0, MemoryTrust.Factor(after));
     }
 
     [Fact]
