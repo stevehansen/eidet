@@ -7,7 +7,7 @@ namespace Eidet.Core.Portal.Sections;
 /// Summary metrics derivable from existing data: count by type and a freshness
 /// histogram bucketed by <see cref="MemoryEntry.CreatedAt"/> (the only timestamp
 /// every memory has). Last-modified and last-consolidation are excluded from v1
-/// per PortalSpec.md §Codebase Constraints. Always present.
+/// per docs/domains/portal.md. Always present.
 /// </summary>
 internal sealed class HealthSection : IPortalSection
 {

@@ -86,7 +86,7 @@ public class StoreToolHandlerTests
         Assert.Contains("Blocked", result.HumanSummary, StringComparison.OrdinalIgnoreCase);
     }
 
-    // ─── Valence: one-line `negative` sugar (ValenceSpec) ─────────────
+    // ─── Valence: one-line `negative` sugar ─────────────
 
     [Fact]
     public async Task Store_NegativeTrue_NoType_StoresRefutingHeuristicWithDeadEndTag()

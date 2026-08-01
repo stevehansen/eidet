@@ -8,7 +8,7 @@ namespace Eidet.Core.Tests.Canon;
 /// Boundary tests for <see cref="CanonService"/> driven entirely through fakes (zero RavenDB): the
 /// in-memory draft store, a recording/gated mint port, a scripted draft source, and a deterministic clock.
 /// Covers the review loop, the double-mint claim protocol, the regeneration damper matrix, and degraded
-/// citation hydration — the contract named in CanonSpec §Testing Strategy (issue #75).
+/// citation hydration — the contract in docs/domains/canon.md (issue #75).
 /// </summary>
 public class CanonServiceTests
 {

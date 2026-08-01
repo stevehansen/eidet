@@ -12,7 +12,7 @@ namespace Eidet.Core.Portal;
 ///
 /// v1 is augment=off only — templates render live on every call. Augmented
 /// modes (<c>summary</c>, <c>narrative</c>) ship in later phases per
-/// PortalSpec.md §Phased Delivery.
+/// docs/domains/portal.md.
 /// </summary>
 public sealed class PortalRenderer
 {

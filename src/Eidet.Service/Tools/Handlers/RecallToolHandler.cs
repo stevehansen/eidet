@@ -51,7 +51,8 @@ public sealed class RecallToolHandler : IToolHandler
         var results = await _svc.RecallAsync(request.RepoId, opts, request.Ct);
 
         // Recall ride-along: open Loose Ends whose tags overlap the query surface in a SEPARATE
-        // section, never mixed into the relevance-ranked memory list (LooseEndSpec §Surfacing mode 2).
+        // section, never mixed into the relevance-ranked memory list (the ride-along surface,
+        // docs/domains/looseends.md).
         IReadOnlyList<LooseEnd> looseEnds = _looseEnds is not null && opts.Tags is { Count: > 0 }
             ? await _looseEnds.RideAlongAsync(request.RepoId, opts.Tags, request.Ct)
             : [];

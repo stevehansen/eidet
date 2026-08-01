@@ -31,6 +31,7 @@ callouts:
 
 exclude:
   - specs/
+  - domains/
   - code-review-2026-04-09.md
   - Eidet-Presentation.pptx
   - generate-pptx.mjs

@@ -98,7 +98,7 @@ public class RecallToolHandlerTests
             await Invoke(handler, new { limit = 5 }));
     }
 
-    // ─── Valence: recall filter + glyph rendering (ValenceSpec) ───────
+    // ─── Valence: recall filter + glyph rendering ───────
 
     [Fact]
     public async Task Recall_ValenceFilter_MapsToQueryAndReturnsOnlyMatchingStance()

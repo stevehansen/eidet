@@ -6,7 +6,7 @@ namespace Eidet.Core.Canon;
 /// Slug derivation for Canon draft ids and <c>canon:*</c> tags: lowercase, every run of
 /// non-alphanumeric characters collapsed to a single hyphen, leading/trailing hyphens trimmed.
 /// Deterministic so the same term always keys the same draft (the damper depends on it). Entity/alias
-/// normalization beyond casing (plural folding) is deferred — CanonSpec open question 1.
+/// normalization beyond casing (plural folding) is deferred (docs/domains/canon.md).
 /// </summary>
 public static class CanonSlug
 {

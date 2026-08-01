@@ -47,7 +47,7 @@ internal static class PortalMarkup
 
     /// <summary>
     /// Stable secondary sort key for sections: importance descending, then Id ascending.
-    /// Mirrors PortalSpec.md §Off-Mode Section Selection Rules ordering.
+    /// Mirrors the shared section ordering (docs/domains/portal.md).
     /// </summary>
     public static IEnumerable<MemoryEntry> ByImportanceThenId(IEnumerable<MemoryEntry> items) =>
         items.OrderByDescending(m => m.Importance).ThenBy(m => m.Id, StringComparer.Ordinal);

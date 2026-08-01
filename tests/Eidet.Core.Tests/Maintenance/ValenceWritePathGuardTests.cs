@@ -6,7 +6,7 @@ using Eidet.Core.Tests.Services;
 namespace Eidet.Core.Tests.Maintenance;
 
 /// <summary>
-/// The standing regression tripwire for the ValenceSpec correctness core: a positive and a negative
+/// The standing regression tripwire for the Valence correctness core (docs/domains/memory.md): a positive and a negative
 /// claim about the same subject must survive ALL THREE write choke points that would otherwise
 /// silently collapse a contradiction (the latent data-loss bug the spec fixes). Each guard is a
 /// separate fact; the Cautionary controls prove sign-0 memories still fold normally, so only the

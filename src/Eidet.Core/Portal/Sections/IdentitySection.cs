@@ -4,8 +4,7 @@ using Eidet.Core.Domain;
 namespace Eidet.Core.Portal.Sections;
 
 /// <summary>
-/// Composes the Identity paragraph from a 4-step precedence (PortalSpec.md
-/// §Page Structure):
+/// Composes the Identity paragraph from a 4-step precedence (docs/domains/portal.md):
 ///   1. Memory tagged <c>portal:identity</c>.
 ///   2. Top 3 insights by importance.
 ///   3. Intake-derived insights from README/CLAUDE.md.

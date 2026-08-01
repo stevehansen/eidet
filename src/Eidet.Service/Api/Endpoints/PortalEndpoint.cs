@@ -7,7 +7,7 @@ namespace Eidet.Service.Api.Endpoints;
 /// <summary>
 /// REST endpoint for the per-repo Portal view. v1 supports <c>augment=off</c>
 /// only; other levels return 400 until summary/narrative ship per
-/// PortalSpec.md §Phased Delivery. The response shape matches
+/// docs/domains/portal.md. The response shape matches
 /// <see cref="PortalDocument"/>.
 /// </summary>
 internal sealed class PortalEndpoint

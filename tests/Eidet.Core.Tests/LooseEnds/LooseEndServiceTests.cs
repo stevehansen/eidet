@@ -9,8 +9,8 @@ namespace Eidet.Core.Tests.LooseEnds;
 /// <summary>
 /// End-to-end and invariant tests for the Loose End feature, driven entirely through
 /// <see cref="LooseEndService"/> over the in-memory ports + a deterministic clock. Covers the
-/// canonical cases named in LooseEndSpec.md §Implementation Sketch → Tests and the §Write Path /
-/// §Lifecycle / §Surfacing invariants.
+/// canonical cases for this domain (docs/domains/looseends.md) — the park/resolve gates plus the
+/// lifecycle and surfacing invariants.
 /// </summary>
 public class LooseEndServiceTests
 {
