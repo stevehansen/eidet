@@ -4,6 +4,7 @@ using Eidet.Core.Enrichment;
 using Eidet.Core.Memory;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
+using Eidet.Core.Text;
 
 namespace Eidet.Core.Maintenance;
 
@@ -55,6 +56,14 @@ public sealed class ConsolidationEngine
         BulkMutationCtx ctx, string repoId, IReadOnlyList<List<MemoryEntry>> groups,
         bool dryRun, ConsolidationResult result, CancellationToken ct)
     {
+        // Which observations a live derived memory already folds in. This — not a content probe — is
+        // the idempotence guard, because it answers the question actually being asked ("did I already
+        // consolidate these sources?") with lineage the engine itself wrote, rather than inferring it
+        // from similarity. A content probe cannot answer it: an unenriched consolidation emits the
+        // representative's content verbatim, so the nearest match to a bucket's output is the bucket's
+        // own input, and every scheduled run reads done as not-done and emits another copy.
+        var consumed = await ConsumedObservationIdsAsync(repoId, ct);
+
         // Partition each tag group by valence sign so opposite stances consolidate independently
         // and a contradiction is never collapsed into one insight.
         foreach (var group in groups)
@@ -62,8 +71,14 @@ public sealed class ConsolidationEngine
         {
             if (bucket.Count < 3) continue;
 
+            // Fully-consumed bucket: nothing new to fold. Partially-consumed still runs — fresh
+            // evidence joining an old cluster is exactly what the boost path is for.
+            if (bucket.All(o => consumed.Contains(o.Id))) continue;
+
             var bucketValence = bucket.FirstOrDefault(o => o.Valence != Valence.Neutral)?.Valence ?? Valence.Neutral;
-            var unionTags = bucket.SelectMany(o => o.Tags).Distinct().ToList();
+            // Ranked + capped, not a raw union: a consolidated memory can itself be re-consolidated,
+            // so an uncapped union compounds each generation and tags eventually cover the corpus.
+            var unionTags = TagHygiene.Clean(bucket.SelectMany(o => o.Tags));
             var meanImportance = bucket.Average(o => o.Importance);
             var proposedImportance = Math.Min(1.0f, (float)(meanImportance * 1.2));
             var representative = bucket.OrderByDescending(o => o.Importance).First();
@@ -97,8 +112,15 @@ public sealed class ConsolidationEngine
             // stances coexist (mirrors the write-path polarity guards).
             // A canon:* page is a human-curated memory; consolidation must never boost or contaminate its
             // lineage — skip the boost and fall through to a fresh insight (mirrors the valence-conflict guard).
-            var existingInsight = await _store.FindDuplicateAsync(repoId, representative.Content, 0.85f, ct);
-            if (existingInsight is not null && existingInsight.Type == MemoryType.Insight &&
+            // Probe for an existing consolidated INSIGHT, not merely "some memory with this content".
+            // A type-agnostic probe is guaranteed to return one of this bucket's own observations —
+            // when enrichment is unavailable the emitted content IS the representative's content, so
+            // the source matches at similarity 1.0. Reading that as "nothing consolidated yet" is what
+            // made this branch re-emit a verbatim copy every scheduled cycle (240 copies of a single
+            // observation observed in the field). FindNearDuplicatesAsync filters on the probe's type,
+            // so an Insight-typed probe cannot come back holding an Observation.
+            var existingInsight = await FindConsolidatedAsync(repoId, MemoryType.Insight, representative.Content, ct);
+            if (existingInsight is not null &&
                 !ValencePolarity.Conflicts(existingInsight.Valence, bucketValence) &&
                 !CanonTags.IsCanonPage(existingInsight))
             {
@@ -109,9 +131,18 @@ public sealed class ConsolidationEngine
                 var trusted = bucket.Where(ProvenanceRules.IsTrusted).ToList();
                 if (trusted.Count == 0) continue;
 
-                existingInsight.Importance = Math.Min(1.0f, existingInsight.Importance + 0.05f * trusted.Count);
+                // Only NEW evidence may boost. The bucket reforms identically every cycle, so boosting
+                // on the full trusted set would walk importance to 1.0 on nothing but the passage of
+                // time — and importance alone orders the L1 wake-up pool. No new contributors is the
+                // steady state, and the steady state must be a no-op.
+                var fresh = trusted
+                    .Where(o => !existingInsight.DerivedFrom.Contains(o.Id, StringComparer.OrdinalIgnoreCase))
+                    .ToList();
+                if (fresh.Count == 0) continue;
+
+                existingInsight.Importance = Math.Min(1.0f, existingInsight.Importance + 0.05f * fresh.Count);
                 existingInsight.DerivedFrom = existingInsight.DerivedFrom
-                    .Concat(trusted.Select(o => o.Id))
+                    .Concat(fresh.Select(o => o.Id))
                     .Distinct()
                     .ToList();
                 await ctx.WriteAsync(existingInsight, ct);
@@ -162,6 +193,49 @@ public sealed class ConsolidationEngine
         return 0;
     }
 
+    /// <summary>
+    /// The already-consolidated memory of <paramref name="type"/> covering <paramref name="content"/>,
+    /// or null when this cluster has not been consolidated yet.
+    ///
+    /// Type-scoped on purpose: consolidation emits content that is often byte-identical to one of its
+    /// own sources, so any type-agnostic "does this content exist" probe answers with the source and
+    /// makes an already-done cluster look undone. Scoping to the OUTPUT type is what makes the check
+    /// mean "did I already emit this", which is the question a scheduled, repeatedly-run stage needs.
+    /// </summary>
+    private Task<MemoryEntry?> FindConsolidatedAsync(
+        string repoId, MemoryType type, string content, CancellationToken ct) =>
+        _store.FindDuplicateOfTypeAsync(repoId, type, content, 0.85f, ct);
+
+    /// <summary>
+    /// Observation ids already folded into a live derived memory (insight or procedure). Read once
+    /// per run: consolidation emits at most a handful of memories per pass, so a snapshot taken at
+    /// the start cannot go stale within it, and the alternative — a probe per bucket — multiplies
+    /// round trips for an answer that does not change.
+    /// </summary>
+    private async Task<HashSet<string>> ConsumedObservationIdsAsync(string repoId, CancellationToken ct)
+    {
+        var derived = await _store.GetTopScoredAsync(
+            repoId, [MemoryType.Insight, MemoryType.Procedure], ConsumedScanLimit, ct);
+
+        var consumed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in derived)
+        {
+            if (d.Validity.ValidUntil is not null) continue;
+            foreach (var id in d.DerivedFrom)
+                consumed.Add(id);
+        }
+        return consumed;
+    }
+
+    /// <summary>Scan width for the lineage snapshot; matches the observation pool this engine reads.</summary>
+    private const int ConsumedScanLimit = 500;
+
+    /// <summary>The ordered union of a cluster's observation contents — the fine Procedure's body.</summary>
+    private static string StepsContent(IReadOnlyList<MemoryEntry> bucket) =>
+        string.Join("\n", bucket
+            .OrderBy(o => o.CreatedAt)
+            .Select((o, i) => $"{i + 1}. {o.Content}"));
+
     /// <summary>The cluster's functional stage: the most common non-<c>None</c> stage among its sources
     /// (ties broken by enum order for determinism), or <c>None</c> when no source carries one. Stage does
     /// NOT partition consolidation groups (#38 decision) — this only classifies an already-formed bucket.</summary>
@@ -188,9 +262,7 @@ public sealed class ConsolidationEngine
         var provenance = ProvenanceRules.ForContributors(bucket);
         var now = DateTime.UtcNow;
 
-        var stepsContent = string.Join("\n", bucket
-            .OrderBy(o => o.CreatedAt)
-            .Select((o, i) => $"{i + 1}. {o.Content}"));
+        var stepsContent = StepsContent(bucket);
         var fine = new MemoryEntry
         {
             Id = MemoryIdGenerator.Generate(repoId, MemoryType.Procedure, stepsContent, now),

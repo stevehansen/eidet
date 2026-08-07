@@ -72,8 +72,9 @@ public sealed class RecallToolHandler : IToolHandler
         if (results.Count > 0)
         {
             lines.Add($"{results.Count} memory(ies) found:");
-            foreach (var r in results)
+            for (var i = 0; i < results.Count; i++)
             {
+                var r = results[i];
                 var prefix = r.Type switch
                 {
                     MemoryType.Insight => "[I]",
@@ -89,9 +90,24 @@ public sealed class RecallToolHandler : IToolHandler
                     Valence.Cautionary => "⚠ ",
                     _ => "",
                 };
-                var display = r.OneLiner ?? r.Summary ?? Truncate(r.Content, 120);
-                lines.Add($"  {prefix} {glyph}{display}{stale}");
+
+                var headline = FirstNonEmpty(r.OneLiner, r.Summary) ?? Truncate(r.Content, HeadlineChars);
+                lines.Add($"  {prefix} {glyph}{headline}{stale}");
                 lines.Add($"      id={r.Id} importance={r.Importance:F2} score={r.Score:F2}");
+
+                // Depth for the hits most likely to be acted on. A one-liner is a ~12-word LLM
+                // abstraction of the memory; it reliably drops the class names, thresholds and file
+                // paths that make a memory usable, so rendering it ALONE hands the agent a topic
+                // label instead of the knowledge. Below the cut we stay terse: those hits are for
+                // deciding whether to widen the query, not for acting on.
+                if (i < DetailedHits)
+                {
+                    var body = r.Content.Trim();
+                    // Suppress only when the headline already IS the content — otherwise the
+                    // abstraction and the source say different things and both earn their space.
+                    if (body.Length > 0 && !string.Equals(body, headline, StringComparison.Ordinal))
+                        lines.Add($"      {Truncate(body, DetailChars).ReplaceLineEndings("\n      ")}");
+                }
             }
         }
 
@@ -108,8 +124,23 @@ public sealed class RecallToolHandler : IToolHandler
             count: results.Count);
     }
 
+    /// <summary>How many top-ranked hits render their full content rather than just an abstraction.</summary>
+    private const int DetailedHits = 3;
+
+    /// <summary>Per-hit content budget for the detailed band (~175 tokens each).</summary>
+    private const int DetailChars = 700;
+
+    private const int HeadlineChars = 120;
+
     private static string Truncate(string s, int max) =>
         s.Length <= max ? s : s[..max] + "…";
+
+    private static string? FirstNonEmpty(params string?[] candidates)
+    {
+        foreach (var c in candidates)
+            if (!string.IsNullOrWhiteSpace(c)) return c.Trim();
+        return null;
+    }
 
     /// <summary>Trimmed recall ride-along projection — only the fields the agent needs to act on a
     /// matching open Loose End, deliberately excluding internal lifecycle/source fields.</summary>

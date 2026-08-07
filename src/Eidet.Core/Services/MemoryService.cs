@@ -4,6 +4,7 @@ using Eidet.Core.Gates;
 using Eidet.Core.Layers;
 using Eidet.Core.Memory;
 using Eidet.Core.Storage;
+using Eidet.Core.Text;
 
 namespace Eidet.Core.Services;
 
@@ -26,6 +27,14 @@ namespace Eidet.Core.Services;
 public sealed class MemoryService
 {
     private const float DuplicateThreshold = 0.92f;
+
+    /// <summary>
+    /// Word-overlap above which two L1 lines are treated as the same fact and the lower-scored one
+    /// loses its slot. Deliberately looser than <see cref="DuplicateThreshold"/>: that gate decides
+    /// whether to REJECT a write, where a false positive silently loses knowledge, while this one
+    /// only reorders a 20-line display and a false positive costs nothing but the next-best line.
+    /// </summary>
+    private const double L1DuplicateThreshold = 0.7;
 
     // Write-time conflict check (#37): a contradiction requires near-duplicate content AND opposite hard
     // valence signs AND a high-trust incumbent. The similarity floor for pulling conflict neighbors is
@@ -866,6 +875,13 @@ public sealed class MemoryService
         var procedureCount = 0;
         var heuristicCount = 0;
 
+        // Wake-up slots are the scarcest surface in the system — 20 lines under a 600-token cap. Two
+        // renderings of the same fact waste a slot outright, and near-duplicates are common here
+        // because L1 shows one-liners: distinct memories routinely abstract to near-identical
+        // sentences ("API reference table for X" / "API endpoint reference for X"). Dedup on what is
+        // actually RENDERED rather than on the underlying content, since that is what the reader sees.
+        var rendered = new List<string>(maxItems);
+
         foreach (var item in scored)
         {
             var e = item.Entry;
@@ -887,12 +903,16 @@ public sealed class MemoryService
             };
 
             var content = e.OneLiner ?? e.Summary ?? e.Content;
+            if (rendered.Any(prior => WordSimilarity.Compute(prior, content) >= L1DuplicateThreshold))
+                continue;
+
             var line = $"{typePrefix} {content}";
 
             var lineTokens = RecallScoring.EstimateTokens(line.Length);
             if (lineTokens > remainingTokens)
                 break;
 
+            rendered.Add(content);
             sb.AppendLine(line);
             remainingTokens -= lineTokens;
 

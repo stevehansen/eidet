@@ -78,7 +78,7 @@ public class IntakeService
     /// </summary>
     public Task<IntakeResult> IngestDocsAsync(
         string repoId, string docsPath, bool recursive = true, string pattern = "*.md",
-        float importance = 0.6f, List<string>? extraTags = null, bool dryRun = false, CancellationToken ct = default)
+        float importance = 0.4f, List<string>? extraTags = null, bool dryRun = false, CancellationToken ct = default)
     {
         var ctx = new IntakeContext
         {

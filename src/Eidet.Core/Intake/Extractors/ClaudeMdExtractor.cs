@@ -27,7 +27,7 @@ public sealed class ClaudeMdExtractor : IIntakeExtractor
             foreach (var (sectionContent, tags) in MarkdownIntake.SplitByHeadings(content))
             {
                 await sink.AddMemoryAsync(
-                    new IntakeMemory(name, MemoryType.Insight, sectionContent.Trim(), tags, Importance: 0.8f),
+                    new IntakeMemory(name, MemoryType.Insight, sectionContent.Trim(), tags, Importance: 0.5f),
                     ct);
             }
         }

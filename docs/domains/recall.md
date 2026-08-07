@@ -57,6 +57,21 @@ expansion follows edges somebody **authored**; cue expansion follows entities en
   it.** Trust, ROI, layer de-boost, and quarantine are applied by the caller *after* `Fuse`, because
   the benchmark scorecard calls `Fuse` directly and folding retrieval policy in would unfairly
   penalize its Procedure/Heuristic gold cases. Owned by `src/Eidet.Core/Memory/RecallScoring.cs`.
+- **What is rendered is part of the read path, not a presentation detail.** A memory's `OneLiner` is a
+  ~12-word model abstraction that reliably drops the class names, thresholds and file paths that make
+  it actionable, so a renderer preferring it hands the agent a topic label and silently discards the
+  knowledge the store retained. `RecallToolHandler` therefore renders full `Content` for the top
+  `DetailedHits` and stays terse below the cut; only 45 of 15.6k live memories had a null `OneLiner`,
+  so an `OneLiner ?? Summary ?? Content` chain makes the later branches unreachable in practice.
+- **A candidate pool cut by importance decides the ranking before the ranking runs.** `GetTopScoredAsync`
+  can only order by `Importance` in the index, but callers re-rank on access frequency and dual-clock
+  recency, which the index cannot see. It therefore over-fetches (`PoolOverfetch`, capped at `MaxPool`)
+  so a high-importance, never-used seed cannot lock out earned knowledge that wins on the full score —
+  and so the client-side `IsLatest` filter doesn't eat into the caller's budget.
+- **The wake-up slice dedups on what it renders.** L1 shows one-liners, and distinct memories routinely
+  abstract to near-identical sentences, so two paraphrases would otherwise both consume one of only 20
+  slots under a 600-token cap. The `L1DuplicateThreshold` word-overlap check is deliberately looser than
+  the write-time duplicate gate: a false positive here costs the next-best line, not stored knowledge.
 - **Every field that changes the result set must be in the cache key.** Repo, text, type, valence,
   stage, tags, limit, include-expired, cross-repo, *both expansion flags*, *and* the rounded alpha
   bucket. A filter missing from the key lets a filtered recall collide with an unfiltered one and
@@ -116,9 +131,16 @@ expansion follows edges somebody **authored**; cue expansion follows entities en
 | `src/Eidet.Core/Domain/MemoryQuery.cs` | The resolved query (filters, limit, expansion flags) |
 | `src/Eidet.Core/Indexes/Memories_Search.cs` | Composite `SearchText` + `SearchVector`, derived `AbstractionText` + `AbstractionVector`, lower-cased keyword-analyzed `Entities`; enum fields for `WhereEquals` |
 | `src/Eidet.Core/Layers/LayerScope.cs` | Scope resolution + the non-local de-boost constant |
-| `src/Eidet.Service/Tools/Handlers/RecallToolHandler.cs` | Agent-facing render, including the `✗`/`⚠` valence glyphs |
+| `src/Eidet.Service/Tools/Handlers/RecallToolHandler.cs` | Agent-facing render: `✗`/`⚠` valence glyphs, and full content for the top `DetailedHits` |
 
 ## Gotchas
+
+- **The lexical arm has no relevance floor.** RavenDB's `Search` is OR-by-default, so any single query
+  term matches, and `Fuse` min-max-normalizes each arm — which maps the best candidate to 1.0 *whatever
+  its raw score*. A query with no real match therefore returns a full page of confident-looking noise
+  rather than nothing. The semantic arms are floored (`VectorSimilarityMinimum`, now actually read from
+  `memory.vectorSimilarityMinimum` — it was a live config knob that nothing consumed), but an absolute
+  lexical floor still needs calibration work. Treat a uniformly low-relevance result set with suspicion.
 
 - **`ExplainRecallAsync` is a pre-expansion view** that also bypasses the cache and fires no hooks. Its
   rows show arm-fusion math only, so a candidate production recall *would* surface via a link or a

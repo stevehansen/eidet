@@ -33,7 +33,7 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
 
             var store = DocumentStoreFactory.CreateFromConfig(config);
             DatabaseProvisioner.DeployIndexes(store);
-            var eidetStore = new RavenEidetStore(store);
+            var eidetStore = new RavenEidetStore(store, config);
             using var enrichment = EnrichmentService.CreateFromConfig(config.Enrichment);
             var hookRunner = new HookRunner(config.Hooks);
             var memorySvc = new MemoryService(eidetStore, hooks: hookRunner);

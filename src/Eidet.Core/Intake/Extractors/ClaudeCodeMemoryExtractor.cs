@@ -43,7 +43,7 @@ public sealed class ClaudeCodeMemoryExtractor : IIntakeExtractor
                 tags.AddRange(fileTags);
                 await sink.AddMemoryAsync(
                     new IntakeMemory($"claude-memory/{fileName}", MemoryType.Insight,
-                        sectionContent.Trim(), tags.Distinct().ToList(), Importance: 0.7f),
+                        sectionContent.Trim(), tags.Distinct().ToList(), Importance: 0.5f),
                     ct);
             }
         }

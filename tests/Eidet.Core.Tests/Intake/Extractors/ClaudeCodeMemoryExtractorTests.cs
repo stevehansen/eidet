@@ -66,7 +66,7 @@ public class ClaudeCodeMemoryExtractorTests
         Assert.All(sink.Memories, m =>
         {
             Assert.Equal(MemoryType.Insight, m.Type);
-            Assert.Equal(0.7f, m.Importance);
+            Assert.Equal(0.5f, m.Importance);
             Assert.Contains("claude-code", m.Tags);
             Assert.StartsWith("claude-memory/", m.Source);
         });

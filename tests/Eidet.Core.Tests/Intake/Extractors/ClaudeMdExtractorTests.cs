@@ -29,7 +29,7 @@ public class ClaudeMdExtractorTests
         {
             Assert.Equal(MemoryType.Insight, m.Type);
             Assert.Equal("CLAUDE.md", m.Source);
-            Assert.Equal(0.8f, m.Importance);
+            Assert.Equal(0.5f, m.Importance);
         });
     }
 

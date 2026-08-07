@@ -8,6 +8,7 @@ public enum MaintenanceStep
 {
     TtlExpiry,
     ObservationRetention,
+    CorpusRepair,
     DedupSweep,
     ImportanceDecay,
     RoiDecay,

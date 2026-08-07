@@ -33,7 +33,7 @@ public class AgentsMdExtractorTests
         Assert.All(sink.Memories, m =>
         {
             Assert.Equal(MemoryType.Insight, m.Type);
-            Assert.Equal(0.8f, m.Importance);
+            Assert.Equal(0.5f, m.Importance);
             Assert.Contains("agents", m.Tags);
         });
 

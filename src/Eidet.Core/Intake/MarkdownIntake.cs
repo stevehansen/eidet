@@ -1,3 +1,4 @@
+using Eidet.Core.Text;
 using System.Text.RegularExpressions;
 
 namespace Eidet.Core.Intake;
@@ -45,23 +46,20 @@ public static partial class MarkdownIntake
         return sections;
     }
 
-    /// <summary>Mine word-tags from a heading (lower-cased, deduped, length ≥ 2).</summary>
+    /// <summary>
+    /// Mine word-tags from a heading. A heading is prose, so the raw split yields function words and
+    /// bare numbers ("How to Make Changes" → how/to/make/changes); <see cref="TagHygiene"/> drops
+    /// those and caps the result, which is what keeps mined tags narrow enough to filter on.
+    /// </summary>
     public static List<string> TagsFromHeading(string heading) =>
-        heading
+        TagHygiene.Clean(heading
             .Split([' ', '-', '_', '/', '\\', '(', ')', '[', ']', '{', '}', '.', ',', ':', ';'],
-                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(t => t.Length >= 2)
-            .Select(t => t.ToLowerInvariant())
-            .Distinct()
-            .ToList();
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
     /// <summary>Mine tags from a file name (without extension); rules mirror <see cref="TagsFromHeading"/>.</summary>
     public static List<string> TagsFromFileName(string fileName) =>
-        Path.GetFileNameWithoutExtension(fileName)
-            .Split(['-', '_', ' '], StringSplitOptions.RemoveEmptyEntries)
-            .Select(t => t.ToLowerInvariant())
-            .Where(t => t.Length >= 2)
-            .ToList();
+        TagHygiene.Clean(Path.GetFileNameWithoutExtension(fileName)
+            .Split(['-', '_', ' '], StringSplitOptions.RemoveEmptyEntries));
 
     [GeneratedRegex(@"^#{1,3}\s+(.+)", RegexOptions.Multiline)]
     private static partial Regex HeadingRegex();

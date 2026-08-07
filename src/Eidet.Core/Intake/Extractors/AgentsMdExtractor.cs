@@ -35,7 +35,7 @@ public sealed class AgentsMdExtractor : IIntakeExtractor
                 tags.AddRange(fileTags);
                 await sink.AddMemoryAsync(
                     new IntakeMemory(relativePath, MemoryType.Insight, sectionContent.Trim(),
-                        tags.Distinct().ToList(), Importance: 0.8f),
+                        tags.Distinct().ToList(), Importance: 0.5f),
                     ct);
             }
         }

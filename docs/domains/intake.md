@@ -48,6 +48,16 @@ which puts it on the import trust floor for the rest of its life (**writepath**)
   candidate is ever stored unscanned (#63, STRIDE T-15/I-7).
 - **A rejected candidate's content is blanked in the result.** Otherwise a caught secret would leak
   straight back out through CLI/REST output.
+- **A seed must never outrank earned knowledge.** An intake memory is an unverified restatement of a
+  file the agent can already open, so every extractor caps importance at or below `0.5` (CLAUDE/AGENTS
+  `0.5`, Claude-Code memory `0.5`, README and docs-folder `0.4`, editorconfig `0.35`). Earlier builds
+  minted these at `0.8` — above the observed `AgentInferred` median of `0.63` — and because
+  `GetTopScoredAsync` orders the L1 candidate pool by importance alone, the wake-up slice filled with
+  doc chunks and echoed `CLAUDE.md` back at an agent that already had it loaded. `CorpusRepairStage`
+  re-baselines seeds minted under the old values.
+- **Mined tags are prose and must be cleaned.** A heading splits into function words and bare numbers
+  ("How to Make Changes" → `how`/`to`/`make`/`changes`; "2026-04-08" → `2026`/`04`/`08`), which tag
+  most of a corpus and narrow nothing. `TagsFromHeading`/`TagsFromFileName` both run `TagHygiene.Clean`.
 - **Intake ids are content-addressed and must be minted by `MemoryIdGenerator`.** That is what makes
   re-ingesting an unchanged file a single `GetAsync` probe instead of a similarity query — and minting
   locally instead would make every intake memory read as rewritten content to the commitment check

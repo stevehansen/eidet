@@ -25,7 +25,7 @@ public sealed class EditorConfigExtractor : IIntakeExtractor
         if (string.IsNullOrWhiteSpace(summary)) return;
 
         await sink.AddMemoryAsync(
-            new IntakeMemory(FileName, MemoryType.Insight, summary, ["editorconfig", "formatting"], Importance: 0.7f),
+            new IntakeMemory(FileName, MemoryType.Insight, summary, ["editorconfig", "formatting"], Importance: 0.35f),
             ct);
     }
 

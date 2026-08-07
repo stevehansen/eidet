@@ -26,7 +26,7 @@ public sealed class ContextCommand : AsyncCommand<ContextCommand.Settings>
     {
         var config = ConfigManager.Load();
         var store = DocumentStoreFactory.CreateFromConfig(config);
-        var eidetStore = new RavenEidetStore(store);
+        var eidetStore = new RavenEidetStore(store, config);
         var layerSvc = new LayerService(eidetStore);
         var memorySvc = new MemoryService(eidetStore, layerSvc);
 

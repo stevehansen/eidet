@@ -29,7 +29,7 @@ public sealed class IntakeOptions
     public bool DocsRecursive { get; init; } = true;
 
     /// <summary>Importance assigned to memories produced by the docs-folder extractor.</summary>
-    public float DocsImportance { get; init; } = 0.6f;
+    public float DocsImportance { get; init; } = 0.4f;
 
     /// <summary>Extra tags appended to every memory produced by the docs-folder extractor.</summary>
     public IReadOnlyList<string>? DocsExtraTags { get; init; }

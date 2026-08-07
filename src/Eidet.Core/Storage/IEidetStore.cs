@@ -156,6 +156,26 @@ public interface IEidetStore
     Task<MemoryEntry?> FindDuplicateAsync(string repoId, string content, float threshold, CancellationToken ct = default);
 
     /// <summary>
+    /// Like <see cref="FindDuplicateAsync"/> but restricted to one <paramref name="type"/>.
+    ///
+    /// Exists for producers that emit content byte-identical to their own input — consolidation
+    /// folds observations into an insight whose body, absent LLM polish, IS the representative
+    /// observation's body. Asking the type-agnostic question there always answers with the source,
+    /// so a caller checking "have I emitted this yet" reads done as not-done and re-emits on every
+    /// scheduled run. Scoping the probe to the OUTPUT type is what makes the answer meaningful.
+    ///
+    /// The default filters the type-agnostic result, which is correct whenever the nearest match is
+    /// the answer; <see cref="RavenEidetStore"/> overrides it to push the filter into the query so a
+    /// same-content source cannot crowd out the real hit.
+    /// </summary>
+    async Task<MemoryEntry?> FindDuplicateOfTypeAsync(
+        string repoId, MemoryType type, string content, float threshold, CancellationToken ct = default)
+    {
+        var hit = await FindDuplicateAsync(repoId, content, threshold, ct);
+        return hit?.Type == type ? hit : null;
+    }
+
+    /// <summary>
     /// Near-duplicate candidates of <paramref name="entry"/> within the same repo, ranked by
     /// semantic similarity, filtered server-side to those at or above <paramref name="minSimilarity"/>.
     /// Excludes the entry itself and anything not latest/valid. Returns [] when embeddings are

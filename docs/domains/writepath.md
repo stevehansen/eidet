@@ -53,6 +53,20 @@ incumbent is a correction's whole purpose.
 - **`WriteValidator.BuildEntry` is the single canonical construction path for a stored memory** —
   validation, id minting, default fields, provenance resolution, and entity extraction live in one
   place so no mutation path can bypass one of them. `BuildEditEntry` is its supersession twin.
+- **The duplicate gate's fallback must not degrade as duplicates accumulate.** Memory ids are
+  timestamped by design (`MemoryIdGenerator.Generate` — a re-store of identical content mints a
+  distinct document), so `FindDuplicateAsync` is the only thing standing between a repeated write and
+  an unbounded pile of copies. Its vector strategy is best-effort; the exact-content fallback is the
+  guard that survives an embeddings outage, and its candidate pool (`ExactMatchPool`) is sized well
+  above any plausible duplicate cluster. A narrow pool fails exactly when it matters most — equally
+  scoring siblings fill every slot, the exact match falls outside the window, and the gate reports
+  "no duplicate" precisely when duplicates are worst.
+- **A producer whose output can equal its input must probe by type.** `FindDuplicateOfTypeAsync` exists
+  for that case; consolidation emits content byte-identical to a source observation, so a type-agnostic
+  probe answers with the source. See the maintenance spec's convergence invariant.
+- **`TagHygiene.Clean` runs at the write gate, not only where tags are mined.** Every surface funnels
+  through `BuildEntry`, so a caller that hand-rolls tag extraction still cannot smear noise across the
+  corpus. It is idempotent, so applying it at mine-, consolidate-, and write-time is safe.
 - **Trust is derived on every read and never stored.** There is no trust field to forge, lie about,
   or let drift out of sync with the evidence. Owned by `src/Eidet.Core/Memory/MemoryTrust.cs`.
 - **The commitment factor multiplies *after* the echo lift.** Echoes may rehabilitate an unknown

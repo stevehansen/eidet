@@ -439,8 +439,23 @@ internal class InMemoryEidetStore : IEidetStore
     public virtual Task<List<MemoryEntry>> VectorSearchAsync(IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) =>
         Task.FromResult(new List<MemoryEntry>());
 
-    public virtual Task<MemoryEntry?> FindDuplicateAsync(string repoId, string content, float threshold, CancellationToken ct = default) =>
-        Task.FromResult<MemoryEntry?>(null);
+    /// <summary>
+    /// Exact-content match over live entries — the real store's embeddings-free fallback strategy.
+    /// This deliberately does NOT return null unconditionally: an always-null duplicate probe makes
+    /// every write and every consolidation look novel, which is precisely how a re-emit loop stayed
+    /// invisible to the suite while producing hundreds of copies in a real corpus. A fake may be
+    /// simpler than production, but not more permissive on the check the caller relies on.
+    /// </summary>
+    public virtual Task<MemoryEntry?> FindDuplicateAsync(string repoId, string content, float threshold, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            return Task.FromResult(_entries.Values.FirstOrDefault(e =>
+                string.Equals(e.RepoId, repoId, StringComparison.OrdinalIgnoreCase) &&
+                e.IsLatest && e.Validity.ValidUntil is null &&
+                string.Equals(e.Content.Trim(), content.Trim(), StringComparison.OrdinalIgnoreCase)));
+        }
+    }
 
     // Reflection coverage cursor — real backing store (default interface impl is null/no-op). Purely
     // additive: only the Reflector tests read/advance it; every existing test is unaffected.

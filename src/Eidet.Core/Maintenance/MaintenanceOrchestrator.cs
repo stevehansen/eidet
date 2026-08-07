@@ -53,6 +53,9 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
     [
         new TtlExpiryStage(),
         new ObservationRetentionStage(),
+        // Before dedup: folding exact duplicates shrinks the set the similarity passes weigh, and
+        // re-baselining seed importance first keeps a stale score from picking the survivor.
+        new CorpusRepairStage(),
         new DedupSweepStage(),
         new ImportanceDecayStage(),
         new RoiDecayStage(),

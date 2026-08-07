@@ -1,6 +1,7 @@
 using Eidet.Core.Domain;
 using Eidet.Core.Memory;
 using Eidet.Core.Services;
+using Eidet.Core.Text;
 
 namespace Eidet.Core.Gates;
 
@@ -72,7 +73,9 @@ public static class WriteValidator
             Valence = opts.Valence,
             Stage = opts.Stage,
             Content = opts.Content,
-            Tags = opts.Tags?.ToList() ?? [],
+            // Last line of defence for tag growth: every write surface funnels through here, so a
+            // caller that hand-rolls its own tag mining still cannot smear noise across the corpus.
+            Tags = TagHygiene.Clean(opts.Tags),
             Importance = Math.Clamp(opts.Importance, 0f, 1f),
             Source = opts.Source,
             SourceSessionId = opts.SessionId,

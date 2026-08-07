@@ -17,13 +17,21 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
 
         [CommandOption("--json")]
         public bool Json { get; set; }
+
+        /// <summary>
+        /// Comma-separated <see cref="MaintenanceStep"/> names to run, skipping every other stage.
+        /// Without it a run fires the enrichment, drift-review and reflection stages, which call an
+        /// LLM backend — too heavy when the intent is one targeted stage over many repos.
+        /// </summary>
+        [CommandOption("--only <STAGES>")]
+        public string? Only { get; set; }
     }
 
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
         var store = DocumentStoreFactory.CreateFromConfig(config);
-        var eidetStore = new RavenEidetStore(store);
+        var eidetStore = new RavenEidetStore(store, config);
         using var enrichment = EnrichmentService.CreateFromConfig(config.Enrichment);
         var memorySvc = new MemoryService(eidetStore);
         var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memorySvc);
@@ -36,9 +44,26 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
 
         var repoId = Eidet.Core.Domain.RepoIdNormalizer.Normalize(settings.Repo ?? Directory.GetCurrentDirectory());
 
+        ISet<MaintenanceStep>? only = null;
+        if (!string.IsNullOrWhiteSpace(settings.Only))
+        {
+            only = new HashSet<MaintenanceStep>();
+            foreach (var name in settings.Only.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (!Enum.TryParse<MaintenanceStep>(name, ignoreCase: true, out var step))
+                {
+                    AnsiConsole.MarkupLine($"[red]Unknown stage '{Markup.Escape(name)}'.[/] Valid: {string.Join(", ", Enum.GetNames<MaintenanceStep>())}");
+                    store.Dispose();
+                    return 1;
+                }
+                only.Add(step);
+            }
+        }
+
         try
         {
-            var report = await runner.RunAsync(repoId, cancellation);
+            var report = await runner.RunAsync(
+                new MaintenanceRequest { RepoId = repoId, OnlyStages = only }, cancellation);
 
             if (settings.Json)
             {

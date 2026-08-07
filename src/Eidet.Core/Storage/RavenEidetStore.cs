@@ -12,11 +12,34 @@ namespace Eidet.Core.Storage;
 public class RavenEidetStore : IEidetStore
 {
     private const string EmbeddingsTaskId = "memory-embeddings";
+
+    /// <summary>Candidate over-fetch factor for <see cref="GetTopScoredAsync"/> — see the note there.</summary>
+    private const int PoolOverfetch = 5;
+
+    /// <summary>Absolute ceiling on that over-fetch, so a large caller limit can't pull the corpus.</summary>
+    private const int MaxPool = 500;
+
+    /// <summary>
+    /// Cosine floor for the semantic arms. Surfaced as a property (not a constant) because
+    /// <c>memory.vectorSimilarityMinimum</c> is a documented, user-settable knob — it existed in
+    /// config and in the CLI while nothing ever read it, so tuning it silently did nothing.
+    /// </summary>
+    public float VectorSimilarityMinimum { get; set; } = 0.70f;
+
+    /// <summary>Candidate pool for the exact-content fallback — see the note in FindDuplicateCoreAsync.</summary>
+    private const int ExactMatchPool = 128;
     private readonly IDocumentStore _store;
 
-    public RavenEidetStore(IDocumentStore store)
+    /// <param name="config">
+    /// Optional so the many call sites that only read or write documents stay untouched. Supplied by
+    /// the recall-serving entry points (MCP, serve, recall, context), which are the only ones whose
+    /// behavior the tuning knobs change.
+    /// </param>
+    public RavenEidetStore(IDocumentStore store, Configuration.EidetConfig? config = null)
     {
         _store = store;
+        if (config is not null)
+            VectorSimilarityMinimum = config.Memory.VectorSimilarityMinimum;
     }
 
     public async Task<MemoryEntry?> GetAsync(string id, CancellationToken ct = default)
@@ -251,7 +274,7 @@ public class RavenEidetStore : IEidetStore
                 .VectorSearch(
                     field => field.WithField(vectorField),
                     searchTerm => searchTerm.ByText(query.Text, EmbeddingsTaskId),
-                    minimumSimilarity: 0.70f,
+                    minimumSimilarity: VectorSimilarityMinimum,
                     numberOfCandidates: 30);
 
             documentQuery = ApplyFilters(documentQuery, query);
@@ -291,18 +314,30 @@ public class RavenEidetStore : IEidetStore
         return scored;
     }
 
-    public async Task<MemoryEntry?> FindDuplicateAsync(
-        string repoId, string content, float threshold, CancellationToken ct = default)
+    public Task<MemoryEntry?> FindDuplicateAsync(
+        string repoId, string content, float threshold, CancellationToken ct = default) =>
+        FindDuplicateCoreAsync(repoId, null, content, threshold, ct);
+
+    public Task<MemoryEntry?> FindDuplicateOfTypeAsync(
+        string repoId, MemoryType type, string content, float threshold, CancellationToken ct = default) =>
+        FindDuplicateCoreAsync(repoId, type, content, threshold, ct);
+
+    private async Task<MemoryEntry?> FindDuplicateCoreAsync(
+        string repoId, MemoryType? type, string content, float threshold, CancellationToken ct)
     {
         // Strategy 1: Vector similarity
         try
         {
             using var session = _store.OpenAsyncSession();
-            var results = await session.Advanced
+            var q = session.Advanced
                 .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
                 .WhereEquals("RepoId", repoId)
                 .AndAlso()
-                .WhereEquals("ValidUntil", (DateTime?)null)
+                .WhereEquals("ValidUntil", (DateTime?)null);
+            if (type is { } t)
+                q = q.AndAlso().WhereEquals("Type", t);
+
+            var results = await q
                 .VectorSearch(
                     field => field.WithField("SearchVector"),
                     searchTerm => searchTerm.ByText(content, EmbeddingsTaskId),
@@ -314,21 +349,30 @@ public class RavenEidetStore : IEidetStore
             if (results.Count > 0)
                 return results[0];
         }
-        catch { }
+        catch { /* embeddings unavailable or index stale — Strategy 2 is the safety net */ }
 
-        // Strategy 2: Full-text fallback with exact content match
+        // Strategy 2: exact-content match over a lexical candidate pool. This is the ONLY guard that
+        // survives an embeddings outage, so its pool must not be starved by the very condition it
+        // exists to detect: with a narrow Take, a content that already has many copies fills every
+        // slot with equally-scoring siblings and the exact match can fall outside the window, so the
+        // gate reports "no duplicate" precisely when duplicates are worst and mints another. The pool
+        // is therefore sized well above any plausible duplicate cluster.
         try
         {
             var searchSnippet = content.Length > 80 ? content[..80] : content;
             using var session = _store.OpenAsyncSession();
-            var candidates = await session.Advanced
+            var q = session.Advanced
                 .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
                 .WhereEquals("RepoId", repoId)
                 .AndAlso()
-                .WhereEquals("ValidUntil", (DateTime?)null)
+                .WhereEquals("ValidUntil", (DateTime?)null);
+            if (type is { } t2)
+                q = q.AndAlso().WhereEquals("Type", t2);
+
+            var candidates = await q
                 .AndAlso()
                 .Search("Content", searchSnippet)
-                .Take(10)
+                .Take(ExactMatchPool)
                 .ToListAsync(ct);
 
             return candidates.FirstOrDefault(c =>
@@ -463,13 +507,20 @@ public class RavenEidetStore : IEidetStore
         string repoId, MemoryType[] types, int limit, CancellationToken ct = default)
     {
         using var session = _store.OpenAsyncSession();
+        // Over-fetch relative to the caller's limit. Importance is the only orderable proxy in the
+        // index, but callers re-rank on signals it cannot see (access frequency, dual-clock recency),
+        // so a pool cut at exactly `limit` by importance decides the outcome before the real ranking
+        // runs — a high-importance seed with no usage permanently outranks earned knowledge that
+        // would win on the full score. The client-side IsLatest filter also shrinks the pool, and
+        // that shrinkage must not eat into the caller's budget.
+        var poolSize = Math.Min(limit * PoolOverfetch, MaxPool);
         var results = await session.Advanced
             .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
             .WhereEquals("RepoId", repoId)
             .WhereEquals("ValidUntil", (DateTime?)null)
             .WhereIn("Type", types.Cast<object>())
             .OrderByDescending("Importance")
-            .Take(limit)
+            .Take(poolSize)
             .ToListAsync(ct);
 
         // Filter to IsLatest client-side (not in the search index)

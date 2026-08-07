@@ -23,7 +23,7 @@ public sealed class ReadmeExtractor : IIntakeExtractor
         foreach (var (sectionContent, tags) in MarkdownIntake.SplitByHeadings(content))
         {
             await sink.AddMemoryAsync(
-                new IntakeMemory(FileName, MemoryType.Insight, sectionContent.Trim(), tags, Importance: 0.6f),
+                new IntakeMemory(FileName, MemoryType.Insight, sectionContent.Trim(), tags, Importance: 0.4f),
                 ct);
         }
     }

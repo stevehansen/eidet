@@ -89,7 +89,7 @@ public sealed class EidetHost : IDisposable
         DatabaseProvisioner.EnsureRefreshEnabled(store);
         DatabaseProvisioner.EnsureMemoryFileRevisions(store);
 
-        var eidetStore = new RavenEidetStore(store);
+        var eidetStore = new RavenEidetStore(store, config);
 
         var enrichment = EnrichmentService.CreateFromConfig(config.Enrichment);
 

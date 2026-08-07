@@ -50,6 +50,22 @@ this run produced.
   records `StageOutcome(name, 0, error)`. Cancellation breaks the loop cleanly.
 - **Stage selection compares names, never parses them.** A stage whose `Name` has no `MaintenanceStep`
   member simply never matches an `Only` filter instead of throwing — selection stays total.
+- **A scheduled stage must converge.** Every stage runs repeatedly over a corpus that mostly does not
+  change, so "does nothing the second time" is a correctness property, not an optimization. Consolidation
+  enforces it with a *lineage* check — the set of observation ids already folded into a live derived
+  memory (`ConsumedObservationIdsAsync`); a fully-consumed bucket is skipped, and the boost path lifts
+  importance only for contributors not already in `DerivedFrom`. It deliberately does **not** ask "does
+  content like this exist": an unenriched consolidation emits the representative observation's content
+  verbatim, so the nearest match to a bucket's output is the bucket's own input, and a content probe
+  reads done as not-done. That defect re-emitted one observation 240 times on the 6-hour schedule.
+- **Tag unions are ranked and capped, never raw.** A consolidated memory can itself be re-consolidated,
+  so `TagHygiene.Clean` bounds `unionTags`; an uncapped union compounds each generation until tags
+  cover the corpus (observed at 199 tags on one entry).
+- **`CorpusRepairStage` is idempotent by construction.** It doubles as the migration for corpora damaged
+  by older builds and as standing hygiene, so it carries no version flag or run-once marker — a repo
+  that was never repaired and one repaired long ago then re-damaged want the same action. It runs
+  before `DedupSweep` so exact folds shrink the similarity candidate set and stale seed importance
+  can't decide a survivor.
 - **Dedup and consolidation must never touch a `canon:*` page.** Canon pages are human-approved
   syntheses; they are excluded from the dedup candidate set and from the consolidation boost path.
 - **A merge is vetoed unless the survivor still surfaces for the discard's own retrieval intent.**
@@ -84,6 +100,8 @@ this run produced.
 | `src/Eidet.Core/Maintenance/Stages/` | One file per stage; each `internal`, each with its own `StageName` |
 | `src/Eidet.Core/Maintenance/ConsolidationEngine.cs` | Grouping, valence partitioning, anti-laundering, two-altitude emission, importance decay |
 | `src/Eidet.Core/Maintenance/DedupEngine.cs` | Semantic + lexical passes and the single `MergeAsync` |
+| `src/Eidet.Core/Maintenance/Stages/CorpusRepairStage.cs` | Idempotent repair: exact-content folds (cross-type), tag hygiene, intake importance re-baseline, heading-only one-liner clearing |
+| `src/Eidet.Core/Text/TagHygiene.cs` | The tag noise rule + growth cap shared by mining, consolidation, and the write gate |
 | `src/Eidet.Core/Maintenance/RecallConsistencyGuard.cs` | The per-merge retrievability veto |
 | `src/Eidet.Core/Maintenance/ReflectionEngine.cs` | Residue arms (echoes / loose ends / drift) → net-new memories |
 | `src/Eidet.Core/Maintenance/FadeMemCurve.cs` | Per-type half-life/shape table — the decay *and* recall-recency source |
