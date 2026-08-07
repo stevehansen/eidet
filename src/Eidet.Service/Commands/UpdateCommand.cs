@@ -4,6 +4,7 @@ using System.Text.Json;
 using Eidet.Core;
 using Eidet.Core.Configuration;
 using Eidet.Core.Services;
+using Eidet.Core.Update;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -22,6 +23,22 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         [CommandOption("--force")]
         public bool Force { get; set; }
 
+        /// <summary>
+        /// Install this exact version instead of resolving the newest one. The unattended path
+        /// uses it so the version the scheduler vetted — age gate included — is the version that
+        /// actually lands, rather than whatever NuGet's latest happens to be moments later.
+        /// </summary>
+        [CommandOption("--to <VERSION>")]
+        public string? To { get; set; }
+
+        /// <summary>
+        /// Reinstall the version recorded before the current one. Reliable precisely because
+        /// releases are immutable: the previous version is guaranteed to still be there, and to be
+        /// the same bytes that were working an hour ago.
+        /// </summary>
+        [CommandOption("--rollback")]
+        public bool Rollback { get; set; }
+
         // Hidden flag invoked by the freshly-installed binary (direct path or trampoline
         // script) to record version history *after* dotnet tool update has actually
         // replaced the on-disk binary. The running process reports its own
@@ -36,9 +53,6 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         public string? ExpectedVersion { get; set; }
     }
 
-    private const string NuGetPackageId = "eidet";
-    private const string NuGetIndexUrl = $"https://api.nuget.org/v3-flatcontainer/{NuGetPackageId}/index.json";
-
     protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var currentVersion = EidetVersion.Current;
@@ -52,8 +66,32 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         if (!settings.Json)
             AnsiConsole.MarkupLine($"Current version: [bold]{currentVersion}[/]");
 
-        // Check NuGet for latest version
-        var latestVersion = await GetLatestNuGetVersionAsync(cancellation);
+        // An explicitly named target skips resolution entirely — including the "is it newer?"
+        // test, since naming a version is itself the decision. That is what makes --rollback work.
+        var explicitTarget = ResolveExplicitTarget(settings, out var targetError);
+        if (targetError is not null)
+        {
+            if (settings.Json)
+                Console.WriteLine(JsonSerializer.Serialize(new { current = currentVersion, error = targetError }));
+            else
+                AnsiConsole.MarkupLine($"[red]{Markup.Escape(targetError)}[/]");
+            return 1;
+        }
+
+        if (explicitTarget is not null)
+        {
+            if (!settings.Json)
+                AnsiConsole.MarkupLine($"Target version:  [green]{explicitTarget}[/]");
+
+            return OperatingSystem.IsWindows()
+                ? await UpdateViaTrampolineAsync(currentVersion, explicitTarget, settings, cancellation)
+                : await UpdateDirectAsync(currentVersion, explicitTarget, settings, cancellation);
+        }
+
+        // Check NuGet for the latest version. This also refreshes the on-disk cache that every
+        // "new version available" notice reads, so a manual check keeps those surfaces honest.
+        var status = await new UpdateChecker().CheckAsync(currentVersion, cancellation);
+        var latestVersion = status?.Latest;
 
         if (latestVersion == null)
         {
@@ -73,7 +111,10 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             return 1;
         }
 
-        var isUpToDate = string.Equals(currentVersion, latestVersion, StringComparison.OrdinalIgnoreCase);
+        // Compared by SemVer, not equality: a locally built or pre-release binary is *ahead* of
+        // NuGet's latest, and treating "different" as "outdated" turns an unattended run into a
+        // silent downgrade.
+        var isUpToDate = !SemanticVersion.IsNewer(currentVersion, latestVersion);
 
         if (settings.Json && settings.CheckOnly)
         {
@@ -82,6 +123,7 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
                 current = currentVersion,
                 latest = latestVersion,
                 upToDate = isUpToDate,
+                publishedAt = status?.LatestPublishedAt,
             }, new JsonSerializerOptions { WriteIndented = true }));
             return 0;
         }
@@ -276,33 +318,43 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         return 0;
     }
 
-    internal static async Task<string?> GetLatestNuGetVersionAsync(CancellationToken ct)
+    /// <summary>
+    /// The version the caller named outright, via <c>--to</c> or <c>--rollback</c>, or null when
+    /// the target still has to be resolved from NuGet. Returns an error message instead when the
+    /// request cannot be honoured — asking to roll back with no recorded predecessor, say.
+    /// </summary>
+    private static string? ResolveExplicitTarget(Settings settings, out string? error)
     {
-        try
+        error = null;
+
+        if (settings.Rollback)
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-            http.DefaultRequestHeaders.UserAgent.ParseAdd("Eidet-Updater");
-
-            var json = await http.GetStringAsync(NuGetIndexUrl, ct);
-            using var doc = JsonDocument.Parse(json);
-
-            if (!doc.RootElement.TryGetProperty("versions", out var versions))
-                return null;
-
-            // NuGet returns versions in ascending order — last is latest stable
-            string? latest = null;
-            foreach (var v in versions.EnumerateArray())
+            if (settings.To is not null)
             {
-                var ver = v.GetString();
-                if (ver != null && !ver.Contains('-')) // skip pre-release
-                    latest = ver;
+                error = "--rollback and --to are mutually exclusive.";
+                return null;
             }
-            return latest;
+
+            var previous = VersionHistory.GetCurrent()?.PreviousVersion;
+            if (string.IsNullOrWhiteSpace(previous))
+            {
+                error = "No previous version recorded — nothing to roll back to.";
+                return null;
+            }
+
+            return previous;
         }
-        catch
+
+        if (string.IsNullOrWhiteSpace(settings.To))
+            return null;
+
+        if (!SemanticVersion.TryParse(settings.To, out var parsed))
         {
+            error = $"'{settings.To}' is not a version number.";
             return null;
         }
+
+        return parsed.ToString();
     }
 
     /// <summary>

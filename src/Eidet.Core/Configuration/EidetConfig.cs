@@ -21,6 +21,41 @@ public class EidetConfig
     public AuthConfig Auth { get; set; } = new();
     public HooksConfig Hooks { get; set; } = new();
     public BackupConfig Backup { get; set; } = new();
+    public UpdateConfig Update { get; set; } = new();
+}
+
+public class UpdateConfig
+{
+    /// <summary>
+    /// Whether to look for new releases at all. Independent of <see cref="AutoUpdate"/>: with
+    /// automation off this is what still surfaces "a new version exists" to a human.
+    /// </summary>
+    public bool Check { get; set; } = true;
+
+    /// <summary>
+    /// Install found updates without asking. Off by default and asked once during setup — a tool
+    /// that silently replaces its own binary overnight should be a choice, not a discovery.
+    /// </summary>
+    public bool AutoUpdate { get; set; }
+
+    /// <summary>Local wall-clock time for the nightly check, <c>HH:mm</c>.</summary>
+    public string AtLocalTime { get; set; } = "04:00";
+
+    /// <summary>
+    /// How long a release must have existed before automation will install it. The fleet-level
+    /// circuit breaker: releases are immutable, so a bad build can only be superseded, and this
+    /// window is what buys time to publish the successor first.
+    /// </summary>
+    public int MinimumAgeHours { get; set; } = 24;
+
+    /// <summary>
+    /// <see cref="AtLocalTime"/> as a time, falling back to 04:00 rather than throwing — an
+    /// unparseable value should cost the configured hour, not the whole scheduler.
+    /// </summary>
+    public TimeOnly ScheduledTime =>
+        TimeOnly.TryParse(AtLocalTime, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : new TimeOnly(4, 0);
 }
 
 public class ServiceConfig

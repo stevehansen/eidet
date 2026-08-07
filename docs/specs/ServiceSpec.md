@@ -562,31 +562,57 @@ Before adding any dependency, answer:
 
 ## Update System
 
-### Directory Layout
+The tool ships as a dotnet global tool, so the package manager owns the bits and there is no
+launcher, staging directory, or version tree of our own. What we own is *when* to update, *whether*
+a given release is safe to take unattended, and how the news reaches a human who never runs the CLI.
 
-```
-~/.eidet/bin/
-├── eidet.exe               ← Thin launcher (< 1MB, rarely updated)
-├── current/                ← Active service version
-├── pending/                ← Downloaded update (staged)
-└── previous/               ← Last working version (rollback target)
-```
+### Checking and telling are separate from installing
 
-### Update Flow
+One caller reaches the network: the nightly `UpdateCheck` scheduled task. It writes what it learned
+to `~/.eidet/update-check.json`, and every surface that wants to *mention* an update reads that
+file. Without the split, each CLI invocation and each MCP session start would pay a NuGet
+round-trip to decide whether to print one line it usually won't print.
 
-1. Service checks for updates periodically (or `eidet update`)
-2. Downloads new version to `pending/`, verifies checksum
-3. Signals launcher: "ready to swap"
-4. Launcher: stop → move current → move pending → start new
-5. Health check within 30s; rollback to `previous/` on failure
+The notice is rationed to once per process (`UpdateNotice`), so the CLI, `eidet_context`, and the
+TUI can each ask without coordinating. Having nothing to say does not spend the ration — a service
+that learns about a release at 04:00 still gets to mention it afterwards. `eidet mcp` never prints
+it at all: stdout there is the JSON-RPC channel.
 
-**Total downtime**: ~2 seconds. MCP clients reconnect automatically.
+### Deciding to install
 
-### Update Channels
+Automation is opt-in (`update.autoUpdate`, asked once in `eidet setup`) and runs at a configured
+local hour rather than on an interval, because "every 24h" drifts to whenever the service last
+restarted — which is the middle of a working day for a tool that replaces its own binary.
 
-- `stable` — production releases
-- `preview` — early access
-- `canary` — latest builds
+Three rules decide whether a found release is actually taken:
+
+- **Age gate.** Nothing younger than `update.minimumAgeHours` (default 24). Releases are immutable,
+  so a bad build can only be superseded, never fixed in place; the window is what lets the
+  successor exist before the fleet moves. A publish date we cannot read counts as too young.
+- **SemVer, not equality.** A locally built or pre-release binary is *ahead* of NuGet's latest.
+  Treating "different" as "outdated" is a silent downgrade at 04:00.
+- **Install flavor.** Only a `dotnet tool` install can replace itself. Container and standalone
+  installs get the notice and nothing else. The detector leans towards "standalone" on doubt:
+  guessing that way costs a notice-only night, the other way schedules a doomed
+  `dotnet tool update`.
+
+### Installing
+
+The scheduler shells out to the same `eidet update` a human would type, with the vetted version
+pinned (`--to`), and it persists its own task state *first* — the updater's first act is to stop
+the service that called it. Platform-specific work stays in one place: the Windows trampoline
+(a detached script that waits for file locks to release, retries against MCP clients that respawn
+`eidet mcp`, verifies the installed version, and restarts the service), and a direct replace on
+macOS/Linux where loaded files are not locked.
+
+Rollback is `eidet update --rollback`: reinstall the version recorded in `version-history.json`
+before this one. Exact and reproducible *because* releases are immutable — the predecessor is
+guaranteed to still exist and to be the same bytes. There is no automatic post-install health
+revert; the age gate is the fleet-level circuit breaker and rollback is the manual escape hatch.
+
+Authenticity comes from the ecosystem rather than from us: NuGet publishing uses OIDC trusted
+publishing from the release workflow, and NuGet.org validates the repository signature on install.
+See `STRIDE.md` T-3.
 
 ---
 
@@ -603,6 +629,9 @@ eidet setup                # Interactive first-time configuration (TUI)
 eidet doctor               # Connection testing and troubleshooting
 eidet status               # Service status + stats
 eidet update               # Check for and apply updates
+eidet update --check       # Report only, install nothing
+eidet update --to <ver>    # Install one specific version
+eidet update --rollback    # Reinstall the previously installed version
 eidet config get <key>     # Read config value
 eidet config set <key> <v> # Write config value
 ```

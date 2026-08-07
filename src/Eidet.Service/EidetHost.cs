@@ -11,6 +11,7 @@ using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Api;
 using Eidet.Service.Mcp;
+using Eidet.Service.Update;
 using Raven.Client.Documents;
 
 namespace Eidet.Service;
@@ -136,7 +137,8 @@ public sealed class EidetHost : IDisposable
         var mcpServer = new McpServer(memorySvc, intakeSvc, consolidationEngine, maintenanceRunner, looseEndSvc,
             Directory.GetCurrentDirectory(), autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker,
             export: exportSvc, layers: layerSvc);
-        var scheduler = new ScheduledTaskService(store, eidetStore, maintenanceRunner, consolidationEngine, config.Maintenance);
+        var scheduler = new ScheduledTaskService(store, eidetStore, maintenanceRunner, consolidationEngine,
+            config.Maintenance, config.Update, new CliUpdateInstaller());
         var apiServer = new EidetApiServer(new EidetApiServerOptions
         {
             Memory = memorySvc,

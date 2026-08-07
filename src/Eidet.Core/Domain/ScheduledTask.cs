@@ -48,7 +48,13 @@ public class ScheduledTask
 public enum ScheduledTaskType
 {
     Maintenance,
-    Consolidation
+    Consolidation,
+
+    /// <summary>
+    /// Looks for a new release and, when configured to, installs it. Unlike its siblings this one
+    /// is repo-independent and runs at a wall-clock time rather than on an interval.
+    /// </summary>
+    UpdateCheck
 }
 
 public enum ScheduledTaskStatus

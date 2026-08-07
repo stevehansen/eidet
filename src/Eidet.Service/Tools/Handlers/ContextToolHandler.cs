@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Eidet.Core.Services;
+using Eidet.Core.Update;
 using Eidet.Service.Mcp;
 
 namespace Eidet.Service.Tools.Handlers;
@@ -29,6 +30,12 @@ public sealed class ContextToolHandler : IToolHandler
     {
         var maxTokens = ToolArgs.GetInt(request.Arguments, "max_tokens", 600);
         var context = await _svc.GetContextAsync(request.RepoId, maxTokens, request.Ct);
+
+        // Appended outside the token budget: it is one line, at most once per process, and an
+        // agent relaying it is the only way the news reaches a user who never runs the CLI.
+        var notice = UpdateNotice.TryTake();
+        if (notice is not null)
+            context += $"\n\n[{notice}]";
 
         return ToolResult.Ok(
             payload: new { repo = request.RepoId, context },

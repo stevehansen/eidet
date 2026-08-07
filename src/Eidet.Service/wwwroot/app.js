@@ -137,6 +137,31 @@
     } catch (_) {
       document.getElementById('serviceVersion').textContent = 'offline';
     }
+    loadUpdateBanner();
+  }
+
+  // Reads the cached result of the nightly check — /api/health never hits the network itself.
+  // Dismissal is remembered per version, so the banner comes back for the next release.
+  async function loadUpdateBanner() {
+    var banner = document.getElementById('updateBanner');
+    if (!banner) return;
+
+    try {
+      var health = await api('/api/health');
+      if (!health.updateAvailable) return;
+      if (sessionStorage.getItem('eidet.updateDismissed') === health.latestVersion) return;
+
+      document.getElementById('updateBannerText').textContent =
+        'Eidet ' + health.latestVersion + ' is available (running ' + health.version + ') — ';
+      banner.hidden = false;
+
+      document.getElementById('updateBannerDismiss').onclick = function () {
+        sessionStorage.setItem('eidet.updateDismissed', health.latestVersion);
+        banner.hidden = true;
+      };
+    } catch (_) {
+      // A health probe we can't read is not worth a UI error.
+    }
   }
 
   // ─── Repos ───────────────────────────────────────────────────────

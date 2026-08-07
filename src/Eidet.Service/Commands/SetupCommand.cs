@@ -204,7 +204,26 @@ public sealed class SetupCommand : AsyncCommand<SetupCommand.Settings>
             changed = true;
         }
 
-        // ── Step 3: Save config ──────────────────────────────────────────
+        // ── Step 3: Automatic updates ────────────────────────────────────
+        // Asked rather than defaulted: a tool that replaces its own binary overnight should be
+        // something the user agreed to, not something they discover from a changed version number.
+
+        if (!settings.NonInteractive && !config.Update.AutoUpdate)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[bold]Automatic updates[/]");
+            AnsiConsole.MarkupLine($"  [dim]Installs new releases at {Markup.Escape(config.Update.AtLocalTime)} local time, " +
+                                   $"skipping anything published in the last {config.Update.MinimumAgeHours}h.[/]");
+            AnsiConsole.MarkupLine("  [dim]Either way you'll be told when a new version exists.[/]");
+
+            if (AnsiConsole.Confirm("  Install updates automatically?", defaultValue: true))
+            {
+                config.Update.AutoUpdate = true;
+                changed = true;
+            }
+        }
+
+        // ── Step 4: Save config ──────────────────────────────────────────
 
         if (changed)
         {

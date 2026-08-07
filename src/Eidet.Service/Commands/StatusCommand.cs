@@ -1,6 +1,8 @@
+using Eidet.Core;
 using Eidet.Core.Configuration;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
+using Eidet.Core.Update;
 using Eidet.Service.Mcp;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -47,11 +49,12 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
         var versionHistory = VersionHistory.Load();
         var lastInstall = versionHistory.Count > 0 ? versionHistory[^1] : null;
 
-        // Check for update (non-blocking, best-effort)
+        // Check for update (non-blocking, best-effort). Also refreshes the cache the
+        // "new version available" notices read, so `eidet status` keeps them honest.
         string? latestVersion = null;
         try
         {
-            latestVersion = await UpdateCommand.GetLatestNuGetVersionAsync(cancellation);
+            latestVersion = (await new UpdateChecker().CheckAsync(EidetVersion.Current, cancellation))?.Latest;
         }
         catch { }
 
@@ -64,8 +67,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
         }
 
         var currentVersion = Eidet.Core.EidetVersion.Current;
-        var updateAvailable = latestVersion != null
-            && !string.Equals(currentVersion, latestVersion, StringComparison.OrdinalIgnoreCase);
+        var updateAvailable = SemanticVersion.IsNewer(currentVersion, latestVersion);
 
         if (settings.Json)
         {

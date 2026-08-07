@@ -80,6 +80,36 @@ These are useful for Docker and CI/CD environments.
 | `maintenance.intervalHours` | int | `24` | Hours between maintenance runs |
 | `maintenance.consolidationIntervalHours` | int | `6` | Hours between consolidation runs |
 
+### update
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `update.check` | bool | `true` | Look for new releases once a night, and mention one when it exists |
+| `update.autoUpdate` | bool | `false` | Install what it finds, without asking. `eidet setup` asks once |
+| `update.atLocalTime` | string | `04:00` | Local wall-clock time for the nightly check |
+| `update.minimumAgeHours` | int | `24` | Refuse to auto-install a release younger than this |
+
+Checking and installing are separate switches. With `autoUpdate` off you still get told a new
+version exists — once per process, on the CLI, in `eidet_context`, and as a banner in the Web UI —
+and install it yourself with `eidet update`.
+
+Only the nightly task reaches NuGet; everything else reads its cached answer, so an MCP session
+start never pays a network round-trip. Nothing is checked at all with `update.check` set to false.
+
+`minimumAgeHours` exists because releases are immutable: a bad build can only be superseded, never
+replaced, so waiting a day leaves room to publish the fix before the fleet takes the bad one. A
+release whose publish date can't be read is treated as too young rather than old enough.
+
+Auto-update applies only to `dotnet tool` installs. Container and standalone-binary installs are
+replaced as a whole, so they get the notice and nothing else.
+
+```bash
+eidet update --check          # ask now, print the answer, install nothing
+eidet update                  # install the newest release
+eidet update --to 0.11.2      # install one specific version
+eidet update --rollback       # go back to the previously installed version
+```
+
 ### enrichment
 
 | Key | Type | Default | Description |
@@ -144,6 +174,12 @@ Hooks are configured in the config file directly (not via `config set`). See [Ho
     "l1Count": 20,
     "duplicateThreshold": 0.92,
     "autoIntakeOnFirstSession": true
+  },
+  "update": {
+    "check": true,
+    "autoUpdate": false,
+    "atLocalTime": "04:00",
+    "minimumAgeHours": 24
   },
   "enrichment": {
     "ollamaEnabled": true,

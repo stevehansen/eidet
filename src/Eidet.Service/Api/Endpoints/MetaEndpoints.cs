@@ -3,6 +3,7 @@ using Eidet.Core;
 using Eidet.Core.Configuration;
 using Eidet.Core.Enrichment;
 using Eidet.Core.Services;
+using Eidet.Core.Update;
 
 namespace Eidet.Service.Api.Endpoints;
 
@@ -29,8 +30,23 @@ internal sealed class MetaEndpoints
         _startedAt = startedAt;
     }
 
+    /// <summary>
+    /// Liveness plus the cached update status. Reads the file the nightly check writes, never
+    /// NuGet — health is polled, and a probe that reaches the internet is not a health check.
+    /// </summary>
     public Task Health(HttpListenerContext ctx)
-        => HttpJson.WriteAsync(ctx, new { status = "ok", version = EidetVersion.Current });
+    {
+        var update = UpdateChecker.ReadCache();
+        var latest = update?.Latest;
+
+        return HttpJson.WriteAsync(ctx, new
+        {
+            status = "ok",
+            version = EidetVersion.Current,
+            latestVersion = latest,
+            updateAvailable = SemanticVersion.IsNewer(EidetVersion.Current, latest),
+        });
+    }
 
     public async Task Status(HttpListenerContext ctx, CancellationToken ct)
     {

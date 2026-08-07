@@ -3,6 +3,7 @@ using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
 using Eidet.Core.Maintenance;
 using Eidet.Core.Storage;
+using Eidet.Core.Update;
 using Raven.Client.Documents;
 using Raven.Client.Documents.Session;
 
@@ -29,6 +30,9 @@ public sealed class ScheduledTaskService : IDisposable
     private readonly IMaintenanceRunner _maintenance;
     private readonly ConsolidationEngine _consolidation;
     private readonly MaintenanceConfig _config;
+    private readonly UpdateConfig _update;
+    private readonly UpdateChecker _updateChecker;
+    private readonly IUpdateInstaller? _updateInstaller;
     private CancellationTokenSource? _cts;
     private Task? _pollingTask;
 
@@ -43,13 +47,19 @@ public sealed class ScheduledTaskService : IDisposable
         IEidetStore eidetStore,
         IMaintenanceRunner maintenance,
         ConsolidationEngine consolidation,
-        MaintenanceConfig config)
+        MaintenanceConfig config,
+        UpdateConfig? update = null,
+        IUpdateInstaller? updateInstaller = null,
+        UpdateChecker? updateChecker = null)
     {
         _documentStore = documentStore;
         _eidetStore = eidetStore;
         _maintenance = maintenance;
         _consolidation = consolidation;
         _config = config;
+        _update = update ?? new UpdateConfig();
+        _updateInstaller = updateInstaller;
+        _updateChecker = updateChecker ?? new UpdateChecker();
     }
 
     /// <summary>
@@ -93,10 +103,15 @@ public sealed class ScheduledTaskService : IDisposable
         await EnsureTaskAsync(session, ScheduledTaskType.Maintenance, _config.IntervalHours, now, ct);
         await EnsureTaskAsync(session, ScheduledTaskType.Consolidation, _config.ConsolidationIntervalHours, now, ct);
 
+        // The update task exists only while checking is on. Turning `update.check` off therefore
+        // stops the nightly network call at the source rather than relying on a runtime guard.
+        if (_update.Check)
+            await EnsureTaskAsync(session, ScheduledTaskType.UpdateCheck, 24, now, ct);
+
         await session.SaveChangesAsync(ct);
     }
 
-    private static async Task EnsureTaskAsync(
+    private async Task EnsureTaskAsync(
         IAsyncDocumentSession session, ScheduledTaskType type, int intervalHours, DateTime now, CancellationToken ct)
     {
         var id = ScheduledTask.MakeId(type);
@@ -110,7 +125,7 @@ public sealed class ScheduledTaskService : IDisposable
                 Id = id,
                 TaskType = type,
                 IntervalHours = intervalHours,
-                NextRunAt = now + TimeSpan.FromMinutes(type == ScheduledTaskType.Maintenance ? 5 : 2),
+                NextRunAt = FirstRunAt(type, now),
                 Status = ScheduledTaskStatus.Pending,
                 CreatedAt = now,
             };
@@ -137,6 +152,41 @@ public sealed class ScheduledTaskService : IDisposable
     {
         var meta = session.Advanced.GetMetadataFor(task);
         meta["@refresh"] = task.NextRunAt.ToString("o");
+    }
+
+    /// <summary>
+    /// When a freshly created task should first fire. Interval tasks stagger themselves a few
+    /// minutes after startup; the update check waits for its configured hour instead, so
+    /// installing Eidet does not immediately reach out to NuGet.
+    /// </summary>
+    private DateTime FirstRunAt(ScheduledTaskType type, DateTime nowUtc) => type switch
+    {
+        ScheduledTaskType.UpdateCheck => NextLocalTimeUtc(_update.ScheduledTime, nowUtc),
+        ScheduledTaskType.Maintenance => nowUtc + TimeSpan.FromMinutes(5),
+        _ => nowUtc + TimeSpan.FromMinutes(2),
+    };
+
+    /// <summary>
+    /// When a task should run after the one that just finished. The update check is pinned to a
+    /// wall-clock hour rather than an interval — "every 24h" drifts to whenever the service last
+    /// restarted, which is exactly the middle of a working day for a tool that replaces its own
+    /// binary.
+    /// </summary>
+    private DateTime NextRunAfter(ScheduledTask task, DateTime nowUtc) =>
+        task.TaskType == ScheduledTaskType.UpdateCheck
+            ? NextLocalTimeUtc(_update.ScheduledTime, nowUtc)
+            : nowUtc + TimeSpan.FromHours(task.IntervalHours);
+
+    /// <summary>
+    /// The next occurrence of a local wall-clock time, as UTC. Pure, so the rollover and
+    /// already-past-today cases are testable without waiting for a clock.
+    /// </summary>
+    internal static DateTime NextLocalTimeUtc(TimeOnly at, DateTime nowUtc)
+    {
+        var nowLocal = DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc).ToLocalTime();
+        var todayAt = nowLocal.Date + at.ToTimeSpan();
+        var next = todayAt > nowLocal ? todayAt : todayAt.AddDays(1);
+        return DateTime.SpecifyKind(next, DateTimeKind.Local).ToUniversalTime();
     }
 
     private async Task PollLoopAsync(CancellationToken ct)
@@ -181,6 +231,9 @@ public sealed class ScheduledTaskService : IDisposable
             if (task.Status == ScheduledTaskStatus.Running) continue; // Already running
             if (task.NextRunAt > now) continue; // Not due yet
 
+            // A task document left behind by a previous config stays put but stays idle.
+            if (type == ScheduledTaskType.UpdateCheck && !_update.Check) continue;
+
             // Task is due — execute it
             await ExecuteTaskAsync(session, task, ct);
         }
@@ -197,27 +250,39 @@ public sealed class ScheduledTaskService : IDisposable
         task.LastError = null;
         await session.SaveChangesAsync(ct);
 
+        // Set by the update branch. Deferred until after the document is saved because installing
+        // kills this process: anything still buffered at that point is lost, and the task would
+        // come back up looking like it had been Running since the previous night.
+        string? installAfterSave = null;
+
         try
         {
-            // Get all repos and run the task for each
-            var repoIds = await _eidetStore.GetDistinctRepoIdsAsync(ct);
-
-            foreach (var repoId in repoIds)
+            if (task.TaskType == ScheduledTaskType.UpdateCheck)
             {
-                if (ct.IsCancellationRequested) break;
+                installAfterSave = await RunUpdateCheckAsync(ct);
+            }
+            else
+            {
+                // Get all repos and run the task for each
+                var repoIds = await _eidetStore.GetDistinctRepoIdsAsync(ct);
 
-                switch (task.TaskType)
+                foreach (var repoId in repoIds)
                 {
-                    case ScheduledTaskType.Maintenance:
-                        var report = await _maintenance.RunAsync(repoId);
-                        EidetLog.Info($"[maintenance] {repoId}: {report}");
-                        foreach (var failure in report.Failures)
-                            EidetLog.Warn($"[maintenance] {repoId}: stage {failure.Name} failed: {failure.Error}");
-                        break;
+                    if (ct.IsCancellationRequested) break;
 
-                    case ScheduledTaskType.Consolidation:
-                        await _consolidation.ConsolidateAsync(repoId);
-                        break;
+                    switch (task.TaskType)
+                    {
+                        case ScheduledTaskType.Maintenance:
+                            var report = await _maintenance.RunAsync(repoId);
+                            EidetLog.Info($"[maintenance] {repoId}: {report}");
+                            foreach (var failure in report.Failures)
+                                EidetLog.Warn($"[maintenance] {repoId}: stage {failure.Name} failed: {failure.Error}");
+                            break;
+
+                        case ScheduledTaskType.Consolidation:
+                            await _consolidation.ConsolidateAsync(repoId);
+                            break;
+                    }
                 }
             }
 
@@ -243,9 +308,55 @@ public sealed class ScheduledTaskService : IDisposable
         }
 
         // Schedule next run
-        task.NextRunAt = DateTime.UtcNow + TimeSpan.FromHours(task.IntervalHours);
+        task.NextRunAt = NextRunAfter(task, DateTime.UtcNow);
         SetRefresh(session, task);
         await session.SaveChangesAsync(ct);
+
+        if (installAfterSave is not null && _updateInstaller is not null)
+        {
+            EidetLog.Info($"[update] installing v{installAfterSave} — the service will restart");
+            await _updateInstaller.LaunchAsync(installAfterSave, ct);
+        }
+    }
+
+    /// <summary>
+    /// Refreshes the cached update status — which is what every "new version available" notice
+    /// reads — and returns the version to install, or null to leave it at the notice. Only the
+    /// caller installs, and only after persisting, because the install ends this process.
+    /// </summary>
+    private async Task<string?> RunUpdateCheckAsync(CancellationToken ct)
+    {
+        var status = await _updateChecker.CheckAsync(EidetVersion.Current, ct);
+        if (status is null)
+        {
+            EidetLog.Info("[update] could not reach NuGet; keeping the previous check result");
+            return null;
+        }
+
+        if (!status.UpdateAvailable)
+            return null;
+
+        EidetLog.Info($"[update] v{status.Latest} available (running v{EidetVersion.Current})");
+
+        if (!_update.AutoUpdate || _updateInstaller is null)
+            return null;
+
+        var flavor = InstallFlavorDetector.Detect();
+        if (flavor != InstallFlavor.DotnetTool)
+        {
+            EidetLog.Info($"[update] auto-update skipped — {flavor} installs are replaced as a whole, not in place");
+            return null;
+        }
+
+        var minimumAge = TimeSpan.FromHours(Math.Max(0, _update.MinimumAgeHours));
+        if (!status.IsInstallable(minimumAge, DateTimeOffset.UtcNow))
+        {
+            EidetLog.Info($"[update] v{status.Latest} held back — younger than {_update.MinimumAgeHours}h " +
+                          $"(published {status.LatestPublishedAt?.ToString("u") ?? "unknown"})");
+            return null;
+        }
+
+        return status.Latest;
     }
 
     public void Dispose()

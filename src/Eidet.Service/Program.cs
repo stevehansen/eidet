@@ -1,5 +1,8 @@
 using Eidet.Core;
+using Eidet.Core.Update;
 using Eidet.Service.Commands;
+using Eidet.Service.Update;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 // Translate "eidet help <command>" to "eidet <command> --help"
@@ -206,4 +209,21 @@ app.Configure(config =>
     });
 });
 
-return app.Run(args);
+// The "new version available" line. Long-running commands get it up front because printing on
+// exit is printing to nobody; everything else gets it after its own output so it reads as a
+// footnote rather than a header.
+var quiet = UpdateNoticeGate.ShouldStayQuiet(args);
+var longRunning = args.Length > 0 && args[0].Equals("serve", StringComparison.OrdinalIgnoreCase);
+
+if (!quiet && longRunning) PrintUpdateNotice();
+var exitCode = app.Run(args);
+if (!quiet && !longRunning) PrintUpdateNotice();
+
+return exitCode;
+
+static void PrintUpdateNotice()
+{
+    var notice = UpdateNotice.TryTake();
+    if (notice is not null)
+        AnsiConsole.MarkupLine($"[dim]{Markup.Escape(notice)}[/]");
+}

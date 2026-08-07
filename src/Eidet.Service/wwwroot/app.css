@@ -1606,3 +1606,36 @@ h3 {
   color: var(--text-muted);
   font-style: italic;
 }
+
+/* ─── Update banner ─────────────────────────────────────────────── */
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--accent);
+  font-size: 13px;
+}
+
+.update-banner code {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+.update-banner button {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.update-banner button:hover {
+  color: var(--accent-hover);
+}

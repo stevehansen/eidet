@@ -42,10 +42,16 @@ curl http://localhost:19380/api/health
 
 ```json
 {
-  "status": "healthy",
-  "version": "1.0.0"
+  "status": "ok",
+  "version": "0.11.0",
+  "latestVersion": "0.11.1",
+  "updateAvailable": true
 }
 ```
+
+`latestVersion` is whatever the nightly update check last saw — this endpoint reads that cached
+answer and never calls NuGet itself. It is `null` until the first check runs, or when
+`update.check` is off.
 
 ### GET /api/status
 
