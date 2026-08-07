@@ -2,7 +2,8 @@
 
 Turning a query into ranked memories, and packing the <600-token wake-up an agent gets for free.
 
-**Status:** current as of [#80](https://github.com/stevehansen/eidet/issues/80) · **Governing issues:**
+**Status:** current as of the abstraction-arm + cue-anchor work (MEMORA review, 2026-08-07) ·
+**Governing issues:**
 [#33](https://github.com/stevehansen/eidet/issues/33) (hybrid fusion, dual-clock recency, alpha
 learning, graph expansion), [#35](https://github.com/stevehansen/eidet/issues/35) (ROI gating),
 [#38](https://github.com/stevehansen/eidet/issues/38) (stage filter),
@@ -27,9 +28,10 @@ RecallAsync(repo, RecallOptions)
   → ResolveScopeAsync ............... LayerScope (primary repo + mounted layers; cross-repo opt-in)
   → ResolveAlphaAsync ............... override ?? learned RepoUsage.AlphaLex ?? default, clamped
   → RecallCache.TryGet .............. key includes alpha bucket; snapshots scope generations
-  → SearchScoredAsync × 2 ........... Lexical and Vector arms, in parallel
-  → RecallScoring.Fuse .............. per-arm min-max normalize → α·lex + (1-α)·vec + UCB + recency
-  → ExpandNeighborsAsync ............ one hop, damped inheritance, bounded
+  → SearchScoredAsync × 3 ........... Lexical, Vector and Abstraction arms, in parallel
+  → RecallScoring.Fuse .............. per-arm min-max normalize → α·lex + (1-α)·vec + β·abs + UCB + recency
+  → ExpandNeighborsAsync ............ authored links: one hop, damped inheritance (0.5), bounded
+  → ExpandEntitiesAsync ............. shared entities: strongest-parent inheritance (0.35), bounded
   → per-candidate policy ............ × MemoryTrust × MemoryRoi × non-local de-boost × quarantine
   → RecallScoring.ApplyTypeBudgets .. rerank-before-truncate to Limit
   → BumpAccessCountsAsync (patch-only, fire-and-forget) + RecallCache.Set (may drop)
@@ -40,9 +42,14 @@ GetContextAsync(repo, maxTokens)
   → L1: GetTopScoredAsync([Insight, Procedure, Heuristic]) → ComputeL1Score → budgets → token-bounded
 ```
 
-`FusedCandidate` carries every component (`Lex`, `Vec`, `Recency`, `Ucb`, `Fused`) so
+`FusedCandidate` carries every component (`Lex`, `Vec`, `Abs`, `Recency`, `Ucb`, `Fused`) so
 `ExplainRecallAsync` can show the arithmetic; `MemorySearchResult` is the shaped output that also
 carries `TrustFactor`, `RoiFactor`, and a staleness/drift warning string.
+
+Two reachability paths sit between fusion and policy, and they answer different questions. Link
+expansion follows edges somebody **authored**; cue expansion follows entities enrichment
+**extracted**, so a related memory nobody ever linked is still reachable. Both admit candidates
+*before* trust gating, so an expanded memory faces exactly the same downstream policy as a direct hit.
 
 ## Invariants & rules
 
@@ -51,9 +58,21 @@ carries `TrustFactor`, `RoiFactor`, and a staleness/drift warning string.
   the benchmark scorecard calls `Fuse` directly and folding retrieval policy in would unfairly
   penalize its Procedure/Heuristic gold cases. Owned by `src/Eidet.Core/Memory/RecallScoring.cs`.
 - **Every field that changes the result set must be in the cache key.** Repo, text, type, valence,
-  stage, tags, limit, include-expired, cross-repo, *and* the rounded alpha bucket. A filter missing
-  from the key lets a filtered recall collide with an unfiltered one and serve the wrong results —
-  this has happened twice. Owned by `RecallCache.ComputeKey`.
+  stage, tags, limit, include-expired, cross-repo, *both expansion flags*, *and* the rounded alpha
+  bucket. A filter missing from the key lets a filtered recall collide with an unfiltered one and
+  serve the wrong results — this has happened three times, most recently with the expansion flags,
+  where the integrity auditor's per-path probes (which differ *only* by those flags) could answer each
+  other from cache. Owned by `RecallCache.ComputeKey`.
+- **The abstraction arm rides on top of the α blend, never inside it.** α answers "which arm does this
+  repo reward"; the abstraction arm does not participate in that question, and folding it in would make
+  the learned alpha mean two things. It contributes `β·normAbs` additively. An *absent* abstraction arm
+  normalizes to 0 for every candidate, so two-arm fusion is bit-identical to three-arm fusion with no
+  third arm — which is what keeps the benchmark scorecard's numbers stable and every store fake honest.
+- **The abstraction is derived at index time, never stored.** `Memories_Search` projects the first
+  *non-empty* of `OneLiner`, `Summary`, `Content` (clamped). `IsNullOrEmpty`, not `??`, because null
+  means "awaiting enrichment" but empty means **redacted** — a redacted one-liner must fall through
+  rather than embed nothing. The `Content` fallback is what keeps the arm dense on a zero-LLM write
+  path: every memory has an abstraction from the moment it is stored, enriched or not.
 - **The learned alpha is resolved *before* `TryGet`**, because it is part of the key — a learned shift
   then invalidates cleanly via the bucket instead of serving results ranked under an old blend.
 - **A recall drops its own cache write if any tracked scope's generation moved during the query.**
@@ -62,10 +81,20 @@ carries `TrustFactor`, `RoiFactor`, and a staleness/drift warning string.
   `Stage == requested OR Stage == None`; dropping the `None` arm silently hides every stage-agnostic
   memory. Owned by `src/Eidet.Core/Storage/RavenEidetStore.cs` (filter clauses use explicit
   `AndAlso()` — RavenDB's default OR semantics would otherwise widen the filter).
-- **Graph expansion trusts the loaded entry, never the link.** A neighbour is admitted only if its
+- **Both expansions trust the loaded entry, never the pointer.** A neighbour is admitted only if its
   *actual* `RepoId` is in scope and `Validity.ValidUntil is null` — an `IsLatest`-only check
-  resurfaces forgotten memories through a live parent, which is exactly what the `GraphNeighbor`
-  integrity probe hunts for.
+  resurfaces forgotten memories through a live parent, which is exactly what the `GraphNeighbor` and
+  `EntityNeighbor` integrity probes hunt for. Cue expansion repeats the check on the store's results
+  rather than trusting them: a backend that forgets to filter must not be able to leak through recall.
+- **Every reachability path carries its own `IntegrityCheck`, and every probe pins the flags of the
+  paths it is not testing.** Otherwise a leak is attributed to the wrong mechanism or masked by a
+  neighbouring one. Adding an expansion without its own check fails the auditor's coverage guard.
+- **A shared entity is weaker evidence than an authored link**, so cue expansion damps harder (0.35 vs
+  0.5) and runs *second* — link expansion claims a memory at the higher decay first, and cue expansion
+  skips anything already in the pool.
+- **Cue expansion is only as dense as enrichment.** Entities are LLM-extracted, so this path is a
+  no-op on an unenriched corpus. That is a property to remember when a recall "should" have reached
+  something, not a bug.
 - **L1 wake-up carries no Observations.** Candidates are `[Insight, Procedure, Heuristic]` only — which
   is why a failure worth keeping must never be stored as an Observation (it would never resurface).
 - **Procedures are hard-capped in the wake-up**, below their soft type budget, because a
@@ -78,22 +107,38 @@ carries `TrustFactor`, `RoiFactor`, and a staleness/drift warning string.
 
 | File | Role |
 |---|---|
-| `src/Eidet.Core/Memory/RecallScoring.cs` | `Fuse`, `ExpandNeighbors`, `ApplyTypeBudgets`, `ComputeL1Score`, `RecallWeights` |
+| `src/Eidet.Core/Memory/RecallScoring.cs` | `Fuse`, `ExpandNeighbors`, `ExpandEntities`, `ApplyTypeBudgets`, `ComputeL1Score`, `RecallWeights` |
 | `src/Eidet.Core/Memory/RecallCache.cs` | Bounded TTL cache + per-scope generation tokens + the key |
 | `src/Eidet.Core/Memory/MemoryRoi.cs` | The ROI factor that demotes proven net-negative Procedures/Heuristics |
 | `src/Eidet.Core/Memory/RecallExplanation.cs` | Per-candidate component breakdown (diagnostic surface) |
 | `src/Eidet.Core/Maintenance/FadeMemCurve.cs` | Per-type dual-clock recency used inside `Fuse` |
 | `src/Eidet.Core/Services/MemoryService.cs` | `RecallAsync` / `GetContextAsync` / `ExplainRecallAsync` and the policy layer |
 | `src/Eidet.Core/Domain/MemoryQuery.cs` | The resolved query (filters, limit, expansion flags) |
-| `src/Eidet.Core/Indexes/Memories_Search.cs` | Composite `SearchText` + `SearchVector` projection; enum fields for `WhereEquals` |
+| `src/Eidet.Core/Indexes/Memories_Search.cs` | Composite `SearchText` + `SearchVector`, derived `AbstractionText` + `AbstractionVector`, lower-cased keyword-analyzed `Entities`; enum fields for `WhereEquals` |
 | `src/Eidet.Core/Layers/LayerScope.cs` | Scope resolution + the non-local de-boost constant |
 | `src/Eidet.Service/Tools/Handlers/RecallToolHandler.cs` | Agent-facing render, including the `✗`/`⚠` valence glyphs |
 
 ## Gotchas
 
 - **`ExplainRecallAsync` is a pre-expansion view** that also bypasses the cache and fires no hooks. Its
-  rows show arm-fusion math only, so a link-reachable candidate production recall *would* surface is
-  simply absent. Don't debug a missing result with it alone.
+  rows show arm-fusion math only, so a candidate production recall *would* surface via a link or a
+  shared entity is simply absent. Don't debug a missing result with it alone.
+- **Two vectors are indexed per memory, and the query text is embedded by the same task for both**, so
+  the arms are on one similarity scale and `Fuse` can normalize them independently without per-arm
+  calibration. Change one embedder and you must change the other.
+- **Cue matching is case-insensitive only because BOTH sides lower-case.** `Entities` is projected
+  lower-cased in the index and the cue values are lower-cased in the query — `KeywordAnalyzer`
+  preserves case, so dropping either side makes the lookup silently match *nothing*. It did exactly
+  that on first run; `CueAnchorQueryTests` is the regression guard.
+- **Both new queries fail SILENTLY in production.** The abstraction arm degrades to `[]` like any
+  vector arm, and a throwing cue lookup is swallowed by the expansion wrapper. That is correct for a
+  best-effort enhancement, but it means a broken query translation looks exactly like "nothing
+  related" — which is why the cue lookup has integration coverage against real RavenDB rather than
+  fakes alone.
+- **The abstraction arm has no integration coverage.** The integration fixture never configures the
+  embeddings task, so every vector arm returns `[]` there — the arm's Raven query is exercised only by
+  its structural equivalence to the `SearchVector` query it mirrors. Verify it against a real
+  embeddings-enabled store before trusting a β tuning result.
 - **Two recency curves, on purpose.** L1 uses a fixed 7-day half-life (`ComputeL1Score`); recall fusion
   uses the per-type `FadeMemCurve`. They rank for different purposes and are deliberately not unified —
   don't "fix" the duplication.
@@ -120,6 +165,13 @@ carries `TrustFactor`, `RoiFactor`, and a staleness/drift warning string.
   that alpha participates in the cache key.
 - `tests/Eidet.Core.Tests/Memory/GraphExpansionTests.cs` — settles bounded one-hop expansion, damped
   inheritance, and the scope/validity re-check that stops a forgotten neighbour resurfacing.
+- `tests/Eidet.Core.Tests/Memory/EntityExpansionTests.cs` — **the authority on cue anchors**:
+  strongest-parent attribution, best-score-first capping, case-insensitive matching, the three
+  admission guards against a store that skips its own filters, and that the two expansions are
+  independent (with a memory reachable both ways keeping the stronger link score).
+- `tests/Eidet.Core.Tests/Memory/AbstractionArmTests.cs` — **the authority on the third arm**: that an
+  absent arm is bit-identical to two-arm fusion for any β, that β adds on top of the blend, that an
+  abstraction-only hit enters the pool, and that it carries zero lexical share for alpha learning.
 - `tests/Eidet.Core.Tests/Memory/RecallTrustGatingTests.cs` + `RoiGatingTests.cs` — settle that policy
   multiplies rather than filters.
 - `tests/Eidet.Core.Tests/Memory/ContextProcedureCapTests.cs` — **the authority on the wake-up

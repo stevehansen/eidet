@@ -87,12 +87,17 @@ public sealed class IntegrityAuditor : IIntegrityAuditor
         IReadOnlyList<MemoryEntry> stale, IReadOnlyList<MemoryEntry> live,
         Lazy<Task<IReadOnlyDictionary<string, MemoryEntry?>>> citations, CancellationToken ct) => check switch
     {
+        // Every probe pins BOTH expansion flags: each check isolates one reachability path, so the
+        // one it is not testing must be off or a leak gets attributed to the wrong path (or masked
+        // by it). Turning on a new expansion without its own check here silently narrows coverage.
         IntegrityCheck.Recall =>
-            ProbeRecallAsync(repoId, stale, check, crossRepo: false, expandGraph: false, ct),
+            ProbeRecallAsync(repoId, stale, check, crossRepo: false, expandGraph: false, expandEntities: false, ct),
         IntegrityCheck.CrossRepoSearch =>
-            ProbeRecallAsync(repoId, stale, check, crossRepo: true, expandGraph: false, ct),
+            ProbeRecallAsync(repoId, stale, check, crossRepo: true, expandGraph: false, expandEntities: false, ct),
         IntegrityCheck.GraphNeighbor =>
-            ProbeRecallAsync(repoId, stale, check, crossRepo: false, expandGraph: true, ct),
+            ProbeRecallAsync(repoId, stale, check, crossRepo: false, expandGraph: true, expandEntities: false, ct),
+        IntegrityCheck.EntityNeighbor =>
+            ProbeRecallAsync(repoId, stale, check, crossRepo: false, expandGraph: false, expandEntities: true, ct),
         IntegrityCheck.ContextL1 => ProbeContextL1Async(repoId, stale, ct),
         IntegrityCheck.DuplicateDetection => ProbeDuplicateAsync(repoId, stale, ct),
         IntegrityCheck.UnknownProvenance => Task.FromResult(CheckProvenance(repoId, live)),
@@ -106,7 +111,7 @@ public sealed class IntegrityAuditor : IIntegrityAuditor
 
     private async Task<List<IntegrityFinding>> ProbeRecallAsync(
         string repoId, IReadOnlyList<MemoryEntry> stale, IntegrityCheck check,
-        bool crossRepo, bool expandGraph, CancellationToken ct)
+        bool crossRepo, bool expandGraph, bool expandEntities, CancellationToken ct)
     {
         var found = new List<IntegrityFinding>();
         foreach (var memory in stale)
@@ -116,11 +121,12 @@ public sealed class IntegrityAuditor : IIntegrityAuditor
             {
                 CrossRepo = crossRepo,
                 ExpandGraph = expandGraph,
+                ExpandEntities = expandEntities,
                 Limit = ProbeLimit,
             }, ct);
             if (results.Any(r => r.Id == memory.Id))
                 found.Add(new IntegrityFinding(memory.Id, check, repoId,
-                    $"resurfaced in recall (crossRepo={crossRepo}, expandGraph={expandGraph})"));
+                    $"resurfaced in recall (crossRepo={crossRepo}, expandGraph={expandGraph}, expandEntities={expandEntities})"));
         }
         return found;
     }

@@ -5,8 +5,13 @@ namespace Eidet.Core.Storage;
 /// <summary>One hit from a single search arm, carrying that arm's raw relevance score.</summary>
 public readonly record struct ScoredHit(MemoryEntry Entry, double Score);
 
-/// <summary>The two arms of hybrid search — lexical (full-text) and semantic (vector).</summary>
-public enum SearchArm { Lexical, Vector }
+/// <summary>
+/// The arms of hybrid search — lexical (full-text), semantic (vector over the whole entry), and
+/// abstraction (vector over the entry's one-line self-description alone). The first two answer
+/// "what does this memory contain"; the third answers "what is this memory ABOUT", which a long
+/// body would otherwise outvote in the composite embedding.
+/// </summary>
+public enum SearchArm { Lexical, Vector, Abstraction }
 
 /// <summary>
 /// One EWMA step for a repo's learned lexical-vs-vector alpha. The new value is computed
@@ -115,11 +120,16 @@ public interface IEidetStore
     /// Vector arm returns [] when embeddings are unconfigured (caller degrades to lexical-only).
     /// The default implementation delegates to the arm's existing entity method and assigns a
     /// rank-decay score (<c>1, 1/2, 1/3, …</c>) so fakes that don't surface real scores still
-    /// produce a sensible ordering without opting in.
+    /// produce a sensible ordering without opting in. <see cref="SearchArm.Abstraction"/> has no
+    /// entity-method equivalent to fall back on, so it defaults to <c>[]</c> — an arm that returns
+    /// nothing contributes 0 to every candidate, which is exactly "this store has no abstraction
+    /// index" and leaves a fake's ranking bit-identical to its two-arm behavior.
     /// </summary>
     Task<IReadOnlyList<ScoredHit>> SearchScoredAsync(
         SearchArm arm, IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) =>
-        SearchScoredViaRankDecayAsync(arm, repoIds, query, ct);
+        arm == SearchArm.Abstraction
+            ? Task.FromResult<IReadOnlyList<ScoredHit>>([])
+            : SearchScoredViaRankDecayAsync(arm, repoIds, query, ct);
 
     /// <summary>Shared rank-decay fallback used by the default impl and by arms that can't surface a per-hit score.</summary>
     private async Task<IReadOnlyList<ScoredHit>> SearchScoredViaRankDecayAsync(
@@ -130,6 +140,18 @@ public interface IEidetStore
             : await VectorSearchAsync(repoIds, query, ct);
         return entries.Select((e, rank) => new ScoredHit(e, 1.0 / (rank + 1))).ToList();
     }
+
+    /// <summary>
+    /// Memories sharing at least one of <paramref name="entities"/> — the cue-anchor lookup behind
+    /// entity expansion. Latest + valid only, capped at <paramref name="max"/>, excluding
+    /// <paramref name="excludeIds"/> (the candidates that produced the cues). Scope is the caller's
+    /// <paramref name="repoIds"/>; the caller still re-checks each entry's real repo before admitting it.
+    /// Default <c>[]</c> so fakes need not opt in — no cue index means no expansion, not an error.
+    /// </summary>
+    Task<IReadOnlyList<MemoryEntry>> FindByEntitiesAsync(
+        IReadOnlyList<string> repoIds, IReadOnlyCollection<string> entities,
+        IReadOnlyCollection<string> excludeIds, int max, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<MemoryEntry>>([]);
 
     Task<MemoryEntry?> FindDuplicateAsync(string repoId, string content, float threshold, CancellationToken ct = default);
 

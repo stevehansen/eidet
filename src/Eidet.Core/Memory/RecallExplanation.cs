@@ -13,4 +13,4 @@ public sealed record RecallExplanation(IReadOnlyList<RecallExplanationRow> Rows,
 /// production-recall score after trust gating, so the diagnostic mirrors what live recall actually ranks.
 /// </summary>
 public sealed record RecallExplanationRow(
-    string Id, double Lex, double Vec, double Recency, double Ucb, double Fused, double Trust, double Gated);
+    string Id, double Lex, double Vec, double Abs, double Recency, double Ucb, double Fused, double Trust, double Gated);

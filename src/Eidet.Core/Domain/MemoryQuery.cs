@@ -11,6 +11,7 @@ public class MemoryQuery
     public bool IncludeExpired { get; set; }
     public bool CrossRepo { get; set; }
     public bool ExpandGraph { get; set; } = true;
+    public bool ExpandEntities { get; set; } = true;
 
     /// <summary>Pins the lexical-vs-vector blend weight, bypassing the per-repo learned alpha. Null = learned/default.</summary>
     public double? AlphaOverride { get; set; }

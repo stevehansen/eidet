@@ -537,19 +537,23 @@ public sealed class MemoryService
         var repoIds = scope.RepoIds.ToList();
         var lexTask = _store.SearchScoredAsync(SearchArm.Lexical, repoIds, query, ct);
         var vecTask = _store.SearchScoredAsync(SearchArm.Vector, repoIds, query, ct);
-        await Task.WhenAll(lexTask, vecTask);
+        var absTask = _store.SearchScoredAsync(SearchArm.Abstraction, repoIds, query, ct);
+        await Task.WhenAll(lexTask, vecTask, absTask);
 
         var now = DateTime.UtcNow;
         var weights = RecallWeights.Default with
         {
-            TotalN = ComputeTotalN(lexTask.Result, vecTask.Result),
+            TotalN = ComputeTotalN(lexTask.Result, vecTask.Result, absTask.Result),
             Alpha = effectiveAlpha,
         };
-        var fused = RecallScoring.Fuse(lexTask.Result, vecTask.Result, weights, now);
+        var fused = RecallScoring.Fuse(lexTask.Result, vecTask.Result, absTask.Result, weights, now);
 
-        // Graph-neighbor expansion (#33 item 7) runs BEFORE trust gating / de-boost / budgeting so
-        // link-reachable neighbors flow through exactly the same downstream policy as direct arm hits.
+        // Both expansions (#33 item 7) run BEFORE trust gating / de-boost / budgeting so reachable
+        // memories flow through exactly the same downstream policy as direct arm hits. Links first,
+        // then cues: an authored link is the stronger signal, and running it first lets it claim a
+        // memory at the higher decay before cue overlap can admit the same one at the lower.
         fused = await ExpandNeighborsAsync(fused, scope, query, weights, now, ct);
+        fused = await ExpandEntitiesAsync(fused, scope, query, weights, now, ct);
 
         // Trust gating is a production-recall policy layered on top of Fuse, NOT folded into it:
         // the benchmark scorecard calls Fuse directly and would be unfairly penalized on its
@@ -586,11 +590,13 @@ public sealed class MemoryService
                 result.StalenessWarning = $"[stale: {result.AgeDays}d ago — verify before acting]";
             merged.Add(result);
 
-            // Lexical share of the surfacing mix. 0.5 = deliberate no-arm-info prior — used when neither
-            // arm scored the candidate (a graph neighbor enters with Lex=Vec=0), so a later echo on it
-            // pulls alpha toward neutral rather than toward a phantom arm preference.
-            var lv = candidate.Lex + candidate.Vec;
-            lexShares[entry.Id] = lv > 0 ? candidate.Lex / lv : 0.5;
+            // Lexical share of the surfacing mix. 0.5 = deliberate no-arm-info prior — used when no
+            // arm scored the candidate (an expanded neighbor enters with Lex=Vec=Abs=0), so a later
+            // echo on it pulls alpha toward neutral rather than toward a phantom arm preference.
+            // The abstraction arm counts in the DENOMINATOR only: it is semantic evidence, so a hit
+            // carried by it is evidence AGAINST this repo being lexical, never for it.
+            var arms = candidate.Lex + candidate.Vec + candidate.Abs;
+            lexShares[entry.Id] = arms > 0 ? candidate.Lex / arms : 0.5;
         }
 
         var budgeted = RecallScoring.ApplyTypeBudgets(merged, query.Limit);
@@ -686,6 +692,59 @@ public sealed class MemoryService
     }
 
     /// <summary>
+    /// Pulls cue-anchor matches — memories sharing an entity with the top fused candidates — into the
+    /// pool so they compete on the (heavily damped) fused score. The complement to
+    /// <see cref="ExpandNeighborsAsync"/>: that one follows links somebody authored, this one follows
+    /// the entities enrichment extracted, so a related memory nobody ever linked is still reachable.
+    /// Best-effort, exactly like link expansion — a failed cue lookup can't fail the whole recall.
+    /// </summary>
+    private async Task<List<FusedCandidate>> ExpandEntitiesAsync(
+        List<FusedCandidate> fused, LayerScope scope, MemoryQuery query, RecallWeights weights, DateTime now, CancellationToken ct)
+    {
+        if (!query.ExpandEntities || fused.Count == 0) return fused;
+
+        try
+        {
+            const int parentTopK = 10;
+            const int maxCueMatches = 5;
+
+            // Cues come from the strongest parents only — the same bound as link expansion, and for the
+            // same reason: spreading activation should flow from the most-relevant hits, not from noise.
+            var parents = fused.Take(parentTopK).ToList();
+            var cues = parents
+                .SelectMany(p => p.Entry.Entities)
+                .Where(e => !string.IsNullOrWhiteSpace(e))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (cues.Count == 0) return fused;
+
+            var repoIds = scope.RepoIds.ToList();
+            var poolIds = fused.Select(c => c.Entry.Id).ToList();
+            // Over-fetch: the store filters latest/valid, but the scope and in-pool checks below still
+            // discard rows, and the pure helper caps admissions at maxCueMatches.
+            var matches = await _store.FindByEntitiesAsync(repoIds, cues, poolIds, maxCueMatches * 4, ct);
+
+            // Authoritative guards, identical to link expansion and load-bearing for the same reason:
+            // forget stamps ValidUntil but leaves IsLatest=true, so an IsLatest-only check would
+            // resurface a forgotten memory through this path. Scope is re-checked on the entry's REAL
+            // RepoId — never admit a memory from a repo this recall isn't searching.
+            var admissible = matches
+                .Where(e => e.IsLatest
+                    && e.Validity.ValidUntil is null
+                    && scope.RepoIds.Contains(e.RepoId, StringComparer.OrdinalIgnoreCase))
+                .ToList();
+            if (admissible.Count == 0) return fused;
+
+            return RecallScoring.ExpandEntities(fused, admissible, weights, now, parentTopK, maxCueMatches);
+        }
+        catch
+        {
+            // Expansion is an enhancement, not a correctness requirement — never fail recall over it.
+            return fused;
+        }
+    }
+
+    /// <summary>
     /// Diagnostic recall: runs the fuse pipeline (resolve scope → two scored arms →
     /// <see cref="RecallScoring.Fuse"/>) and returns the per-candidate component breakdown instead of
     /// budgeted results. Bypasses the recall cache and fires no hooks — it must not perturb live recall
@@ -704,32 +763,33 @@ public sealed class MemoryService
 
         var lexTask = _store.SearchScoredAsync(SearchArm.Lexical, repoIds, query, ct);
         var vecTask = _store.SearchScoredAsync(SearchArm.Vector, repoIds, query, ct);
-        await Task.WhenAll(lexTask, vecTask);
+        var absTask = _store.SearchScoredAsync(SearchArm.Abstraction, repoIds, query, ct);
+        await Task.WhenAll(lexTask, vecTask, absTask);
 
         var weights = RecallWeights.Default with
         {
-            TotalN = ComputeTotalN(lexTask.Result, vecTask.Result),
+            TotalN = ComputeTotalN(lexTask.Result, vecTask.Result, absTask.Result),
             Alpha = effectiveAlpha,
         };
-        var fused = RecallScoring.Fuse(lexTask.Result, vecTask.Result, weights, DateTime.UtcNow);
+        var fused = RecallScoring.Fuse(lexTask.Result, vecTask.Result, absTask.Result, weights, DateTime.UtcNow);
 
         var rows = fused
             .Select(c =>
             {
                 var trust = MemoryTrust.Factor(c.Entry);
                 return new RecallExplanationRow(
-                    c.Entry.Id, c.Lex, c.Vec, c.Recency, c.Ucb, c.Fused, trust, c.Fused * trust);
+                    c.Entry.Id, c.Lex, c.Vec, c.Abs, c.Recency, c.Ucb, c.Fused, trust, c.Fused * trust);
             })
             .ToList();
         return new RecallExplanation(rows, weights.Alpha, rows.Count);
     }
 
-    /// <summary>Σ (Echo+Fizzle) over the lex∪vec union (dedup by id) — the UCB exploration denominator base.</summary>
-    private static long ComputeTotalN(IReadOnlyList<ScoredHit> lex, IReadOnlyList<ScoredHit> vec)
+    /// <summary>Σ (Echo+Fizzle) over the arm union (dedup by id) — the UCB exploration denominator base.</summary>
+    private static long ComputeTotalN(params IReadOnlyList<ScoredHit>[] arms)
     {
         var seen = new Dictionary<string, MemoryEntry>(StringComparer.OrdinalIgnoreCase);
-        foreach (var hit in lex) seen.TryAdd(hit.Entry.Id, hit.Entry);
-        foreach (var hit in vec) seen.TryAdd(hit.Entry.Id, hit.Entry);
+        foreach (var arm in arms)
+        foreach (var hit in arm) seen.TryAdd(hit.Entry.Id, hit.Entry);
         return seen.Values.Sum(e => (long)e.EchoCount + e.FizzleCount);
     }
 
@@ -1074,6 +1134,7 @@ public sealed class MemoryService
         IncludeExpired = opts.IncludeExpired,
         CrossRepo = opts.CrossRepo,
         ExpandGraph = opts.ExpandGraph,
+        ExpandEntities = opts.ExpandEntities,
         AlphaOverride = opts.AlphaOverride,
     };
 

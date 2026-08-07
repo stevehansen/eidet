@@ -47,6 +47,11 @@ Every **Memory** has exactly one of the following types. Each type has its own r
 | **L2**           | On-demand deep **Recall** — full **Content** pulled only when the agent asks                         | Tier 2, cold set                       |
 | **Foresight hint** | A predictive relevance signal attached to a **Memory**, nudging **Recall** in related situations   | Hint, prediction                       |
 | **Cross-repo**   | A **Recall** mode that also searches linked **Repos**; off by default                                | Global search, federated search        |
+| **Arm**          | One independently-scored retrieval channel feeding **Fusion**: *lexical*, *vector*, or *abstraction* | Strategy, retriever, index             |
+| **Abstraction**  | A **Memory**'s shortest faithful self-description — the **One-liner** if it has one, else the **Summary**, else its **Content**, clamped. Derived at index time and embedded on its own, so what a **Memory** *is about* is not outvoted by a long body | Title, gist, headline |
+| **Fusion**       | Combining the **Arms** into one ranked candidate pool: min-max normalize each, blend lexical vs vector by the learned alpha, add the **Abstraction** arm, **UCB**, and recency | Merge, blending, RRF |
+| **Expansion**    | Admitting **Memories** no **Arm** returned, by reachability from the top candidates, at a damped score. Two paths: *graph expansion* (authored **Links**) and *cue expansion* (shared **Cue anchors**) | Traversal, walk, hop |
+| **Cue anchor**   | An **Entity** on a **Memory** used as a retrieval handle: two **Memories** sharing one are reachable from each other without any authored **Link** | Tag, keyword, facet |
 
 ## Feedback & scoring
 
@@ -204,3 +209,5 @@ The human-approved subset of a **Repo**'s **Memories**, structured as domain and
 - **"Approve" vs. "Promote"** — parallel shape, distinct concepts: **Approve** graduates a **Canon draft** into a **Canon page**; **Promote** graduates a **Loose End** into a **Memory**. Keep the verbs separate.
 - **"Domain"** (Canon) vs. "domain" (DDD-speak) — the **Canon** term means a tag-clustered page; lowercase "domain" in design conversation usually means the business domain. Qualify when ambiguous ("Canon Domain").
 - **"Canon draft" vs. "Loose End"** — both are pending items outside `memories/*`, but a **Canon draft** is proposed *knowledge* awaiting review while a **Loose End** is open *work* awaiting action.
+- **"Cue anchor" vs. "Entity" vs. "Tag"** — an **Entity** is the extracted *thing*; a **Cue anchor** is the *role* that **Entity** plays when **Expansion** uses it to reach a neighbouring **Memory**. Same data, different job — say **Cue anchor** only when talking about reachability. A **Tag** is neither: it is operator-facing grouping (and what **Consolidation** clusters on), and it is deliberately *not* an expansion path.
+- **"Abstraction" vs. "One-liner"/"Summary"** — **One-liner** and **Summary** are stored **Enrichment** fields that may be absent; **Abstraction** is the *derived* value **Recall** actually embeds, which falls back through both to **Content** so it always exists. Say **Abstraction** when talking about the retrieval **Arm**, **One-liner** when talking about the stored field or the **L1** render.

@@ -18,6 +18,11 @@ public enum IntegrityCheck
     ContextL1,
     CrossRepoSearch,
     GraphNeighbor,
+
+    /// <summary>A forgotten memory reachable through CUE-ANCHOR expansion — pulled back into a recall
+    /// because it shares an entity with a live hit. The link-free sibling of <see cref="GraphNeighbor"/>:
+    /// no authored edge is involved, so a memory can leak through it that the graph probe would clear.</summary>
+    EntityNeighbor,
     DuplicateDetection,
 
     /// <summary>A live memory whose provenance was never established — carries the import trust floor

@@ -43,8 +43,9 @@ public class GraphExpansionTests
         return e;
     }
 
-    private static FusedCandidate Candidate(MemoryEntry entry, double fused, double lex = 0, double vec = 0) =>
-        new(entry, lex, vec, Recency: 0, Ucb: 0, Fused: fused);
+    private static FusedCandidate Candidate(
+        MemoryEntry entry, double fused, double lex = 0, double vec = 0, double abs = 0) =>
+        new(entry, lex, vec, abs, Recency: 0, Ucb: 0, Fused: fused);
 
     // ════════════════════════════════════════════════════════════════════════
     // Section A — pure ExpandNeighbors math
@@ -366,7 +367,8 @@ internal sealed class GraphStore : IEidetStore
         SearchArm arm, IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
     {
         // Arm hits are scoped by the repos this recall searches — exactly like the real backend.
-        var hits = _arms[arm]
+        // GetValueOrDefault, not the indexer: an unscripted arm is empty, not missing.
+        var hits = (_arms.GetValueOrDefault(arm) ?? [])
             .Where(h => _entries.ContainsKey(h.Id) && repoIds.Contains(_entries[h.Id].RepoId, StringComparer.OrdinalIgnoreCase))
             .Select(h => new ScoredHit(_entries[h.Id], h.Score))
             .ToList();

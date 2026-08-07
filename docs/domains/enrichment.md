@@ -100,6 +100,11 @@ facade sees the new backend on its next call.
   several nights. `GetUnenrichedStatsAsync` is how the backlog becomes visible.
 - **The drift review folds age and "today" into the prompt text** because the request type carries only
   strings — a test that freezes the clock must freeze the value passed in, not `DateTime.UtcNow`.
+- **`Entities` and `OneLiner` are load-bearing for retrieval, not just for display.** `Entities` are the
+  **cue anchors** recall expands along, and `OneLiner` is the first choice for the abstraction arm's
+  embedding (see **recall**). Changing an extraction prompt therefore changes what is *reachable*, not
+  just what is rendered — and a corpus that never ran enrichment has no cue expansion at all. The
+  abstraction arm is exempt: it falls back to `Content` at index time, so it is never enrichment-gated.
 - **`ReviewDriftAsync` returning null is normal** (unavailable, no content, or unparseable) and means
   "retry on a future run", not "no drift".
 

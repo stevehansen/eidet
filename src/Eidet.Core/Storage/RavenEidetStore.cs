@@ -207,9 +207,12 @@ public class RavenEidetStore : IEidetStore
 
     public Task<IReadOnlyList<ScoredHit>> SearchScoredAsync(
         SearchArm arm, IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default) =>
-        arm == SearchArm.Lexical
-            ? LexicalScoredAsync(repoIds, query, ct)
-            : VectorScoredAsync(repoIds, query, ct);
+        arm switch
+        {
+            SearchArm.Lexical => LexicalScoredAsync(repoIds, query, ct),
+            SearchArm.Abstraction => VectorScoredAsync(repoIds, query, "AbstractionVector", ct),
+            _ => VectorScoredAsync(repoIds, query, "SearchVector", ct),
+        };
 
     private async Task<IReadOnlyList<ScoredHit>> LexicalScoredAsync(
         IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct)
@@ -230,8 +233,14 @@ public class RavenEidetStore : IEidetStore
         return ToScoredHits(session, hits);
     }
 
+    /// <summary>
+    /// One semantic arm. <paramref name="vectorField"/> selects WHAT was embedded — the composite
+    /// entry text ("SearchVector") or the abstraction alone ("AbstractionVector"); the query text is
+    /// embedded by the same task either way, so the two arms' similarities are on one scale and
+    /// fusion can normalize them independently without a per-arm calibration.
+    /// </summary>
     private async Task<IReadOnlyList<ScoredHit>> VectorScoredAsync(
-        IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct)
+        IReadOnlyList<string> repoIds, MemoryQuery query, string vectorField, CancellationToken ct)
     {
         try
         {
@@ -240,7 +249,7 @@ public class RavenEidetStore : IEidetStore
                 .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
                 .WhereIn("RepoId", repoIds)
                 .VectorSearch(
-                    field => field.WithField("SearchVector"),
+                    field => field.WithField(vectorField),
                     searchTerm => searchTerm.ByText(query.Text, EmbeddingsTaskId),
                     minimumSimilarity: 0.70f,
                     numberOfCandidates: 30);
@@ -359,6 +368,32 @@ public class RavenEidetStore : IEidetStore
         {
             return []; // Vector search may fail if embeddings not configured
         }
+    }
+
+    public async Task<IReadOnlyList<MemoryEntry>> FindByEntitiesAsync(
+        IReadOnlyList<string> repoIds, IReadOnlyCollection<string> entities,
+        IReadOnlyCollection<string> excludeIds, int max, CancellationToken ct = default)
+    {
+        if (entities.Count == 0 || max <= 0) return [];
+
+        using var session = _store.OpenAsyncSession();
+        // Over-fetch by the exclusion count so entries we are about to drop can't starve the result:
+        // the cues come FROM the current pool, so the pool itself is the likeliest set of matches.
+        var candidates = await session.Advanced
+            .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
+            .WhereIn("RepoId", repoIds)
+            .AndAlso()
+            .WhereEquals("ValidUntil", (DateTime?)null)
+            .AndAlso()
+            // Lower-cased to match the index projection — see Memories_Search. WhereIn over an array
+            // field matches any element.
+            .WhereIn("Entities", entities.Select(e => e.ToLowerInvariant()))
+            .Take(max + excludeIds.Count)
+            .ToListAsync(ct);
+
+        var excluded = new HashSet<string>(excludeIds, StringComparer.OrdinalIgnoreCase);
+        // IsLatest is not in the search index (same reason as FindNearDuplicatesAsync) — filter here.
+        return candidates.Where(e => e.IsLatest && !excluded.Contains(e.Id)).Take(max).ToList();
     }
 
     public async Task<IReadOnlyList<MemoryEntry>> GetInvalidatedAsync(

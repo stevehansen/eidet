@@ -406,7 +406,8 @@ internal sealed class AlphaLearningStore : IEidetStore
     public Task<IReadOnlyList<ScoredHit>> SearchScoredAsync(
         SearchArm arm, IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
     {
-        var hits = _arms[arm]
+        // GetValueOrDefault, not the indexer: an unscripted arm is empty, not missing.
+        var hits = (_arms.GetValueOrDefault(arm) ?? [])
             .Where(h => _entries.ContainsKey(h.Id) && repoIds.Contains(_entries[h.Id].RepoId, StringComparer.OrdinalIgnoreCase))
             .Select(h => new ScoredHit(_entries[h.Id], h.Score))
             .ToList();

@@ -485,7 +485,9 @@ internal sealed class InMemoryScoredStore : IEidetStore
     public Task<IReadOnlyList<ScoredHit>> SearchScoredAsync(
         SearchArm arm, IReadOnlyList<string> repoIds, MemoryQuery query, CancellationToken ct = default)
     {
-        var hits = _arms[arm]
+        // GetValueOrDefault, not the indexer: an arm this test never scripts is an EMPTY arm (which
+        // fusion normalizes to 0 for every candidate), not a missing key.
+        var hits = (_arms.GetValueOrDefault(arm) ?? [])
             .Where(h => _entries.ContainsKey(h.Id))
             .Select(h => new ScoredHit(_entries[h.Id], h.Score))
             .ToList();

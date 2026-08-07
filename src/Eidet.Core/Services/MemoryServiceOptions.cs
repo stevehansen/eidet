@@ -34,6 +34,11 @@ public sealed record RecallOptions(string Query)
     /// <summary>Bounded graph-neighbor expansion of the candidate pool (default on; opt out for raw fusion).</summary>
     public bool ExpandGraph { get; init; } = true;
 
+    /// <summary>Bounded cue-anchor (shared-entity) expansion of the candidate pool. Independent of
+    /// <see cref="ExpandGraph"/> so a caller can isolate either reachability path — which the integrity
+    /// auditor's per-path leak probes depend on (default on; opt out for raw fusion).</summary>
+    public bool ExpandEntities { get; init; } = true;
+
     /// <summary>Pins the lexical-vs-vector blend weight, bypassing the per-repo learned alpha. Null = use learned/default.</summary>
     public double? AlphaOverride { get; init; }
 }

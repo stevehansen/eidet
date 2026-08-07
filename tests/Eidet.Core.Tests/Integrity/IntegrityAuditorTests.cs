@@ -251,6 +251,46 @@ public class IntegrityAuditorTests
         var report = await AuditorFor(store).VerifyAsync("audit-repo");
         Assert.DoesNotContain(report.Findings, f => f.Check == IntegrityCheck.GraphNeighbor);
     }
+
+    [Fact]
+    public async Task DetectsEntityNeighborLeak()
+    {
+        var stale = Mem("a forgotten insight a stale recall arm still surfaces under cue expansion", forgotten: true);
+        var store = new LeakyIntegrityStore { LeakVia = IntegrityCheck.EntityNeighbor, LeakEntry = stale };
+        await store.StoreAsync(stale);
+
+        var report = await AuditorFor(store).VerifyAsync("audit-repo");
+
+        Assert.False(report.Clean);
+        Assert.Contains(report.Findings, f => f.Check == IntegrityCheck.EntityNeighbor && f.MemoryId == stale.Id);
+    }
+
+    [Fact]
+    public async Task EntityNeighbor_ForgottenMemorySharingEntityWithLiveHit_DoesNotResurface()
+    {
+        // The cue-expansion twin of the graph-neighbor guard above: no link is involved, only a shared
+        // entity. Forget stamps ValidUntil but leaves IsLatest=true, so an IsLatest-only admission
+        // would pull the forgotten memory back in through a live hit that happens to share a cue.
+        var store = new InMemoryEidetStore();
+
+        var forgotten = Mem("the cue-shared target fact about caching", forgotten: true);
+        forgotten.Entities.Add("CacheLayer");
+        await store.StoreAsync(forgotten);
+
+        var live = Mem("the cue-sharing live memory describes caching layers");
+        live.Entities.Add("CacheLayer");
+        await store.StoreAsync(live);
+
+        var svc = new MemoryService(store);
+        var recalled = await svc.RecallAsync(
+            Repo, new RecallOptions("cue shared caching") { ExpandEntities = true, CrossRepo = false });
+
+        Assert.Contains(recalled, r => r.Id == live.Id);            // the live memory surfaces
+        Assert.DoesNotContain(recalled, r => r.Id == forgotten.Id); // the forgotten cue match does NOT
+
+        var report = await AuditorFor(store).VerifyAsync("audit-repo");
+        Assert.DoesNotContain(report.Findings, f => f.Check == IntegrityCheck.EntityNeighbor);
+    }
 }
 
 /// <summary>Folds a forget leak into the quality dashboard as a Critical issue (zero new UI plumbing).</summary>
@@ -357,6 +397,7 @@ internal sealed class LeakyIntegrityStore : InMemoryEidetStore
     {
         var results = await base.FullTextSearchAsync(repoIds, query, ct);
         if (LeakVia is IntegrityCheck.Recall or IntegrityCheck.CrossRepoSearch or IntegrityCheck.GraphNeighbor
+                or IntegrityCheck.EntityNeighbor
             && LeakEntry is not null && results.All(e => e.Id != LeakEntry.Id))
             results.Add(LeakEntry);
         return results;

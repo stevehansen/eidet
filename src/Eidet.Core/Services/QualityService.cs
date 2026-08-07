@@ -307,7 +307,7 @@ public class QualityService
         Add("forget-leak", QualitySeverity.Critical, "Forgotten memories still reachable",
             [
                 IntegrityCheck.Recall, IntegrityCheck.ContextL1, IntegrityCheck.CrossRepoSearch,
-                IntegrityCheck.GraphNeighbor, IntegrityCheck.DuplicateDetection,
+                IntegrityCheck.GraphNeighbor, IntegrityCheck.EntityNeighbor, IntegrityCheck.DuplicateDetection,
             ],
             m => $"{m.Count} forgotten/superseded memories still surface via: " +
                  $"{string.Join(", ", m.Select(f => f.Check).Distinct())}. These should be invisible to every read path.");

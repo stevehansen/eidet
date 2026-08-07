@@ -91,7 +91,11 @@ internal sealed class RecallCache
         // filters (ApplyFilters) — omitting either lets a filtered recall collide in-cache with an
         // unfiltered recall of the same text and serve the wrong result. (The Valence term fixes a
         // pre-existing omission from the shipped Valence feature; Stage is added with the #38 filter.)
-        var raw = $"{repoId}|{query.Text}|{query.Type}|{query.Valence}|{query.Stage}|{string.Join(",", query.Tags)}|{query.Limit}|{query.IncludeExpired}|{query.CrossRepo}|{alphaBucket}";
+        // Both expansion flags belong here for the same reason: they admit candidates the arms alone
+        // never returned, so an expansion-off recall must not be served an expansion-on result. That
+        // matters most for the integrity auditor, whose per-path leak probes differ ONLY by these
+        // flags and would otherwise answer each other from cache.
+        var raw = $"{repoId}|{query.Text}|{query.Type}|{query.Valence}|{query.Stage}|{string.Join(",", query.Tags)}|{query.Limit}|{query.IncludeExpired}|{query.CrossRepo}|{query.ExpandGraph}|{query.ExpandEntities}|{alphaBucket}";
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
         return Convert.ToHexString(hash)[..16];
     }

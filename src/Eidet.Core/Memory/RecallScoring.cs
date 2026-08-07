@@ -7,16 +7,19 @@ namespace Eidet.Core.Memory;
 /// <summary>
 /// Tuning knobs for hybrid fusion. <see cref="Alpha"/> blends lexical vs vector arms
 /// (lexical weight); <see cref="Kappa"/> scales the UCB exploration bonus; <see cref="TotalN"/>
-/// is the candidate-pool feedback total (Σ Echo+Fizzle) the caller supplies for the UCB term.
+/// is the candidate-pool feedback total (Σ Echo+Fizzle) the caller supplies for the UCB term;
+/// <see cref="Beta"/> weights the abstraction arm, which rides ON TOP of the lex/vec blend rather
+/// than inside it — the blend answers "which arm does this repo reward", a question the abstraction
+/// arm does not participate in, and folding it in would make the learned alpha mean two things.
 /// </summary>
-public readonly record struct RecallWeights(double Alpha, double Kappa, long TotalN)
+public readonly record struct RecallWeights(double Alpha, double Kappa, long TotalN, double Beta = 0.35)
 {
     public static RecallWeights Default => new(Alpha: 0.5, Kappa: 0.3, TotalN: 0);
 }
 
 /// <summary>Per-candidate fusion breakdown: normalized arm scores, recency + UCB components, and the total.</summary>
 public readonly record struct FusedCandidate(
-    MemoryEntry Entry, double Lex, double Vec, double Recency, double Ucb, double Fused);
+    MemoryEntry Entry, double Lex, double Vec, double Abs, double Recency, double Ucb, double Fused);
 
 /// <summary>
 /// Pure scoring + budgeting helpers for the recall and L1-context pipelines.
@@ -51,22 +54,38 @@ public static class RecallScoring
         Math.Exp(-0.693 * Math.Max(0, (now - clock).TotalDays) / RecencyHalfLifeDays);
 
     /// <summary>
-    /// The single source of the hybrid recall ranking. Min-max-normalizes each arm independently
-    /// (empty arm → 0 for every candidate; single-candidate or all-equal arm → 1.0 to dodge a
-    /// divide-by-zero), outer-joins the two arms by <see cref="MemoryEntry.Id"/>, then scores each
-    /// candidate as <c>Alpha·normLex + (1-Alpha)·normVec + UCB + recency</c> where UCB =
-    /// <c>Kappa·sqrt(ln(TotalN+1)/(Echo+Fizzle+1))</c> rewards rarely-surfaced memories and recency
-    /// is the per-type dual-clock FadeMem curve. Returns candidates sorted by fused score descending.
+    /// Two-arm fusion: the abstraction arm is absent. An absent arm normalizes to 0 for every
+    /// candidate, so this is exactly <see cref="Fuse(IReadOnlyList{ScoredHit}, IReadOnlyList{ScoredHit},
+    /// IReadOnlyList{ScoredHit}, RecallWeights, DateTime)"/> with no third arm — identical scores,
+    /// whatever <see cref="RecallWeights.Beta"/> happens to be. Kept so callers that rank over a
+    /// fixed two-arm candidate pool (the benchmark scorecard) stay unaffected by the third arm.
     /// </summary>
     public static List<FusedCandidate> Fuse(
-        IReadOnlyList<ScoredHit> lex, IReadOnlyList<ScoredHit> vec, RecallWeights w, DateTime now)
+        IReadOnlyList<ScoredHit> lex, IReadOnlyList<ScoredHit> vec, RecallWeights w, DateTime now) =>
+        Fuse(lex, vec, [], w, now);
+
+    /// <summary>
+    /// The single source of the hybrid recall ranking. Min-max-normalizes each arm independently
+    /// (empty arm → 0 for every candidate; single-candidate or all-equal arm → 1.0 to dodge a
+    /// divide-by-zero), outer-joins the arms by <see cref="MemoryEntry.Id"/>, then scores each
+    /// candidate as <c>Alpha·normLex + (1-Alpha)·normVec + Beta·normAbs + UCB + recency</c> where
+    /// <c>normAbs</c> is similarity against the memory's abstraction alone, UCB =
+    /// <c>Kappa·sqrt(ln(TotalN+1)/(Echo+Fizzle+1))</c> rewards rarely-surfaced memories and recency
+    /// is the per-type dual-clock FadeMem curve. A memory found ONLY by the abstraction arm still
+    /// enters the pool — that is the point of the arm. Returns candidates sorted by fused descending.
+    /// </summary>
+    public static List<FusedCandidate> Fuse(
+        IReadOnlyList<ScoredHit> lex, IReadOnlyList<ScoredHit> vec, IReadOnlyList<ScoredHit> abs,
+        RecallWeights w, DateTime now)
     {
         var normLex = Normalize(lex);
         var normVec = Normalize(vec);
+        var normAbs = Normalize(abs);
 
         var entries = new Dictionary<string, MemoryEntry>(StringComparer.OrdinalIgnoreCase);
         foreach (var hit in lex) entries.TryAdd(hit.Entry.Id, hit.Entry);
         foreach (var hit in vec) entries.TryAdd(hit.Entry.Id, hit.Entry);
+        foreach (var hit in abs) entries.TryAdd(hit.Entry.Id, hit.Entry);
 
         var lnN = Math.Log(w.TotalN + 1);
 
@@ -75,10 +94,11 @@ public static class RecallScoring
         {
             var l = normLex.GetValueOrDefault(id);
             var v = normVec.GetValueOrDefault(id);
+            var a = normAbs.GetValueOrDefault(id);
             var ucb = Ucb(entry, w, lnN);
             var recency = FadeMemCurve.Recency(entry.CreatedAt, entry.LastAccessedAt, now, entry.Type);
-            var score = w.Alpha * l + (1 - w.Alpha) * v + ucb + recency;
-            fused.Add(new FusedCandidate(entry, l, v, recency, ucb, score));
+            var score = w.Alpha * l + (1 - w.Alpha) * v + w.Beta * a + ucb + recency;
+            fused.Add(new FusedCandidate(entry, l, v, a, recency, ucb, score));
         }
 
         fused.Sort((a, b) => b.Fused.CompareTo(a.Fused));
@@ -125,7 +145,7 @@ public static class RecallScoring
                 var ucb = Ucb(neighbor, w, lnN);
                 var recency = FadeMemCurve.Recency(neighbor.CreatedAt, neighbor.LastAccessedAt, now, neighbor.Type);
                 var score = parent.Fused * neighborDecay + ucb + recency;
-                added.Add(new FusedCandidate(neighbor, Lex: 0, Vec: 0, recency, ucb, score));
+                added.Add(new FusedCandidate(neighbor, Lex: 0, Vec: 0, Abs: 0, recency, ucb, score));
                 present.Add(targetId); // dedup neighbors against each other, not just against the pool
             }
         }
@@ -140,6 +160,65 @@ public static class RecallScoring
         var expanded = new List<FusedCandidate>(fused.Count + added.Count);
         expanded.AddRange(fused);
         expanded.AddRange(added);
+        expanded.Sort((a, b) => b.Fused.CompareTo(a.Fused));
+        return expanded;
+    }
+
+    /// <summary>
+    /// Expands the fused pool along CUE ANCHORS — shared entities — rather than authored links.
+    /// Same damped-inheritance shape as <see cref="ExpandNeighbors"/>: a cue match not already in the
+    /// pool inherits <c>parentFused * cueDecay</c> plus its own recency+UCB. Two differences, both
+    /// deliberate: a match is attributed to the STRONGEST parent it shares a cue with (cue overlap is
+    /// many-to-many, so "which parent pulled this in" needs a rule), and <paramref name="cueDecay"/>
+    /// is lower than the link decay because a shared entity string is weaker evidence of relatedness
+    /// than a link somebody actually authored. Candidates are admitted best-inherited-score first, so
+    /// the <paramref name="maxNeighbors"/> cap keeps the strongest rather than the first-seen.
+    ///
+    /// <paramref name="cueMatches"/> is the already-loaded, already-scope-checked candidate set; this
+    /// helper is pure and does no I/O. Entries with no entities never match — which makes this
+    /// expansion as dense as enrichment has made the corpus, and a no-op before it runs.
+    /// </summary>
+    public static List<FusedCandidate> ExpandEntities(
+        IReadOnlyList<FusedCandidate> fused, IReadOnlyList<MemoryEntry> cueMatches,
+        RecallWeights w, DateTime now, int parentTopK = 10, int maxNeighbors = 5, double cueDecay = 0.35)
+    {
+        var lnN = Math.Log(w.TotalN + 1);
+        var present = new HashSet<string>(fused.Select(c => c.Entry.Id), StringComparer.OrdinalIgnoreCase);
+        var parents = fused.Take(parentTopK).ToList();
+
+        var added = new List<FusedCandidate>();
+        foreach (var match in cueMatches)
+        {
+            if (present.Contains(match.Id) || match.Entities.Count == 0) continue;
+
+            var cues = new HashSet<string>(match.Entities, StringComparer.OrdinalIgnoreCase);
+            double bestParent = 0;
+            var matched = false;
+            foreach (var parent in parents)
+            {
+                if (!parent.Entry.Entities.Any(cues.Contains)) continue;
+                matched = true;
+                if (parent.Fused > bestParent) bestParent = parent.Fused;
+            }
+            if (!matched) continue;
+
+            var ucb = Ucb(match, w, lnN);
+            var recency = FadeMemCurve.Recency(match.CreatedAt, match.LastAccessedAt, now, match.Type);
+            added.Add(new FusedCandidate(
+                match, Lex: 0, Vec: 0, Abs: 0, recency, ucb, bestParent * cueDecay + ucb + recency));
+            present.Add(match.Id);
+        }
+
+        if (added.Count == 0)
+        {
+            var copy = new List<FusedCandidate>(fused);
+            copy.Sort((a, b) => b.Fused.CompareTo(a.Fused));
+            return copy;
+        }
+
+        var expanded = new List<FusedCandidate>(fused.Count + added.Count);
+        expanded.AddRange(fused);
+        expanded.AddRange(added.OrderByDescending(c => c.Fused).Take(maxNeighbors));
         expanded.Sort((a, b) => b.Fused.CompareTo(a.Fused));
         return expanded;
     }
