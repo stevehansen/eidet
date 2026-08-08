@@ -212,6 +212,22 @@ public interface IEidetStore
     Task<List<MemoryEntry>> GetTopScoredAsync(string repoId, MemoryType[] types, int limit, CancellationToken ct = default);
 
     /// <summary>
+    /// Every source id ever folded into a derived memory (insight or procedure) for this repo —
+    /// including the lineage of memories that have since been retired, superseded, or repaired away.
+    ///
+    /// Deliberately blind to validity, because lineage is a historical fact and consolidation's
+    /// idempotence depends on it staying one. Reading lineage off *live* memories only makes any
+    /// stage that retires a consolidation output (corpus repair on an exact-content duplicate, dedup
+    /// merging two insights, TTL expiry) also erase the evidence that its cluster was already
+    /// consolidated — so the next scheduled run reads the cluster as fresh and emits it again, on a
+    /// loop bounded only by how often the two stages run.
+    ///
+    /// Default <c>[]</c> so fakes need not opt in; callers union this with their own live scan.
+    /// </summary>
+    Task<HashSet<string>> GetConsolidatedSourceIdsAsync(string repoId, CancellationToken ct = default) =>
+        Task.FromResult(new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
     /// Memories still awaiting enrichment (<c>Summary == null</c>), valid + latest only, oldest
     /// first. The retry feed for the nightly enrichment sweep: the EnrichmentWorker's subscription
     /// acks a doc even when enrichment fails and never re-sends it, so everything the worker missed

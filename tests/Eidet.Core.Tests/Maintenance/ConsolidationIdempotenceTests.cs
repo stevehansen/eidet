@@ -55,6 +55,45 @@ public class ConsolidationIdempotenceTests
         Assert.Equal(importanceAfterFirst, after.Importance);
     }
 
+    [Fact]
+    public async Task Unenriched_run_emits_content_no_source_already_holds()
+    {
+        // The deterministic path used to nominate the highest-importance member's content as the
+        // "merge", so the emitted insight was byte-identical to one of its own sources. That is an
+        // exact-content duplicate, and the nightly repair retires those — see the test below for
+        // what the retirement then did to the cluster.
+        var store = new InMemoryEidetStore();
+        await SeedBucketAsync(store);
+
+        await BuildEngine(store).ConsolidateAsync(Repo);
+
+        var insight = (await store.GetTopScoredAsync(Repo, [MemoryType.Insight], 50)).Single();
+        var sources = await store.GetTopScoredAsync(Repo, [MemoryType.Observation], 50);
+        Assert.DoesNotContain(sources, o => string.Equals(o.Content, insight.Content, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Cluster_stays_consolidated_after_its_insight_is_retired()
+    {
+        // The field loop, in miniature: consolidation emits, another stage retires what it emitted,
+        // and the next scheduled run has to still know the cluster was consolidated. Lineage read off
+        // live memories only would lose that with the carrier and re-emit here.
+        var store = new InMemoryEidetStore();
+        await SeedBucketAsync(store);
+
+        await BuildEngine(store).ConsolidateAsync(Repo);
+        var insight = (await store.GetTopScoredAsync(Repo, [MemoryType.Insight], 50)).Single();
+
+        insight.Validity.ValidUntil = DateTime.UtcNow;
+        insight.ForgetReason = "Corpus repair: exact-content duplicate";
+        await store.StoreAsync(insight);
+
+        var afterRetirement = await BuildEngine(store).ConsolidateAsync(Repo);
+
+        Assert.Equal(0, afterRetirement.InsightsCreated);
+        Assert.Empty(await store.GetTopScoredAsync(Repo, [MemoryType.Insight], 50));
+    }
+
     private static ConsolidationEngine BuildEngine(IEidetStore store) =>
         new(store, null, new MemoryService(store));
 

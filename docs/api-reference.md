@@ -329,13 +329,22 @@ curl -X POST "http://localhost:19380/api/eidet/intake?repo=P%3A%5CMyProject"
 
 Groups related observations into insights.
 
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `repo` | string | *(required)* | Repo path |
+| `dry_run` | bool | `false` | Return the candidate clusters without writing anything |
+
 ```bash
-curl -X POST "http://localhost:19380/api/eidet/consolidate?repo=P%3A%5CMyProject"
+curl -X POST "http://localhost:19380/api/eidet/consolidate?repo=P%3A%5CMyProject&dry_run=true"
 ```
 
 ```json
 { "candidates": 45, "insightsCreated": 3, "insightsBoosted": 2 }
 ```
+
+`candidates` counts the clusters considered, not the memories written — a cluster whose merge would
+only restate one of its own observations is reported and then skipped, so `insightsCreated` is
+legitimately lower. A converged corpus consolidates to all zeros.
 
 ### POST /api/maintenance — Run Maintenance
 

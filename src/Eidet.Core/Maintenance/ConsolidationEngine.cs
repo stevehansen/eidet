@@ -150,14 +150,23 @@ public sealed class ConsolidationEngine
             }
             else
             {
-                var mergedContent = representative.Content;
-                if (bucket.Count > 5 && _enrichment.IsAvailable)
+                // Every cluster gets a real merge attempt, not just large ones. The old `> 5` gate
+                // decided which clusters were worth an LLM call, but what it actually decided was
+                // which clusters got a genuine merge and which got a verbatim copy of their own
+                // representative — and the small ones, the overwhelming majority, all got the copy.
+                var mergedContent = DeterministicMerge(bucket);
+                if (_enrichment.IsAvailable)
                 {
                     var merged = await _enrichment.MergeObservationsAsync(
                         bucket.Select(o => o.Content).ToList(), ct);
                     if (!string.IsNullOrEmpty(merged))
                         mergedContent = merged;
                 }
+
+                // No enrichment, or a merge that came back as one of the inputs: the cluster has no
+                // insight to add today. Emit nothing and leave it for a run that can say something
+                // new — an unconsolidated cluster is a cheap no-op, a duplicate is not.
+                if (AddsNothing(bucket, mergedContent)) continue;
 
                 // Anti-laundering (create path): if ANY contributing observation is untrusted
                 // (Pack/Intake), stamp the new insight with the least-trusted contributor's
@@ -207,25 +216,60 @@ public sealed class ConsolidationEngine
         _store.FindDuplicateOfTypeAsync(repoId, type, content, 0.85f, ct);
 
     /// <summary>
-    /// Observation ids already folded into a live derived memory (insight or procedure). Read once
-    /// per run: consolidation emits at most a handful of memories per pass, so a snapshot taken at
-    /// the start cannot go stale within it, and the alternative — a probe per bucket — multiplies
-    /// round trips for an answer that does not change.
+    /// Observation ids already folded into a derived memory (insight or procedure), live or not.
+    /// Read once per run: consolidation emits at most a handful of memories per pass, so a snapshot
+    /// taken at the start cannot go stale within it, and the alternative — a probe per bucket —
+    /// multiplies round trips for an answer that does not change.
+    ///
+    /// Retired lineage counts. Scoping this to live memories made consolidation and the nightly
+    /// repair drive each other in a loop: the deterministic merge emitted the representative's
+    /// content verbatim, corpus repair retired that insight as an exact-content duplicate of its own
+    /// source observation, the cluster's only lineage record went with it, and the next run minted
+    /// another copy. The store answers for the full history; the live scan is unioned in so fakes
+    /// that do not implement it keep working.
     /// </summary>
     private async Task<HashSet<string>> ConsumedObservationIdsAsync(string repoId, CancellationToken ct)
     {
+        var consumed = await _store.GetConsolidatedSourceIdsAsync(repoId, ct);
+
         var derived = await _store.GetTopScoredAsync(
             repoId, [MemoryType.Insight, MemoryType.Procedure], ConsumedScanLimit, ct);
-
-        var consumed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var d in derived)
-        {
-            if (d.Validity.ValidUntil is not null) continue;
-            foreach (var id in d.DerivedFrom)
-                consumed.Add(id);
-        }
+        foreach (var id in d.DerivedFrom)
+            consumed.Add(id);
+
         return consumed;
     }
+
+    /// <summary>
+    /// True when <paramref name="content"/> is byte-identical to one of the cluster's own sources —
+    /// i.e. the "merge" produced nothing the corpus does not already hold.
+    ///
+    /// This is the condition to refuse, not to repair. Emitting the copy creates an exact-content
+    /// duplicate of a memory that already exists, which the nightly repair then retires; the write is
+    /// pure churn even in the best case, and it re-enters the corpus as consolidation bait every time
+    /// the retirement takes its lineage with it.
+    /// </summary>
+    private static bool AddsNothing(IReadOnlyList<MemoryEntry> bucket, string content) =>
+        bucket.Any(o => string.Equals(o.Content, content, StringComparison.Ordinal));
+
+    /// <summary>
+    /// What a cluster consolidates to when no model is available to merge it: the ordered union of
+    /// its distinct source contents.
+    ///
+    /// The zero-LLM path used to nominate the highest-importance member's content as the "merge",
+    /// which is a pick, not a merge — the emitted insight was byte-identical to a memory the corpus
+    /// already held. The nightly repair retired it as an exact-content duplicate (correctly), the
+    /// cluster's lineage went with it, and the next run minted another copy; 543 retired copies in a
+    /// single repo. A union carries the same claim the pick was reaching for — these observations are
+    /// one idea — without asserting that any one of them already stated it. Mirrors
+    /// <see cref="StepsContent"/>, which has always composed rather than picked.
+    /// </summary>
+    private static string DeterministicMerge(IReadOnlyList<MemoryEntry> bucket) =>
+        string.Join("\n", bucket
+            .OrderBy(o => o.CreatedAt)
+            .Select(o => o.Content)
+            .Distinct(StringComparer.Ordinal));
 
     /// <summary>Scan width for the lineage snapshot; matches the observation pool this engine reads.</summary>
     private const int ConsumedScanLimit = 500;
@@ -285,11 +329,17 @@ public sealed class ConsolidationEngine
         await ctx.StoreNewAsync(fine, ct);
 
         var abstractContent = representative.Content;
-        if (bucket.Count > 5 && _enrichment.IsAvailable)
+        if (_enrichment.IsAvailable)
         {
             var merged = await _enrichment.MergeObservationsAsync(bucket.Select(o => o.Content).ToList(), ct);
             if (!string.IsNullOrEmpty(merged)) abstractContent = merged;
         }
+
+        // Unlike the Insight path this keeps its representative fallback: an abstraction is a
+        // synthesis, and there is no deterministic way to produce one — a union would just restate
+        // the fine procedure sitting directly below it. When the fallback does land on a verbatim
+        // copy, the fine procedure carries the cluster's lineage independently, so a repair that
+        // retires the abstraction no longer un-consolidates the cluster.
         var abstraction = new MemoryEntry
         {
             Id = MemoryIdGenerator.Generate(repoId, MemoryType.Procedure, abstractContent, now.AddTicks(1)),

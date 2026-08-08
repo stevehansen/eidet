@@ -601,7 +601,7 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
 
             echo %date% %time% - Updated from v{currentVersion} to v{latestVersion} >> "{logPath}"
             echo Update successful.
-            {(restartService ? """
+            {(restartService ? $"""
             REM Restart the scheduled task
             echo Restarting Eidet service...
             schtasks.exe /run /tn "Eidet"

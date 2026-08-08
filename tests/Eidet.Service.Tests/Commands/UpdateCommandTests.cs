@@ -114,6 +114,30 @@ public class UpdateCommandTests
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void GenerateWindowsTrampolineScript_LeavesNoUnexpandedPlaceholders(bool restartService)
+    {
+        // Regression: the restart branch was a nested raw string literal without the `$`
+        // prefix, so `{logPath}` reached the .cmd verbatim and `>> "{logPath}"` created a
+        // file literally named `{logPath}` in the working directory instead of appending
+        // to update.log. Any brace surviving into the script means an interpolation was
+        // lost — the script has no legitimate use for one.
+        var scriptPath = UpdateCommand.GenerateWindowsTrampolineScript("0.1.0", "0.3.0", restartService);
+
+        try
+        {
+            var content = File.ReadAllText(scriptPath);
+            Assert.DoesNotContain("{", content);
+            Assert.DoesNotContain("}", content);
+        }
+        finally
+        {
+            File.Delete(scriptPath);
+        }
+    }
+
     [Fact]
     public void GenerateWindowsTrampolineScript_SkipsServiceRestart_WhenNotRunning()
     {

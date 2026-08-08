@@ -104,7 +104,10 @@ internal sealed class MemoryBulkEndpoints
             return;
         }
 
-        var args = JsonDocument.Parse("{}").RootElement;
+        var args = JsonSerializer.SerializeToElement(new
+        {
+            dry_run = string.Equals(ctx.Request.QueryString["dry_run"], "true", StringComparison.OrdinalIgnoreCase),
+        }, HttpJson.Options);
         var result = await _dispatcher.InvokeAsync(new ToolRequest("eidet_consolidate", repo, args, "rest", ct));
         await RestFormatter.WriteAsync(ctx, result);
     }

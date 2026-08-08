@@ -531,6 +531,25 @@ internal class InMemoryEidetStore : IEidetStore
         }
     }
 
+    /// <summary>
+    /// Lineage across the whole repo, live or retired — deliberately NOT filtered by validity or
+    /// IsLatest, unlike <see cref="GetTopScoredAsync"/>. Consolidation's idempotence turns on that
+    /// difference, so a fake that quietly answered "live only" would hide the exact regression the
+    /// idempotence tests exist to catch.
+    /// </summary>
+    public Task<HashSet<string>> GetConsolidatedSourceIdsAsync(string repoId, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            var consumed = _entries.Values
+                .Where(e => string.Equals(e.RepoId, repoId, StringComparison.OrdinalIgnoreCase))
+                .Where(e => e.Type is MemoryType.Insight or MemoryType.Procedure)
+                .SelectMany(e => e.DerivedFrom)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return Task.FromResult(consumed);
+        }
+    }
+
     // Real backing impls (default interface impls return []) so the enrichment-sweep stage
     // and backlog stats can be exercised without RavenDB.
     public Task<List<MemoryEntry>> GetUnenrichedAsync(string repoId, int limit, CancellationToken ct = default)
