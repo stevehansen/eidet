@@ -135,6 +135,22 @@ expansion follows edges somebody **authored**; cue expansion follows entities en
 
 ## Gotchas
 
+- **A vector query needs an explicit `AndAlso()` before `VectorSearch`, and getting it wrong is silent.**
+  `.WhereIn("RepoId", ids).VectorSearch(...)` emits the two clauses adjacent, and the server rejects the
+  whole query with a parse error at the vector clause. Every vector call site wraps its query in
+  `catch { return []; }` — a deliberate "embeddings may not be configured" fallback — so a malformed query
+  is reported as *no semantic hits*, which is exactly what a healthy embeddings-less install looks like.
+  Three sites shipped this way (`VectorScoredAsync`, `FindDuplicateCoreAsync`, `FindNearDuplicatesAsync`),
+  which meant the semantic arm, the abstraction arm, the vector write-time duplicate gate and dedup's
+  semantic pass were all dead in production while ~1,500 tests stayed green. Nothing caught it because no
+  fixture provisioned an embeddings task, so the entire suite exercised only the lexical fallback —
+  `VectorSearchArmTests` now stands up a real one. If you touch a vector query, keep the operator explicit
+  and assume any `catch`-to-empty is hiding a bug until a live-embeddings test says otherwise.
+
+- **`numberOfCandidates` is a ceiling on rows returned, not just search breadth.** It has to track the
+  requested limit; pinned below it, `.Take(limit)` silently yields the smaller number, so a request for a
+  wide page quietly truncates.
+
 - **The lexical arm has no relevance floor.** RavenDB's `Search` is OR-by-default, so any single query
   term matches, and `Fuse` min-max-normalizes each arm — which maps the best candidate to 1.0 *whatever
   its raw score*. A query with no real match therefore returns a full page of confident-looking noise

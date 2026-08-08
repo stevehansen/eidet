@@ -33,7 +33,7 @@ IMaintenanceRunner ← MaintenanceOrchestrator
 
 Dual-use engines (also callable stand-alone from REST/CLI, with or without a bulk scope):
   ConsolidationEngine  — observations → insight, or the two-altitude procedure pair; + importance decay
-  DedupEngine          — semantic pass then lexical pass → one deterministic MergeAsync
+  DedupEngine          — semantic, then lexical pass → one deterministic MergeAsync
   ReflectionEngine     — feedback residue → net-new memories via one LLM call (dormant by default)
 ```
 
@@ -52,12 +52,26 @@ this run produced.
   member simply never matches an `Only` filter instead of throwing — selection stays total.
 - **A scheduled stage must converge.** Every stage runs repeatedly over a corpus that mostly does not
   change, so "does nothing the second time" is a correctness property, not an optimization. Consolidation
-  enforces it with a *lineage* check — the set of observation ids already folded into a live derived
+  enforces it with a *lineage* check — the set of observation ids already folded into a derived
   memory (`ConsumedObservationIdsAsync`); a fully-consumed bucket is skipped, and the boost path lifts
   importance only for contributors not already in `DerivedFrom`. It deliberately does **not** ask "does
-  content like this exist": an unenriched consolidation emits the representative observation's content
-  verbatim, so the nearest match to a bucket's output is the bucket's own input, and a content probe
-  reads done as not-done. That defect re-emitted one observation 240 times on the 6-hour schedule.
+  content like this exist": consolidation output can restate its own input closely enough that the
+  nearest match to a bucket's output is the bucket's own input, so a content probe reads done as
+  not-done. That defect re-emitted one observation 240 times on the 6-hour schedule.
+- **Lineage is blind to validity.** `IEidetStore.GetConsolidatedSourceIdsAsync` answers across the whole
+  history — retired, superseded and repaired-away memories included — because "these sources were already
+  consolidated" is a fact about the past that retiring a memory cannot undo. Reading lineage off *live*
+  memories only couples convergence to every stage that retires anything: corpus repair folding an
+  exact-content duplicate, dedup merging two insights, TTL expiry. Each of those would erase the only
+  record that a cluster had been consolidated, and the next scheduled run would mint it again.
+- **Consolidation never emits content a source already holds.** The zero-LLM path *composes* the
+  cluster's distinct contents (`DeterministicMerge`) rather than nominating its highest-importance
+  member, and `AddsNothing` refuses the write outright if the result — deterministic or model-merged —
+  still matches a source byte-for-byte. Picking a member produced an exact-content duplicate of a
+  memory the corpus already held, which `CorpusRepairStage` then correctly retired; the two stages drove
+  each other on a ~6h cycle and left 543 retired copies in one repo. The two invariants are a pair:
+  this one stops the duplicate being minted, validity-blind lineage stops its retirement re-arming the
+  cluster.
 - **Tag unions are ranked and capped, never raw.** A consolidated memory can itself be re-consolidated,
   so `TagHygiene.Clean` bounds `unionTags`; an uncapped union compounds each generation until tags
   cover the corpus (observed at 199 tags on one entry).
@@ -72,6 +86,20 @@ this run produced.
   `RecallConsistencyGuard` proves it structurally (vector arm, lexical fallback) before anything is
   folded. A veto forgets nothing — both memories stay live and the discard gets a
   `LastMergeRejectedAt` stamp so the dashboard can show it.
+- **The guard counts only rows that still exist.** A bulk run closes each discard's document immediately
+  while the search index catches up afterwards, so a ranking taken mid-run still lists rows that are
+  already retired. `Staying` re-reads validity off the documents, and the ranking page is fetched wider
+  than `k` because those rows are dropped *after* the fetch — a page sized at `k` alone can come back
+  holding nothing but rows that are then discarded, and an absent survivor is indistinguishable from one
+  that doesn't surface. Both arms need this; only the lexical arm originally had the width.
+- **A shared `DerivedFrom` set does not mean a duplicate.** A third "lineage" pass that folded memories
+  by exact source-set equality was built and reverted. Its premise — same sources, one restated claim —
+  is false for a corpus whose insights come from reflection: that engine emits *multi-aspect* summaries
+  over one source set, worded differently each run. Measured against live families, members scored
+  0.12–0.29 lexical similarity to their survivor (median 0.19) and embeddings called only 0–33% of them
+  near-duplicates at 0.86, against a lexical fold threshold of 0.85. A field drain folded 1,423
+  non-duplicates (median 0.21) where every prior dedup fold had median 1.000; the recall guard's vetoes
+  were correct and were the only thing preventing more. Similarity, not provenance, decides a duplicate.
 - **Never fold a claim into its contradiction.** `MergeAsync` returns early on conflicting hard
   valence, and consolidation partitions every tag group by valence sign *before* the minimum-group
   check. Both survivors keep the opinionated stance (**memory** owns the sign helper).
@@ -114,11 +142,23 @@ this run produced.
 - **`FadeMemCurve.Defaults` is a dictionary indexed by `MemoryType`.** A new memory type that isn't
   added to it throws at decay time — and the same table feeds recall's recency, so a missing entry
   breaks ranking too.
-- **Dedup runs two passes with different thresholds**, both below the write-time duplicate threshold;
-  the semantic pass exists to catch paraphrases and the lexical pass exists so embeddings-less installs
-  don't regress. Changing one threshold without the other silently shifts which duplicates survive.
+- **Dedup runs two *threshold* passes**; the semantic pass exists to catch paraphrases and the lexical
+  pass exists so embeddings-less installs don't regress. Changing one threshold without the other
+  silently shifts which duplicates survive.
+- **Semantic similarity is a topic signal until it is very high.** `SemanticThreshold` is 0.98, not the
+  0.86 it shipped with, because the pass had never actually run — its vector probe always returned empty
+  (see **recall**). The first real dry run showed 0.86/0.92/0.95 proposing 682/490/237 folds across two
+  repos with median word overlap ~0.2 and *no* true duplicates: generated insights are all written in the
+  same register, so cosine similarity measures register, not claim. 0.98 yields 22 proposals at median
+  overlap 0.685. Both this and `MemoryService.DuplicateThreshold` err high on purpose — a missed
+  duplicate waits for the next sweep, a false positive retires or rejects a distinct claim.
 - **The lexical dedup pass is O(n²)** over the per-type candidate cap. That cap is the only thing
   bounding it.
+- **The semantic pass depends on a working vector arm, and its failure mode is silence.** Both passes
+  share one candidate fetch, so a survivor mutated in place by one pass is the same instance the next
+  pass sees. If `FindNearDuplicatesAsync` returns nothing the semantic pass simply folds nothing and the
+  lexical pass still reports merges, so the run looks healthy — see **recall** for the query defect that
+  made this the actual behaviour for months.
 - **`MaintenanceContext.Items`** is a stage-to-stage scratch dictionary. It exists, it's untyped, and
   it should stay near-empty — reach for it only when a stage genuinely needs a predecessor's output.
 - **`MaintenanceContext.ForTest` builds engines on a throwaway `MemoryService`.** That's only coherent
@@ -137,11 +177,17 @@ this run produced.
 - `tests/Eidet.Core.Tests/Maintenance/MaintenanceCacheInvalidationTests.cs` — settles the
   one-invalidation-per-scope-per-run contract (including when a stage throws).
 - `tests/Eidet.Core.Tests/Maintenance/DedupEngineTests.cs` + `DedupGuardVetoTests.cs` +
-  `RecallConsistencyGuardTests.cs` — settle survivor selection, tag union, the veto, and the
-  `LastMergeRejectedAt` stamp.
+  `RecallConsistencyGuardTests.cs` — settle survivor selection, tag union, the veto, the
+  `LastMergeRejectedAt` stamp, that live near-duplicates crowding the survivor out is a *correct* veto,
+  and that already-retired rows are not counted as competitors (`LaggingIndexStore` puts the guard on
+  its semantic arm, which the plain in-memory store leaves untested).
 - `tests/Eidet.Core.Tests/Maintenance/ConsolidationTrustTests.cs` + `TwoAltitudeConsolidationTests.cs` +
   `ValenceWritePathGuardTests.cs` — settle anti-laundering on both paths, the procedure pair, and
   polarity partitioning.
+- `tests/Eidet.Core.Tests/Maintenance/ConsolidationIdempotenceTests.cs` — **the authority on
+  convergence**: the second run over an unchanged bucket, importance not walking upward on unchanged
+  evidence, output never matching a source verbatim, and the cluster staying consolidated after its
+  insight is retired.
 - `tests/Eidet.Core.Tests/Maintenance/RetentionStagesTests.cs` + `RoiDecayStageTests.cs` +
   `FadeMemCurveTests.cs` — settle eviction ordering, the quarantine exemption, ROI demotion, and the
   per-type curves.

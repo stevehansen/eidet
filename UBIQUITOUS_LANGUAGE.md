@@ -85,6 +85,7 @@ Every store attempt passes through these gates, in order. Any gate can reject th
 | **Forget**         | A soft-delete that records a reason and closes the **Validity** interval; never hard-deletes       | Delete, purge, remove                  |
 | **TTL expiry**     | A scheduled **Forget** driven by `ForgetAfter` on a **Memory**                                     | Expiration, timeout                    |
 | **Consolidation**  | A scheduled pass that merges related **Observations** into stable **Insights**                     | Compaction, rollup, summarization      |
+| **Lineage**        | The `DerivedFrom` set recording which **Memories** a synthesis was built from. Read across the whole history, retired members included — "these sources were already consolidated" is a fact retiring a **Memory** cannot undo | Sources, parents, provenance (reserved) |
 | **Maintenance**    | The periodic pipeline that runs **TTL expiry**, dedup, **FadeMem** decay, and **Enrichment**       | Housekeeping, cleanup, cron            |
 | **Intake**         | Bulk ingestion of project files (CLAUDE.md, README, docs) as seed **Memories**                     | Import, bootstrap, seeding             |
 | **Git-History Intake** | **Intake** that mines merged commit history into seed Procedure/Insight **Memories** — problem from the message, fix pattern from change stats, never raw diffs | Git import, commit harvesting          |

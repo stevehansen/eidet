@@ -26,7 +26,17 @@ namespace Eidet.Core.Services;
 /// </remarks>
 public sealed class MemoryService
 {
-    private const float DuplicateThreshold = 0.92f;
+    /// <summary>
+    /// Similarity above which an incoming write is folded into an existing memory instead of stored.
+    ///
+    /// Raised from 0.92 once the vector arm started working. Until then this gate's semantic strategy
+    /// silently returned nothing and only the exact-content fallback ran, so 0.92 was never exercised
+    /// against real embeddings — and a dedup dry run at that value matched hundreds of pairs per repo
+    /// that were distinct claims sharing a register. This gate is the more dangerous of the two places
+    /// that number appears: rejecting a write loses knowledge outright, where a missed duplicate only
+    /// waits for the next sweep.
+    /// </summary>
+    private const float DuplicateThreshold = 0.98f;
 
     /// <summary>
     /// Word-overlap above which two L1 lines are treated as the same fact and the lower-scored one

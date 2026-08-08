@@ -19,9 +19,19 @@ final, and `ForgetIntegrityStage` runs last so it audits what this run produced.
   invalidate exactly once in the `finally`. A stage using its own `MemoryService` breaks coherence.
 - **A stage failure is a report line, not an aborted run** (per-stage try/catch → `StageOutcome`).
 - **Stage selection compares `Name` strings, never parses them** — selection must stay total.
+- **Every stage must converge** — "does nothing the second time" is correctness, not optimization.
+  Consolidation gets there two ways, and both are load-bearing: it never emits content a source already
+  holds (compose the cluster, don't nominate a member), and its lineage check reads the *whole* history
+  via `GetConsolidatedSourceIdsAsync`, retired memories included. Scope lineage to live memories and any
+  stage that retires something — repair, dedup, TTL — silently un-consolidates the cluster it touched.
 - **Never touch a `canon:*` page** in dedup or the consolidation boost path.
 - **No merge without the recall-consistency veto** — the survivor must still surface for the discard's
-  own retrieval intent. A veto forgets nothing and stamps `LastMergeRejectedAt`.
+  own retrieval intent. A veto forgets nothing and stamps `LastMergeRejectedAt`. The guard discounts rows
+  whose document is already retired, because a bulk run closes documents while the search index lags.
+- **Shared `DerivedFrom` is not a duplicate signal.** A lineage pass that folded same-source memories was
+  tried and reverted: measured against the field corpus, members of a "family" scored 0.12–0.29 lexical
+  similarity to their survivor (the lexical pass folds at 0.85). Reflection emits multi-aspect insights
+  over one source set, so identical sources means same evidence, not same claim.
 - **Never fold a claim into its contradiction** — early return on conflicting hard valence; partition
   consolidation groups by sign *before* the minimum-group check.
 - **Synthesis inherits its least-trusted contributor**, and a boost with no trusted contributor is
@@ -46,7 +56,9 @@ final, and `ForgetIntegrityStage` runs last so it audits what this run produced.
 - `FadeMemCurve.Defaults` is keyed by `MemoryType` — a new type not added there throws at decay time
   *and* breaks recall recency.
 - Dedup's semantic and lexical thresholds are a pair; move one and duplicate behaviour shifts silently.
-  The lexical pass is O(n²) over the per-type candidate cap.
+  The lexical pass is O(n²) over the per-type candidate cap. All three passes share ONE candidate
+  fetch — they mutate survivors in place, so a second fetch would let a later pass write back a stale
+  copy and drop an earlier fold.
 - `MaintenanceContext.Items` is an untyped stage-to-stage scratch dict — keep it near-empty.
 - `ForTest` builds engines on a throwaway `MemoryService`; that only works because engines write through
   the supplied scope.

@@ -13,6 +13,9 @@ public class RavenEidetStore : IEidetStore
 {
     private const string EmbeddingsTaskId = "memory-embeddings";
 
+    /// <summary>Upper bound on HNSW search breadth for one vector probe.</summary>
+    private const int MaxVectorCandidates = 512;
+
     /// <summary>Candidate over-fetch factor for <see cref="GetTopScoredAsync"/> — see the note there.</summary>
     private const int PoolOverfetch = 5;
 
@@ -268,14 +271,26 @@ public class RavenEidetStore : IEidetStore
         try
         {
             using var session = _store.OpenAsyncSession();
+
+            // HNSW search breadth, and so a hard ceiling on how many rows this arm can return at all:
+            // asking for 200 rows while offering 30 candidates silently yields 30. It must therefore
+            // track the requested count, not sit at a constant below it. Bounded above so one probe
+            // can't turn into a full-graph walk when a caller asks for a very wide page.
+            var candidates = Math.Clamp(query.Limit, 30, MaxVectorCandidates);
+
             var documentQuery = session.Advanced
                 .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
                 .WhereIn("RepoId", repoIds)
+                // AND, explicitly. Without it the two clauses are emitted adjacent and the server
+                // rejects the whole query as a parse error at the vector clause — which this method's
+                // catch then reports as "no semantic hits", indistinguishable from an install that
+                // has no embeddings. Same reason the lexical arm above spells it out.
+                .AndAlso()
                 .VectorSearch(
                     field => field.WithField(vectorField),
                     searchTerm => searchTerm.ByText(query.Text, EmbeddingsTaskId),
                     minimumSimilarity: VectorSimilarityMinimum,
-                    numberOfCandidates: 30);
+                    numberOfCandidates: candidates);
 
             documentQuery = ApplyFilters(documentQuery, query);
             var hits = await documentQuery.Take(query.Limit).ToListAsync(ct);
@@ -338,6 +353,7 @@ public class RavenEidetStore : IEidetStore
                 q = q.AndAlso().WhereEquals("Type", t);
 
             var results = await q
+                .AndAlso()
                 .VectorSearch(
                     field => field.WithField("SearchVector"),
                     searchTerm => searchTerm.ByText(content, EmbeddingsTaskId),
@@ -397,6 +413,7 @@ public class RavenEidetStore : IEidetStore
                 .WhereEquals("ValidUntil", (DateTime?)null)
                 .AndAlso()
                 .WhereEquals("Type", entry.Type)
+                .AndAlso()
                 .VectorSearch(
                     field => field.WithField("SearchVector"),
                     searchTerm => searchTerm.ByText(entry.Content, EmbeddingsTaskId),
@@ -525,6 +542,43 @@ public class RavenEidetStore : IEidetStore
 
         // Filter to IsLatest client-side (not in the search index)
         return results.Where(e => e.IsLatest).ToList();
+    }
+
+    public async Task<HashSet<string>> GetConsolidatedSourceIdsAsync(
+        string repoId, CancellationToken ct = default)
+    {
+        using var session = _store.OpenAsyncSession();
+        var consumed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Streamed and uncapped, unlike every other scan in this class. A page limit here would
+        // shrink the answer exactly when a repo has accumulated the most lineage — which is when
+        // the caller needs it most — and the failure would be silent: a truncated lineage set reads
+        // as "not yet consolidated", so the cluster is emitted again and the corpus grows, cutting
+        // the next scan's coverage further. The projection is one string array per document, so
+        // reading all of them costs far less than a page of full memories.
+        var query = session.Advanced
+            .AsyncRawQuery<DerivedFromProjection>(
+                """
+                from "MemoryEntries"
+                where RepoId = $repoId and Type in ($types)
+                select DerivedFrom
+                """)
+            .AddParameter("repoId", repoId)
+            .AddParameter("types", new[] { nameof(MemoryType.Insight), nameof(MemoryType.Procedure) });
+
+        await using var stream = await session.Advanced.StreamAsync(query, ct);
+        while (await stream.MoveNextAsync())
+        {
+            foreach (var id in stream.Current.Document.DerivedFrom ?? [])
+                consumed.Add(id);
+        }
+
+        return consumed;
+    }
+
+    private sealed class DerivedFromProjection
+    {
+        public List<string>? DerivedFrom { get; set; }
     }
 
     // Both unenriched queries run against a collection auto-index rather than Memories_Search:

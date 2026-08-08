@@ -136,7 +136,21 @@ public sealed class DedupEngine
 
 public sealed record DedupOptions
 {
-    public float SemanticThreshold { get; init; } = 0.86f;   // below the 0.92 write-gate; catches the paraphrase gap
+    /// <summary>
+    /// Cosine similarity above which the semantic pass treats two memories of one type as the same claim.
+    ///
+    /// Measured, not guessed. This pass never actually ran until the vector arm's query was fixed, and the
+    /// first dry run against a real corpus showed 0.86 is a *topic* threshold, not a duplicate threshold:
+    /// generated insights are all written in the same register, so at 0.86 the pass proposed 682 folds
+    /// across two repos with a median word overlap of 0.23 and not one true duplicate. Sweeping upward,
+    /// 0.92 gave 490 and 0.95 gave 237 — all still the same false positives. At 0.98 it collapses to 22
+    /// proposals with a median overlap of 0.685, nearly all in the 0.50–0.85 band: restatements the
+    /// lexical pass genuinely cannot see, which is the whole reason this pass exists.
+    ///
+    /// Deliberately high. A false negative here costs a duplicate that the next sweep can still catch; a
+    /// false positive retires a distinct claim.
+    /// </summary>
+    public float SemanticThreshold { get; init; } = 0.98f;
     public IReadOnlyList<MemoryType>? Types { get; init; }     // null => all four
     public int CandidatesPerType { get; init; } = 200;
 }
