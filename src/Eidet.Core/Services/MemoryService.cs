@@ -46,6 +46,12 @@ public sealed class MemoryService
     /// </summary>
     private const double L1DuplicateThreshold = 0.7;
 
+    /// <summary><see cref="MemoryEntry.Source"/> stamped by the consolidation stage. Matched on Source
+    /// rather than <see cref="MemoryEntry.Provenance"/> because consolidation's anti-laundering rule
+    /// stamps the least-trusted contributor's provenance, so a consolidated insight often does not carry
+    /// <c>MemoryProvenance.Consolidation</c> at all.</summary>
+    private const string ConsolidationSource = "consolidation";
+
     // Write-time conflict check (#37): a contradiction requires near-duplicate content AND opposite hard
     // valence signs AND a high-trust incumbent. The similarity floor for pulling conflict neighbors is
     // below the exact-dup threshold (a Refuting rephrase is not a byte-dup of the Affirming claim).
@@ -857,11 +863,15 @@ public sealed class MemoryService
             }
         }
 
-        // L1: Top-K scored memories
+        // L1: Top-K scored memories. Fetched well wider than the 20 slots on purpose: the source cap
+        // below rejects candidates mid-scan, and at a pool of 60 a consolidation-heavy repo ran out of
+        // alternatives before filling the wake-up, so the cap bought diversity by shortening the list.
+        // At 120 the freed slots backfill from other sources and the wake-up stays full (measured: 179
+        // of 181 slots retained across ten repos, against 80 -> 35 redundant lines).
         var candidates = await _store.GetTopScoredAsync(
             normalizedRepoId,
             [MemoryType.Insight, MemoryType.Procedure, MemoryType.Heuristic],
-            60,
+            120,
             ct);
 
         var now = DateTime.UtcNow;
@@ -872,6 +882,17 @@ public sealed class MemoryService
 
         const int maxItems = 20;
         const int procedureWakeupCap = 3; // hard cap (SWE-Skills-Bench: a wrongly-recalled procedure is net-negative; bound procedure pollution in the wake-up regardless of the soft type budget)
+
+        // Consolidation re-derives an insight from the same observation cluster on every scheduled run,
+        // so unlike every other source its output is redundant by construction: a repo accumulates dozens
+        // of separately-worded statements of one claim, all scoring alike, all crowding the wake-up. The
+        // line filter below cannot catch them — it compares words, and a paraphrase shares few (measured
+        // across ten repos: 97% of duplicate wake-up lines were consolidation output, median word overlap
+        // 0.25, far under L1DuplicateThreshold). Bounding the source is what the word filter cannot do.
+        //
+        // Deliberately asymmetric: capping every source alike was measured to evict good lines from repos
+        // whose knowledge is mostly session-sourced and genuinely varied. Only this source earns a bound.
+        const int consolidationWakeupCap = 6; // 30% of the wake-up, the share procedures already get
         var uncappedInsightBudget = (int)Math.Ceiling(maxItems * 0.50);
         var uncappedProcedureBudget = (int)Math.Ceiling(maxItems * 0.30);
         var heuristicBudget = maxItems - uncappedInsightBudget - uncappedProcedureBudget;
@@ -884,6 +905,7 @@ public sealed class MemoryService
         var insightCount = 0;
         var procedureCount = 0;
         var heuristicCount = 0;
+        var consolidationCount = 0;
 
         // Wake-up slots are the scarcest surface in the system — 20 lines under a 600-token cap. Two
         // renderings of the same fact waste a slot outright, and near-duplicates are common here
@@ -903,6 +925,9 @@ public sealed class MemoryService
                 _ => false,
             };
             if (!withinBudget) continue;
+
+            var isConsolidated = string.Equals(e.Source, ConsolidationSource, StringComparison.OrdinalIgnoreCase);
+            if (isConsolidated && consolidationCount >= consolidationWakeupCap) continue;
 
             var typePrefix = e.Type switch
             {
@@ -925,6 +950,7 @@ public sealed class MemoryService
             rendered.Add(content);
             sb.AppendLine(line);
             remainingTokens -= lineTokens;
+            if (isConsolidated) consolidationCount++;
 
             switch (e.Type)
             {

@@ -72,6 +72,20 @@ expansion follows edges somebody **authored**; cue expansion follows entities en
   abstract to near-identical sentences, so two paraphrases would otherwise both consume one of only 20
   slots under a 600-token cap. The `L1DuplicateThreshold` word-overlap check is deliberately looser than
   the write-time duplicate gate: a false positive here costs the next-best line, not stored knowledge.
+- **That word-overlap check cannot see a paraphrase, so consolidation is capped separately.** Word
+  overlap catches a reworded *template*; it cannot catch the same claim written twice in different
+  vocabulary, which is precisely what a scheduled re-consolidation of one observation cluster produces.
+  Measured across ten repos: **97% of duplicate wake-up lines were consolidation output**, at a median
+  word overlap of **0.25** — far under the threshold. Hence `consolidationWakeupCap` (6 of 20 slots,
+  the share procedures already get), matched on `Source` rather than `Provenance` because
+  consolidation's anti-laundering rule stamps the least-trusted *contributor's* provenance. The cap is
+  deliberately asymmetric: a symmetric per-source cap was measured to evict good lines from repos whose
+  knowledge is mostly session-sourced and genuinely varied.
+- **The L1 candidate pool is 120, not 20, because of that cap.** A cap that rejects candidates mid-scan
+  needs alternatives to backfill with, and at a pool of 60 a consolidation-heavy repo simply ran out —
+  the cap bought diversity by *shortening* the wake-up, trading duplication for silence. At 120 the
+  freed slots refill from other sources: measured 179 of 181 slots retained while redundant lines fell
+  from 80 to 35.
 - **Every field that changes the result set must be in the cache key.** Repo, text, type, valence,
   stage, tags, limit, include-expired, cross-repo, *both expansion flags*, *and* the rounded alpha
   bucket. A filter missing from the key lets a filtered recall collide with an unfiltered one and
@@ -214,6 +228,10 @@ expansion follows edges somebody **authored**; cue expansion follows entities en
   multiplies rather than filters.
 - `tests/Eidet.Core.Tests/Memory/ContextProcedureCapTests.cs` — **the authority on the wake-up
   budget**: the hard procedure cap and insights (not heuristics) absorbing the freed slots.
+- `tests/Eidet.Core.Tests/Memory/ContextConsolidationCapTests.cs` — **the authority on the source
+  cap**: that it binds when consolidation outranks everything, that the slots it frees backfill from
+  another source rather than shortening the wake-up, and that a wholly session-sourced repo is left
+  uncapped.
 - `tests/Eidet.Core.Tests/Memory/FunctionalStageTests.cs` — settles `None`-as-wildcard in the hard
   pre-filter.
 - `tests/Eidet.Core.Tests/Services/MemoryServiceBoundaryTests.cs` — cache coherence under concurrent

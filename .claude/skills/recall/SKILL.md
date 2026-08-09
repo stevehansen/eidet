@@ -36,6 +36,11 @@ trust; this domain only multiplies by it.
 - **L1 carries no Observations** (`[Insight, Procedure, Heuristic]` only) — a failure stored as an
   Observation never resurfaces at wake-up.
 - **Procedures are hard-capped in the wake-up**; freed slots backfill insights, never heuristics.
+- **Consolidation is capped at 6 of 20 wake-up slots**, matched on `Source`. Its output is redundant by
+  construction — a scheduled re-consolidation of one cluster restates the same claim in new words — and
+  the `L1DuplicateThreshold` word check cannot see a paraphrase (97% of duplicate wake-up lines were
+  consolidation output at median word overlap 0.25). The cap is asymmetric on purpose; do not
+  generalise it to all sources. The L1 candidate pool is 120 so the freed slots can backfill.
 - **De-boost, never hide** — every policy term is multiplicative.
 
 ## Key files / reuse
