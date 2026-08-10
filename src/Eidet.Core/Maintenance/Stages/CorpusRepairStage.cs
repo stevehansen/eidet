@@ -33,6 +33,11 @@ internal sealed class CorpusRepairStage : IMaintenanceStage
     /// <summary>Scan width. Matches the other whole-corpus stages (OrphanCleanup, Deprecate).</summary>
     private const int ScanLimit = 500;
 
+    /// <summary><see cref="MemoryEntry.Source"/> stamped by consolidation. Matched on Source rather than
+    /// Provenance because the anti-laundering rule stamps the least-trusted contributor's provenance, so
+    /// consolidation output often does not carry <see cref="MemoryProvenance.Consolidation"/> at all.</summary>
+    private const string ConsolidationSource = "consolidation";
+
     public async Task<StageOutcome> ExecuteAsync(MaintenanceContext ctx, CancellationToken ct)
     {
         var entries = await ctx.Store.GetTopScoredAsync(ctx.RepoId, Enum.GetValues<MemoryType>(), ScanLimit, ct);
@@ -71,6 +76,8 @@ internal sealed class CorpusRepairStage : IMaintenanceStage
             await ctx.Write.WriteAsync(keep, ct);
         }
 
+        repaired += await FoldLineageDuplicatesAsync(ctx, entries, folded, ct);
+
         foreach (var entry in entries)
         {
             if (folded.Contains(entry.Id)) continue;
@@ -106,6 +113,65 @@ internal sealed class CorpusRepairStage : IMaintenanceStage
         }
 
         return new StageOutcome(Name, repaired);
+    }
+
+    /// <summary>
+    /// Retires consolidation output that re-derives a cluster another live memory already covers,
+    /// identified by an identical <see cref="MemoryEntry.DerivedFrom"/> set.
+    ///
+    /// The exact-content fold above cannot see these. Consolidation re-states its cluster in new words
+    /// every run, so the copies are paraphrases: measured on a real corpus, 2,962 of 3,303 live
+    /// consolidated memories (90%) sat in an identical-lineage group, 3,303 of them spanning only 450
+    /// distinct clusters, with 264 in one repo derived from one identical observation set. No content
+    /// comparison finds that — word overlap between two paraphrases of one claim runs about 0.25 — but
+    /// lineage states it exactly, and it is lineage the engine itself wrote.
+    ///
+    /// Scoped to consolidation's own output. Every other writer of <c>DerivedFrom</c> means something
+    /// different by a repeated citation: a Canon page cites its approved members, and the two-altitude
+    /// procedure path deliberately emits a fine procedure and an abstraction over the same cluster.
+    ///
+    /// Keeps the oldest, matching the exact-content fold — it owns the lineage that existing
+    /// <c>DerivedFrom</c> edges and <c>MemoryLink</c>s already point at, and a stable, content-blind
+    /// tiebreak is what lets a second run over the same corpus be a no-op.
+    /// </summary>
+    private static async Task<int> FoldLineageDuplicatesAsync(
+        MaintenanceContext ctx, IReadOnlyList<MemoryEntry> entries, HashSet<string> folded, CancellationToken ct)
+    {
+        var groups = entries
+            .Where(e => e.Validity.ValidUntil is null
+                        && !folded.Contains(e.Id)
+                        && e.DerivedFrom.Count > 0
+                        && string.Equals(e.Source, ConsolidationSource, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(
+                e => string.Join('|', e.DerivedFrom.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)),
+                StringComparer.Ordinal)
+            .Where(g => g.Count() > 1);
+
+        var repaired = 0;
+        foreach (var group in groups)
+        {
+            var ordered = group
+                .OrderBy(e => e.CreatedAt)
+                .ThenBy(e => e.Id, StringComparer.Ordinal)
+                .ToList();
+            var keep = ordered[0];
+
+            foreach (var discard in ordered.Skip(1))
+            {
+                keep.AccessCount += discard.AccessCount;
+                keep.EchoCount += discard.EchoCount;
+                keep.FizzleCount += discard.FizzleCount;
+
+                discard.Validity.ValidUntil = ctx.Now;
+                discard.ForgetReason = $"Corpus repair: re-derives the same observation cluster as {keep.Id}";
+                await ctx.Write.WriteAsync(discard, ct);
+                folded.Add(discard.Id);
+                repaired++;
+            }
+            await ctx.Write.WriteAsync(keep, ct);
+        }
+
+        return repaired;
     }
 
     /// <summary>

@@ -80,6 +80,26 @@ this run produced.
   that was never repaired and one repaired long ago then re-damaged want the same action. It runs
   before `DedupSweep` so exact folds shrink the similarity candidate set and stale seed importance
   can't decide a survivor.
+- **Corpus repair folds consolidation output by *lineage*, not content.** Two consolidations of one
+  cluster are paraphrases, so neither the exact-content fold nor any similarity threshold sees them —
+  word overlap between two wordings of one claim runs about 0.25. An identical `DerivedFrom` set states
+  it exactly, using lineage the engine itself wrote. This is the retroactive half of the convergence
+  invariants above: they stop new duplicates, this retires the ones already banked. Measured on a real
+  corpus before the fold: **2,962 of 3,303 live consolidated memories (90%) sat in an identical-lineage
+  group**, spanning only **450 distinct clusters**, with 264 in one repo over a single observation set.
+  Scoped to consolidation's own `Source` — every other writer of `DerivedFrom` means something different
+  by a repeated citation (a Canon page cites its approved members; the two-altitude path deliberately
+  emits a fine procedure *and* an abstraction over one cluster, which differ by the abstraction citing
+  the fine procedure ahead of the observations). **Keeps the oldest**, matching the exact-content fold: it
+  owns the lineage existing `DerivedFrom` edges and `MemoryLink`s already point at, a content-blind
+  tiebreak is what makes a second run a no-op, and since `Source` and `DerivedFrom` are caller-settable
+  on the write path, keeping the oldest means an injected look-alike folds *itself* away rather than a
+  genuine insight. What the fold retires is redundant *synthesis*, never evidence: the cluster's
+  observations stay live and recallable, one merged statement of them survives, and the retired copies
+  remain readable through history — which is what makes a fold of this size safe to run unattended.
+  The generalized version of this pass was tried and reverted for good reason (see the priming skill):
+  Reflection emits multi-aspect insights over one source set, so for *it* identical sources means same
+  evidence, not same claim. Scoping to consolidation is what separates the two cases.
 - **Dedup and consolidation must never touch a `canon:*` page.** Canon pages are human-approved
   syntheses; they are excluded from the dedup candidate set and from the consolidation boost path.
 - **A merge is vetoed unless the survivor still surfaces for the discard's own retrieval intent.**
@@ -128,7 +148,7 @@ this run produced.
 | `src/Eidet.Core/Maintenance/Stages/` | One file per stage; each `internal`, each with its own `StageName` |
 | `src/Eidet.Core/Maintenance/ConsolidationEngine.cs` | Grouping, valence partitioning, anti-laundering, two-altitude emission, importance decay |
 | `src/Eidet.Core/Maintenance/DedupEngine.cs` | Semantic + lexical passes and the single `MergeAsync` |
-| `src/Eidet.Core/Maintenance/Stages/CorpusRepairStage.cs` | Idempotent repair: exact-content folds (cross-type), tag hygiene, intake importance re-baseline, heading-only one-liner clearing |
+| `src/Eidet.Core/Maintenance/Stages/CorpusRepairStage.cs` | Idempotent repair: exact-content folds (cross-type), lineage folds (consolidation paraphrases), tag hygiene, intake importance re-baseline, heading-only one-liner clearing |
 | `src/Eidet.Core/Text/TagHygiene.cs` | The tag noise rule + growth cap shared by mining, consolidation, and the write gate |
 | `src/Eidet.Core/Maintenance/RecallConsistencyGuard.cs` | The per-merge retrievability veto |
 | `src/Eidet.Core/Maintenance/ReflectionEngine.cs` | Residue arms (echoes / loose ends / drift) → net-new memories |
@@ -188,6 +208,10 @@ this run produced.
   convergence**: the second run over an unchanged bucket, importance not walking upward on unchanged
   evidence, output never matching a source verbatim, and the cluster staying consolidated after its
   insight is retired.
+- `tests/Eidet.Core.Tests/Maintenance/CorpusRepairLineageFoldTests.cs` — **the authority on the lineage
+  fold**: that paraphrases of one cluster collapse to the oldest with a reason naming the survivor, that a
+  different cluster and the two-altitude pair both survive, that another writer's repeated citation is
+  left alone, and that a second run affects nothing.
 - `tests/Eidet.Core.Tests/Maintenance/RetentionStagesTests.cs` + `RoiDecayStageTests.cs` +
   `FadeMemCurveTests.cs` — settle eviction ordering, the quarantine exemption, ROI demotion, and the
   per-type curves.

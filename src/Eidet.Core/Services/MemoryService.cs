@@ -895,11 +895,25 @@ public sealed class MemoryService
         const int consolidationWakeupCap = 6; // 30% of the wake-up, the share procedures already get
         var uncappedInsightBudget = (int)Math.Ceiling(maxItems * 0.50);
         var uncappedProcedureBudget = (int)Math.Ceiling(maxItems * 0.30);
-        var heuristicBudget = maxItems - uncappedInsightBudget - uncappedProcedureBudget;
-        var procedureBudget = Math.Min(uncappedProcedureBudget, procedureWakeupCap);
-        // The slots the cap frees from procedures backfill insights — fully trusted (floor 1.0) — rather
-        // than inflating heuristics, which are action-shaped and net-negative-if-wrong just like procedures.
-        // Heuristics keep their own uncapped share; total wake-up item count is unchanged (maxItems).
+        var uncappedHeuristicBudget = maxItems - uncappedInsightBudget - uncappedProcedureBudget;
+
+        // A type budget is a share of a FULL wake-up, so a type the pool cannot supply must not hold its
+        // slots empty. Clamping each budget to what the pool actually holds is what makes the shares add
+        // up to maxItems in practice rather than only in principle: measured across 87 local repos, 23 of
+        // them rendered exactly 13 of 20 lines because they owned no procedures and no heuristics at all,
+        // and the 7 reserved slots went to types that did not exist (1,179 of 1,740 slots filled overall).
+        //
+        // The remainder goes to insights — fully trusted (floor 1.0) — rather than inflating heuristics,
+        // which are action-shaped and net-negative-if-wrong just like procedures. That is the policy the
+        // procedure cap already followed for the slots it frees; absence is the same situation as a cap.
+        // Hard caps still bind: procedures never exceed procedureWakeupCap, consolidation never exceeds
+        // consolidationWakeupCap. This fills empty slots; it relaxes no bound.
+        var procedureBudget = Math.Min(
+            Math.Min(uncappedProcedureBudget, procedureWakeupCap),
+            scored.Count(x => x.Entry.Type == MemoryType.Procedure));
+        var heuristicBudget = Math.Min(
+            uncappedHeuristicBudget,
+            scored.Count(x => x.Entry.Type == MemoryType.Heuristic));
         var insightBudget = maxItems - procedureBudget - heuristicBudget;
 
         var insightCount = 0;
@@ -943,9 +957,14 @@ public sealed class MemoryService
 
             var line = $"{typePrefix} {content}";
 
+            // Skip the oversized candidate, don't end the wake-up on it. A memory with no one-liner
+            // renders its whole body here, and one of those is enough to truncate everything below it:
+            // a repo was found rendering 6 of 20 lines because a two-altitude steps Procedure — 28,890
+            // characters, ~7,200 tokens — outranked the rest and `break` abandoned the 114 short
+            // candidates behind it. Skipping costs one good line; stopping costs the wake-up.
             var lineTokens = RecallScoring.EstimateTokens(line.Length);
             if (lineTokens > remainingTokens)
-                break;
+                continue;
 
             rendered.Add(content);
             sb.AppendLine(line);

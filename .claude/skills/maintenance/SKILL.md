@@ -28,10 +28,15 @@ final, and `ForgetIntegrityStage` runs last so it audits what this run produced.
 - **No merge without the recall-consistency veto** — the survivor must still surface for the discard's
   own retrieval intent. A veto forgets nothing and stamps `LastMergeRejectedAt`. The guard discounts rows
   whose document is already retired, because a bulk run closes documents while the search index lags.
-- **Shared `DerivedFrom` is not a duplicate signal.** A lineage pass that folded same-source memories was
-  tried and reverted: measured against the field corpus, members of a "family" scored 0.12–0.29 lexical
-  similarity to their survivor (the lexical pass folds at 0.85). Reflection emits multi-aspect insights
-  over one source set, so identical sources means same evidence, not same claim.
+- **Shared `DerivedFrom` is not a duplicate signal in general — but an identical one *is*, for
+  consolidation only.** A lineage pass over *any* source was tried and reverted: family members scored
+  0.12–0.29 lexical similarity to their survivor (the lexical pass folds at 0.85), and Reflection
+  deliberately emits multi-aspect insights over one source set, so for it identical sources means same
+  evidence, not same claim. Consolidation is the opposite: one bucket yields one merge, so a repeated
+  lineage is accidental re-derivation, and the low similarity is a *paraphrase*, not a distinct aspect —
+  78 live insights over one 14-observation cluster in a single repo, all restating it. Hence
+  `CorpusRepairStage`'s fold is scoped to `Source == "consolidation"` and keeps the oldest. The
+  two-altitude pair survives because the abstraction cites the fine procedure ahead of the cluster.
 - **Never fold a claim into its contradiction** — early return on conflicting hard valence; partition
   consolidation groups by sign *before* the minimum-group check.
 - **Synthesis inherits its least-trusted contributor**, and a boost with no trusted contributor is

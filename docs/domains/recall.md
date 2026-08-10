@@ -129,6 +129,20 @@ expansion follows edges somebody **authored**; cue expansion follows entities en
 - **Procedures are hard-capped in the wake-up**, below their soft type budget, because a
   wrongly-recalled procedure is net-negative; the freed slots backfill *insights* (fully trusted), not
   heuristics (equally action-shaped).
+- **A per-type budget is clamped to what the candidate pool actually holds**, because a share of a full
+  wake-up must not be a reservation a type cannot fill. Fixed shares left the wake-up two-thirds full:
+  measured across 87 local repos, **1,179 of 1,740 slots**, with **23 repos rendering exactly 13 of 20
+  lines** — the insight share — because they owned no procedures and no heuristics at all. The clamped
+  remainder goes to insights, generalizing the procedure cap's own policy: absence is the same situation
+  as a cap, and heuristics are action-shaped either way. Both hard caps (procedure, consolidation) still
+  bind — the clamp fills empty slots, it relaxes no bound.
+- **An oversized candidate is skipped, never allowed to end the wake-up.** L1 renders
+  `OneLiner ?? Summary ?? Content`, so an unenriched memory emits its whole body — and the token check
+  used to `break`, which meant one such memory truncated everything ranked below it. Found in the field:
+  a repo rendered **6 of 20 lines** because a two-altitude steps Procedure with no one-liner (28,890
+  characters, ~7,200 tokens) outranked the rest and abandoned the 114 short candidates behind it.
+  Skipping costs one good line; stopping costs the wake-up. Truncating the line instead would violate
+  L1's one-liner contract and cut a procedure mid-step.
 - **Recall de-boosts, never hides.** Non-local, low-trust, negative-ROI, and quarantined memories all
   survive with a multiplied-down score.
 
@@ -232,6 +246,11 @@ expansion follows edges somebody **authored**; cue expansion follows entities en
   cap**: that it binds when consolidation outranks everything, that the slots it frees backfill from
   another source rather than shortening the wake-up, and that a wholly session-sourced repo is left
   uncapped.
+- `tests/Eidet.Core.Tests/Memory/ContextSlotFillTests.cs` — **the authority on slot fill**: that a repo
+  holding only insights still renders 20 lines, that an absent type's slots go to insights and never
+  inflate heuristics past their own share, that a partially-supplied type clamps to what exists, that an
+  oversized unenriched line is skipped rather than ending the wake-up, and that the procedure cap keeps
+  binding through all of it.
 - `tests/Eidet.Core.Tests/Memory/FunctionalStageTests.cs` — settles `None`-as-wildcard in the hard
   pre-filter.
 - `tests/Eidet.Core.Tests/Services/MemoryServiceBoundaryTests.cs` — cache coherence under concurrent

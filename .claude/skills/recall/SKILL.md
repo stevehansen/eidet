@@ -36,6 +36,11 @@ trust; this domain only multiplies by it.
 - **L1 carries no Observations** (`[Insight, Procedure, Heuristic]` only) — a failure stored as an
   Observation never resurfaces at wake-up.
 - **Procedures are hard-capped in the wake-up**; freed slots backfill insights, never heuristics.
+- **Type budgets are clamped to what the pool holds.** A share is not a reservation: fixed shares left
+  23 of 87 repos rendering 13 of 20 lines because they owned no procedures or heuristics. The remainder
+  goes to insights only; both hard caps still bind.
+- **An oversized L1 candidate is `continue`, never `break`.** An unenriched memory renders its whole
+  body, and one 28,890-character line truncated a real repo's wake-up to 6 of 20 lines.
 - **Consolidation is capped at 6 of 20 wake-up slots**, matched on `Source`. Its output is redundant by
   construction — a scheduled re-consolidation of one cluster restates the same claim in new words — and
   the `L1DuplicateThreshold` word check cannot see a paraphrase (97% of duplicate wake-up lines were
