@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Eidet.Core.Text;
 
 namespace Eidet.Core.Services;
 
@@ -42,11 +43,17 @@ public static partial class EntityExtractor
         foreach (Match m in EnvVarRegex().Matches(content))
             AddEntity(entities, m.Value);
 
-        return entities
-            .Where(e => e.Length >= 3)
-            .OrderByDescending(e => e.Length)
-            .Take(20)
-            .ToList();
+        // Hygiene belongs HERE, at the one point every caller derives entities from, and not only at
+        // the repair that cleans up after it. Without it the nightly pipeline cannot converge: corpus
+        // repair drops a noisy entity, `HeuristicEnrichmentBackfillStage` then sees an empty set and
+        // re-derives the same noise from the same content, and the two stages report work against each
+        // other forever while the document never actually changes. Measured on a field corpus: one
+        // memory survived four consecutive full passes with a 122-char run-on entity, with both stages
+        // reporting `Affected: 1` every time and a before/after diff of the whole repo showing zero
+        // documents changed. Filtered BEFORE `Take` so noise cannot consume a slot a real identifier
+        // would have had.
+        return [.. EntityHygiene.Clean(
+            entities.Where(e => e.Length >= 3).OrderByDescending(e => e.Length)).Take(20)];
     }
 
     public static string? GenerateHeuristicOneLiner(string content)

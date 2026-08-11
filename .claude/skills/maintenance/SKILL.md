@@ -17,6 +17,10 @@ final, and `ForgetIntegrityStage` runs last so it audits what this run produced.
 
 - **One bulk scope per run** — every stage and engine writes through `ctx.Write`, so touched scopes
   invalidate exactly once in the `finally`. A stage using its own `MemoryService` breaks coherence.
+- **One object per memory per pass** — `ctx.Store` is a `SharedEntryStore`, the read-side twin of that
+  rule. Stages write whole documents off index-backed queries, so without shared instances a late stage
+  persists a copy loaded before an early stage's write and silently reverts its field. A stage or engine
+  that opens its own read port re-introduces it; the auditor's raw store is a deliberate exception.
 - **A stage failure is a report line, not an aborted run** (per-stage try/catch → `StageOutcome`).
 - **Stage selection compares `Name` strings, never parses them** — selection must stay total.
 - **Every stage must converge** — "does nothing the second time" is correctness, not optimization.
@@ -37,6 +41,12 @@ final, and `ForgetIntegrityStage` runs last so it audits what this run produced.
   78 live insights over one 14-observation cluster in a single repo, all restating it. Hence
   `CorpusRepairStage`'s fold is scoped to `Source == "consolidation"` and keeps the oldest. The
   two-altitude pair survives because the abstraction cites the fine procedure ahead of the cluster.
+- **Body-less intake memories are retired, not repaired.** A heading with nothing under it has no
+  content to render, so clearing its fabricated one-liner just falls through to the heading. Scoped to
+  `Provenance == Intake`; a terse hand-authored memory is never touched.
+- **Tag and entity hygiene are repair, not content edits** — both are *derived* retrieval keys, so
+  re-deriving them claims nothing new. Both `Clean` calls are idempotent, which is what keeps the stage
+  a no-op on a clean corpus.
 - **Never fold a claim into its contradiction** — early return on conflicting hard valence; partition
   consolidation groups by sign *before* the minimum-group check.
 - **Synthesis inherits its least-trusted contributor**, and a boost with no trusted contributor is
@@ -51,6 +61,8 @@ final, and `ForgetIntegrityStage` runs last so it audits what this run produced.
 
 - `src/Eidet.Core/Maintenance/MaintenanceOrchestrator.cs` — order + isolation + the bulk scope.
 - `src/Eidet.Core/Maintenance/IMaintenanceStage.cs` — the contract, `MaintenanceContext`, `ForTest`.
+- `src/Eidet.Core/Maintenance/SharedEntryStore.cs` — the pass-scoped id → instance map. Read its header
+  before adding a stage that mutates an existing entry.
 - `src/Eidet.Core/Maintenance/{ConsolidationEngine,DedupEngine,ReflectionEngine}.cs` — dual-use engines
   (stand-alone or joined to a bulk scope via the `write` parameter).
 - `src/Eidet.Core/Maintenance/{RecallConsistencyGuard,FadeMemCurve,TagOverlapGrouper}.cs` — the

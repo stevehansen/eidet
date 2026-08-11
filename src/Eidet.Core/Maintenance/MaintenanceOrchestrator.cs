@@ -86,19 +86,25 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
             // Normalize here too (idempotent): the string overload already does, but a direct
             // MaintenanceRequest caller might pass a raw path — un-normalized it misses the corpus.
             var repoId = RepoIdNormalizer.Normalize(request.RepoId);
-            var dedup = new DedupEngine(_store, _memory, _enrichment);
+            // One object per memory for the whole pass. Stages read overlapping pages and write whole
+            // documents, so without this a late stage's write reverts an early stage's field edit —
+            // see SharedEntryStore for the failure this removes.
+            var shared = new SharedEntryStore(_store);
+            var dedup = new DedupEngine(shared, _memory, _enrichment);
             var report = new MaintenanceReport { RepoId = repoId };
 
             // Built once per run: every field is run-constant, and stages share one Now and one
             // Items scratch dictionary (the documented stage-to-stage contract).
             var ctx = new MaintenanceContext
             {
-                Store = _store,
+                Store = shared,
                 Write = write,
                 Enrichment = _enrichment,
                 Consolidation = _consolidation,
                 Reflection = _reflection,
                 Dedup = dedup,
+                // Deliberately the RAW store: the auditor's question is whether the persisted state
+                // hides what it should, so it must not read this pass's in-flight instances.
                 Auditor = new IntegrityAuditor(_memory, _store),
                 RepoId = repoId,
                 // Single derivation site: null ⇒ derive so the CLI path can't decay an inactive repo.

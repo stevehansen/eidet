@@ -365,17 +365,29 @@ public sealed class ConsolidationEngine
         result.ProceduresCreated += 2;
     }
 
+    /// <summary>
+    /// Re-baselines importance against the FadeMem curve.
+    ///
+    /// <paramref name="read"/> is the maintenance twin of <paramref name="write"/>: this engine
+    /// outlives a maintenance pass, but the pass shares one object per memory across its stages, and
+    /// a decayed entry loaded from a *different* read port is a second instance of a document other
+    /// stages are already holding. Writing it back reverts their edits — the whole reason
+    /// <c>SharedEntryStore</c> exists. Callers inside a pass pass their pass-scoped store; standalone
+    /// callers omit it and get this engine's own.
+    /// </summary>
     public async Task<int> ApplyImportanceDecayAsync(
-        string repoId, bool isRepoActive = true, CancellationToken ct = default, BulkMutationCtx? write = null)
+        string repoId, bool isRepoActive = true, CancellationToken ct = default,
+        BulkMutationCtx? write = null, IEidetStore? read = null)
     {
         if (!isRepoActive) return 0;
 
         var now = DateTime.UtcNow;
         var changed = new List<MemoryEntry>();
+        var store = read ?? _store;
 
         foreach (var type in Enum.GetValues<MemoryType>())
         {
-            var entries = await _store.GetTopScoredAsync(repoId, [type], 500, ct);
+            var entries = await store.GetTopScoredAsync(repoId, [type], 500, ct);
 
             foreach (var entry in entries)
             {

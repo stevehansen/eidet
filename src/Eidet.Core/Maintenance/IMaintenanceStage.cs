@@ -52,14 +52,17 @@ public sealed class MaintenanceContext
     {
         var memory = new MemoryService(store);
         var enrich = enrichment ?? EnrichmentService.CreateNull();
+        // Shares entry instances exactly as a real pass does, so a multi-stage ForTest sequence
+        // reproduces production write behavior instead of a stricter version of it.
+        var shared = new SharedEntryStore(store);
         return new MaintenanceContext
         {
-            Store = store,
+            Store = shared,
             Write = write,
             Enrichment = enrich,
-            Consolidation = new ConsolidationEngine(store, enrich, memory),
-            Reflection = new ReflectionEngine(store, enrich, memory),
-            Dedup = new DedupEngine(store, memory, enrich),
+            Consolidation = new ConsolidationEngine(shared, enrich, memory),
+            Reflection = new ReflectionEngine(shared, enrich, memory),
+            Dedup = new DedupEngine(shared, memory, enrich),
             Auditor = new IntegrityAuditor(memory, store),
             RepoId = repoId,
             IsRepoActive = true,

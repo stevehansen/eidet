@@ -1,4 +1,5 @@
 using Eidet.Core.Domain;
+using Eidet.Core.Intake;
 using Eidet.Core.Text;
 
 namespace Eidet.Core.Maintenance.Stages;
@@ -77,6 +78,7 @@ internal sealed class CorpusRepairStage : IMaintenanceStage
         }
 
         repaired += await FoldLineageDuplicatesAsync(ctx, entries, folded, ct);
+        repaired += await RetireBodylessIntakeAsync(ctx, entries, folded, ct);
 
         foreach (var entry in entries)
         {
@@ -91,6 +93,17 @@ internal sealed class CorpusRepairStage : IMaintenanceStage
                 dirty = true;
             }
 
+            // Same treatment for entities, and for the same reason: they are derived retrieval keys, so
+            // re-deriving them is repair rather than an edit to what the memory says. This is what clears
+            // the extractor's old chain-of-thought leak — bounded to one week in April on the corpus that
+            // exposed it, but a scan cannot tell a never-repaired install from a re-damaged one.
+            var cleanEntities = EntityHygiene.Clean(entry.Entities);
+            if (!cleanEntities.SequenceEqual(entry.Entities, StringComparer.Ordinal))
+            {
+                entry.Entities = cleanEntities;
+                dirty = true;
+            }
+
             if (entry.Provenance == MemoryProvenance.Intake && entry.Importance > MaxIntakeImportance)
             {
                 entry.Importance = MaxIntakeImportance;
@@ -101,7 +114,7 @@ internal sealed class CorpusRepairStage : IMaintenanceStage
             // "## Architecture") is strictly worse than the fields behind it, and the read path
             // prefers whatever is present. Clearing it lets the render fall through to real content;
             // enrichment treats null as "not yet summarized" and may replace it with something real.
-            if (entry.OneLiner is { } ol && IsHeadingOnly(ol))
+            if (entry.OneLiner is { } ol && IsMinedHeadingOneLiner(ol))
             {
                 entry.OneLiner = null;
                 dirty = true;
@@ -175,11 +188,52 @@ internal sealed class CorpusRepairStage : IMaintenanceStage
     }
 
     /// <summary>
+    /// Retires intake memories whose content is nothing but headings — a label with no knowledge under
+    /// it. <see cref="MarkdownIntake.IsHeadingOnly"/> now rejects these at the gate, so this clears what
+    /// earlier builds banked: a field corpus held 1,000 of them across 74 repos, 9% of everything live.
+    ///
+    /// They are not merely low-value, they are actively misleading. Every rendered form of a body-less
+    /// memory has to be invented, and 843 of those 1,000 had an LLM-generated one-liner asserting a
+    /// claim the repo never made; because L1 prefers the one-liner, 59 wake-up lines across 26 repos
+    /// were fabrications, and one repo spent 8 of its 20 slots on them. Clearing the one-liner is not
+    /// enough — the fallback chain then renders the heading itself, which is what the exact-content fold
+    /// was already colliding on.
+    ///
+    /// Retires rather than folds: there is no survivor to merge into, because there was never any
+    /// content. Scoped to <see cref="MemoryProvenance.Intake"/>, the only writer that mints these
+    /// mechanically, so a deliberately terse hand-authored memory is never touched. Observations and
+    /// evidence are untouched either way — this retires labels.
+    /// </summary>
+    private static async Task<int> RetireBodylessIntakeAsync(
+        MaintenanceContext ctx, IReadOnlyList<MemoryEntry> entries, HashSet<string> folded, CancellationToken ct)
+    {
+        var repaired = 0;
+        foreach (var entry in entries)
+        {
+            if (entry.Validity.ValidUntil is not null || folded.Contains(entry.Id)) continue;
+            if (entry.Provenance != MemoryProvenance.Intake) continue;
+            if (!MarkdownIntake.IsHeadingOnly(entry.Content)) continue;
+
+            entry.Validity.ValidUntil = ctx.Now;
+            entry.ForgetReason = "Corpus repair: heading with no body; every rendered form was invented";
+            await ctx.Write.WriteAsync(entry, ct);
+            folded.Add(entry.Id);
+            repaired++;
+        }
+
+        return repaired;
+    }
+
+    /// <summary>
     /// True when a one-liner is a bare markdown heading rather than a statement — no verb, no
     /// content beyond the heading text. These come from summarizing a doc section whose body is a
     /// table or a list, leaving the heading as the only prose available to summarize.
+    ///
+    /// Distinct from <see cref="MarkdownIntake.IsHeadingOnly"/>, which asks whether a whole memory has
+    /// any BODY at all: this one asks whether a rendered one-liner is a heading copied verbatim, and a
+    /// memory with a perfectly good body can still have one.
     /// </summary>
-    private static bool IsHeadingOnly(string oneLiner)
+    private static bool IsMinedHeadingOneLiner(string oneLiner)
     {
         var t = oneLiner.Trim();
         if (t.Length == 0) return true;

@@ -46,6 +46,17 @@ this run produced.
 - **One bulk scope per run.** Every direct-writing stage and both dual-use engines write through
   `ctx.Write`, so touched scopes are invalidated exactly once in the `finally`. A stage that writes via
   its own `MemoryService` breaks recall coherence for the whole run.
+- **One object per memory per pass.** `ctx.Store` is a `SharedEntryStore`, so every stage reading the
+  same memory gets the *same instance*. This is the read-side twin of the bulk scope above, and without
+  it a pass loses data with nothing reporting a failure: stages read overlapping scored pages, mutate one
+  field, and write the whole document — and queries are index-backed, so a stage writing late in the pass
+  persists a copy loaded *before* an earlier stage's write. Last writer wins on every field, not only the
+  one it meant to change. This is a hazard proven by test rather than a diagnosed incident — the entity
+  residue that prompted the work had a different cause (see the convergence invariant below) — but the
+  suite could not have caught it, so it is closed structurally. Two deliberate exceptions: the
+  **auditor reads the raw store**, since its question is
+  what the *persisted* state hides, and `ApplyImportanceDecayAsync` takes an explicit `read:` port because
+  the engine outlives the pass — any stage or engine that opens its own read port re-introduces the bug.
 - **A stage failure is a report line, not an aborted run.** The orchestrator try/catches each stage and
   records `StageOutcome(name, 0, error)`. Cancellation breaks the loop cleanly.
 - **Stage selection compares names, never parses them.** A stage whose `Name` has no `MaintenanceStep`
@@ -80,6 +91,29 @@ this run produced.
   that was never repaired and one repaired long ago then re-damaged want the same action. It runs
   before `DedupSweep` so exact folds shrink the similarity candidate set and stale seed importance
   can't decide a survivor.
+- **Corpus repair retires body-less intake memories.** A heading with nothing under it carries no
+  knowledge, so every rendered form of it was invented. **intake** rejects these at the gate now; the
+  repair clears the 1,000 an earlier build banked (9% of a field corpus's live memories, across 74
+  repos), of which 843 carried an LLM-generated one-liner and 59 were occupying wake-up slots with
+  claims the repo never made — one repo spending 8 of its 20. **Retires rather than folds**: there is no
+  survivor to merge into, because there was never any content. Clearing the one-liner instead is not
+  enough — the render then falls through to the heading itself, which is what the exact-content fold was
+  already colliding on. Scoped to `Provenance == Intake`, the only writer that mints these mechanically,
+  so a deliberately terse hand-authored memory is never touched.
+- **A derived field must be *derived* clean, not cleaned afterwards.** `EntityExtractor.Extract` applies
+  `EntityHygiene` itself, because corpus repair cleaning the field is not enough while another stage can
+  re-derive it: repair dropped a noisy entity, `HeuristicEnrichmentBackfillStage` saw
+  `Entities.Count == 0` and re-extracted the same noise from the same content, and the two stages
+  reported `Affected: 1` against each other on every pass forever. The signature is exact and worth
+  recognising: **non-zero stage counts with a whole-repo before/after diff of zero changed documents**.
+  Four consecutive full passes over one repo left a 122-char run-on entity untouched that way, which is
+  also why "the stage reports work" is not evidence that anything converged.
+- **Entity hygiene is repair, not an edit.** `EntityHygiene.Clean` runs in the same per-entry pass as
+  tag hygiene and for the same reason: entities are *derived* retrieval keys, so re-deriving them says
+  nothing new about what the memory claims. This is what clears the extractor's old chain-of-thought
+  leak (bounded to one week in April on the corpus that exposed it — but a scan cannot tell a
+  never-repaired install from a re-damaged one, which is the whole argument for idempotent repair over a
+  one-shot migration). Both `Clean` calls are idempotent, so a clean corpus leaves the stage a no-op.
 - **Corpus repair folds consolidation output by *lineage*, not content.** Two consolidations of one
   cluster are paraphrases, so neither the exact-content fold nor any similarity threshold sees them —
   word overlap between two wordings of one claim runs about 0.25. An identical `DerivedFrom` set states
@@ -145,10 +179,11 @@ this run produced.
 |---|---|
 | `src/Eidet.Core/Maintenance/MaintenanceOrchestrator.cs` | Stage order, per-stage isolation, the one bulk scope |
 | `src/Eidet.Core/Maintenance/IMaintenanceStage.cs` | The stage contract + `MaintenanceContext` (incl. `ForTest`) |
+| `src/Eidet.Core/Maintenance/SharedEntryStore.cs` | The pass-scoped id → instance map: why a late stage's write carries an early stage's edit |
 | `src/Eidet.Core/Maintenance/Stages/` | One file per stage; each `internal`, each with its own `StageName` |
 | `src/Eidet.Core/Maintenance/ConsolidationEngine.cs` | Grouping, valence partitioning, anti-laundering, two-altitude emission, importance decay |
 | `src/Eidet.Core/Maintenance/DedupEngine.cs` | Semantic + lexical passes and the single `MergeAsync` |
-| `src/Eidet.Core/Maintenance/Stages/CorpusRepairStage.cs` | Idempotent repair: exact-content folds (cross-type), lineage folds (consolidation paraphrases), tag hygiene, intake importance re-baseline, heading-only one-liner clearing |
+| `src/Eidet.Core/Maintenance/Stages/CorpusRepairStage.cs` | Idempotent repair: exact-content folds (cross-type), lineage folds (consolidation paraphrases), body-less intake retirement, tag + entity hygiene, intake importance re-baseline, heading-only one-liner clearing |
 | `src/Eidet.Core/Text/TagHygiene.cs` | The tag noise rule + growth cap shared by mining, consolidation, and the write gate |
 | `src/Eidet.Core/Maintenance/RecallConsistencyGuard.cs` | The per-merge retrievability veto |
 | `src/Eidet.Core/Maintenance/ReflectionEngine.cs` | Residue arms (echoes / loose ends / drift) → net-new memories |
@@ -159,6 +194,16 @@ this run produced.
 
 ## Gotchas
 
+- **In-memory fakes hide the stale-write failure entirely.** Every store fake in the suite hands back the
+  instance it stored, so stages share state by accident and no write can revert another — which is why a
+  1,500-test suite reported health the field corpus did not have. `SharedEntryStoreTests.StaleQueryStore`
+  models the one property that matters: index-backed queries lag behind the pass's own writes, while
+  document loads don't. A multi-stage test built on a plain fake proves less than it appears to. (Not to be
+  confused with the namespace-level `LaggingIndexStore`, which lags *validity* on the semantic arm.)
+- **Consolidation's *boost* path still reads through the engine's own store**, so its writes can revert a
+  same-pass field edit the way importance decay used to (~18 boosts across 87 repos, versus decay's ~75
+  per repo). Threading a read port through `ConsolidateAsync`'s private helpers was judged worse than the
+  narrow residual; if it moves, it moves the way `ApplyImportanceDecayAsync` did.
 - **`FadeMemCurve.Defaults` is a dictionary indexed by `MemoryType`.** A new memory type that isn't
   added to it throws at decay time — and the same table feeds recall's recency, so a missing entry
   breaks ranking too.
@@ -196,6 +241,16 @@ this run produced.
   — **the authority on orchestration**: stage isolation, `Only`/`Skip` selection totality, and report shape.
 - `tests/Eidet.Core.Tests/Maintenance/MaintenanceCacheInvalidationTests.cs` — settles the
   one-invalidation-per-scope-per-run contract (including when a stage throws).
+- `tests/Eidet.Core.Tests/Maintenance/SharedEntryStoreTests.cs` — **the authority on one object per memory
+  per pass**: that two reads hand back the same instance, that an in-flight edit is visible to the next
+  reader, that queries are not reordered or filtered, that Forget evicts, and — the regression — that
+  importance decay's write no longer reverts corpus repair's entity scrub when the query view is stale. It
+  also asserts by reflection that every `IEidetStore` member is delegated, because a forgotten member would
+  silently fall back to the interface default (`[]`, `null`, no-op) instead of failing to compile.
+- `tests/Eidet.Core.Tests/Maintenance/EntityRefillConvergenceTests.cs` — **the authority on repair and the
+  backfill agreeing about the entity field**: that extraction output already satisfies the predicate repair
+  applies, that no run-on spills in, that a second and third round of repair-then-backfill affect nothing,
+  and that emptying-then-refilling still leaves real identifiers behind.
 - `tests/Eidet.Core.Tests/Maintenance/DedupEngineTests.cs` + `DedupGuardVetoTests.cs` +
   `RecallConsistencyGuardTests.cs` — settle survivor selection, tag union, the veto, the
   `LastMergeRejectedAt` stamp, that live near-duplicates crowding the survivor out is a *correct* veto,
@@ -212,6 +267,10 @@ this run produced.
   fold**: that paraphrases of one cluster collapse to the oldest with a reason naming the survivor, that a
   different cluster and the two-altitude pair both survive, that another writer's repeated citation is
   left alone, and that a second run affects nothing.
+- `tests/Eidet.Core.Tests/Maintenance/CorpusRepairBodylessTests.cs` — **the authority on body-less
+  retirement and entity scrubbing**: that heading-only intake memories are retired with a reason while
+  ones with a body survive, that another writer's terse memory is left alone, that chain-of-thought
+  entities are dropped without touching content, and that a second run affects nothing.
 - `tests/Eidet.Core.Tests/Maintenance/RetentionStagesTests.cs` + `RoiDecayStageTests.cs` +
   `FadeMemCurveTests.cs` — settle eviction ordering, the quarantine exemption, ROI demotion, and the
   per-type curves.
