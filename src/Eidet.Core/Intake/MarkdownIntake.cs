@@ -14,6 +14,50 @@ public static partial class MarkdownIntake
     public const int MinSectionLength = 20;
 
     /// <summary>
+    /// True when a section is nothing but headings — no prose, no commands, no body of any kind.
+    ///
+    /// <see cref="MinSectionLength"/> cannot catch these: it measures length, and "## Development
+    /// Patterns" is 23 characters of pure heading. A body-less section is worse than low-signal,
+    /// because enrichment will describe it anyway and cannot describe what is not there — a field
+    /// corpus accumulated 1,000 of them, and 843 carried a generated one-liner INVENTING a claim the
+    /// repo never made ("## Development Patterns" → "Focus on iterative development cycles for
+    /// faster, adaptable product improvements"). Since L1 renders the one-liner ahead of the summary,
+    /// the fabrication is what reached the wake-up while the summary that honestly said "this is a
+    /// heading, not content" stayed hidden. A heading is a label for knowledge, never the knowledge.
+    ///
+    /// Deliberately narrow: only blank lines, fence delimiters, and the H1–H3 headings
+    /// <see cref="SplitByHeadings"/> itself recognizes are discounted, so "## Build" + "dotnet build"
+    /// keeps its body and is stored. A deeper heading counts as body here for the same reason it does
+    /// there — the splitter never gives it a section of its own. Rejecting merely terse content is not
+    /// the job; rejecting empty content is.
+    /// </summary>
+    public static bool IsHeadingOnly(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return true;
+
+        foreach (var line in content.Split('\n'))
+        {
+            var trimmed = line.AsSpan().Trim();
+            if (trimmed.Length == 0) continue;
+            if (HeadingRegex().IsMatch(line)) continue;
+            // A fence delimiter opens or closes a block; the language tag on it ("```bash") names the
+            // syntax, not the knowledge. The fenced LINES are what carry content, and they still count.
+            if (trimmed.StartsWith("```")) continue;
+
+            // One letter or digit outside the structure is a body. The test is deliberately this weak:
+            // measuring how MUCH body there is belongs to MinSectionLength, and a floor here would make
+            // this predicate quietly reject terse content too — enrichment consults it, so a stricter
+            // rule would strand real memories with no summary at all.
+            foreach (var c in trimmed)
+            {
+                if (char.IsLetterOrDigit(c)) return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Split a markdown body on H1–H3 headings. Each returned section starts at the
     /// heading line and keeps the heading text in its body. Sections shorter than
     /// <see cref="MinSectionLength"/> are filtered. If the body has no headings,

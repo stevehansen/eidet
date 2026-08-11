@@ -77,8 +77,21 @@ which puts it on the import trust floor for the rest of its life (**writepath**)
 - **A verb runs only its own extractors.** `IngestGitAsync` and `IngestClaudeMemoryAsync` filter the
   registry by type so file extractors can't ride along on a git or interop run.
 - **Markdown section rules live in one place.** `MarkdownIntake` holds the heading split, the minimum
-  section length, and tag mining, so every markdown extractor stays in lock-step. Pure functions — no
-  I/O, no store access.
+  section length, the body-less predicate, and tag mining, so every markdown extractor stays in
+  lock-step. Pure functions — no I/O, no store access.
+- **A heading is a label for knowledge, never the knowledge.** `MinSectionLength` cannot express this:
+  it measures length, and `## Development Patterns` is 23 characters of pure heading. So the sink also
+  rejects any candidate where `MarkdownIntake.IsHeadingOnly` holds — nothing but headings, blank lines
+  and fence delimiters — with the reason `"heading with no body"`, distinct from `"too short"` so the
+  report never sends anyone looking for a length to raise. A body-less memory is worse than low-signal
+  because *every* rendered form of it has to be invented: a field corpus banked 1,000 of them (9% of
+  everything live, across 74 repos), 843 with an LLM one-liner asserting a claim the repo never made
+  (`## Development Patterns` → "Focus on iterative development cycles for faster, adaptable product
+  improvements"), and because L1 prefers the one-liner, 59 wake-up lines across 26 repos were
+  fabrications while the summary honestly reporting "this is a heading, not content" stayed hidden.
+  **enrichment** refuses these as a backstop and **maintenance** retires the ones already stored.
+  Deliberately narrow — one letter or digit outside the structure is a body, so `## Build` +
+  `dotnet build` is kept. Rejecting emptiness is the job; rejecting terseness is not.
 
 ## Key files
 
@@ -87,7 +100,7 @@ which puts it on the import trust floor for the rest of its life (**writepath**)
 | `src/Eidet.Core/Services/IntakeService.cs` | The four verbs, the bulk scope, `OrchestratorSink` (gate + dedup + store) |
 | `src/Eidet.Core/Intake/IIntakeExtractor.cs` | The extractor contract (`Name`, `AppliesTo`, `ExtractAsync`) |
 | `src/Eidet.Core/Intake/{IIntakeSink,IntakeContext,IntakeMemory}.cs` | What an extractor is handed and what it may emit |
-| `src/Eidet.Core/Intake/MarkdownIntake.cs` | Shared heading split / length floor / tag mining |
+| `src/Eidet.Core/Intake/MarkdownIntake.cs` | Shared heading split / length floor / body-less predicate / tag mining |
 | `src/Eidet.Core/Intake/Extractors/` | One file per source (markdown, editorconfig, NuGet, npm, docs folder, Claude memory) |
 | `src/Eidet.Core/Intake/Git/GitHistoryExtractor.cs` | The commit gate + pattern mining, with its own per-commit caps |
 | `src/Eidet.Core/Intake/Git/{IGitHistorySource,GitCliAdapter,InMemoryGitHistorySource,NullGitHistorySource}.cs` | The git port and its adapters |
@@ -108,14 +121,19 @@ which puts it on the import trust floor for the rest of its life (**writepath**)
 - **`GitCliAdapter.TryCreate` returns null outside a git repo**, and the service falls back to
   `NullGitHistorySource` — which reports the run as skipped rather than failing. "Not a git repository"
   is a normal result.
-- **Intake memories start on the import trust floor.** A seeded memory ranks below first-party
-  knowledge until it earns echoes — that is deliberate, not a bug to tune away.
+- **Intake memories start on the intake trust floor (`0.7`), not the import floor.** A seeded memory
+  ranks below first-party knowledge until it earns echoes — deliberate, not a bug to tune away — but it
+  outranks a remote pack, because it came from a file in the user's own tree. See **writepath** for the
+  three tiers and the measurement that set this one.
 
 ## Executable references
 
 - `tests/Eidet.Core.Tests/Intake/IntakeSinkValidationTests.cs` — **the authority on skip-not-abort**:
   the per-candidate gate, the blanked content of a rejected item, and the batch surviving a bad
   candidate.
+- `tests/Eidet.Core.Tests/Intake/HeadingOnlyGateTests.cs` — **the authority on what counts as a
+  body-less section** and on intake refusing to store one. The "keeps" cases are as load-bearing as the
+  "rejects" ones: over-rejection here would silently discard real terse memories.
 - `tests/Eidet.Core.Tests/Memory/MemoryIdConventionTests.cs` — settles that intake ids stay
   content-addressed so re-ingest skips as a duplicate (shared with **memory**).
 - `tests/Eidet.Core.Tests/Intake/Git/{GitHistoryExtractorTests,GitCliParserTests,IntakeServiceGitTests}.cs`

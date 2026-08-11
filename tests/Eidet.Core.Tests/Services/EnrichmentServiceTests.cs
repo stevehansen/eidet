@@ -87,6 +87,49 @@ public class EnrichmentServiceTests
         Assert.Null(entry.Summary);
     }
 
+    /// <summary>
+    /// Asked to describe a bare heading, the model supplies the knowledge the heading implies — and that
+    /// fabrication then outranks the content in L1, which renders OneLiner ahead of Summary. A field
+    /// corpus had 843 of these, 59 of them reaching wake-ups as invented claims. Intake rejects body-less
+    /// sections at the gate now; this is the backstop for entries stored before that gate existed.
+    /// </summary>
+    [Fact]
+    public async Task EnrichMemory_HeadingWithNoBody_ReturnsFalseWithoutCalls()
+    {
+        var adapter = new InMemoryEnrichmentAdapter()
+            .SetResponse(EnrichmentPrompt.Summary, "This section documents development patterns.")
+            .SetResponse(EnrichmentPrompt.OneLiner, "Focus on iterative development cycles.");
+        using var svc = new EnrichmentService(adapter);
+        var entry = new MemoryEntry { Content = "## Development Patterns", Id = "id" };
+
+        Assert.False(await svc.EnrichMemoryAsync(entry));
+        Assert.Null(entry.Summary);
+        Assert.Null(entry.OneLiner);
+    }
+
+    [Fact]
+    public async Task EnrichMemory_HeadingWithABody_IsStillEnriched()
+    {
+        var adapter = new InMemoryEnrichmentAdapter()
+            .SetResponse(EnrichmentPrompt.Summary, "Build before testing.");
+        using var svc = new EnrichmentService(adapter);
+        var entry = new MemoryEntry { Content = "## Build\nRun dotnet build before the test suite.", Id = "id" };
+
+        Assert.True(await svc.EnrichMemoryAsync(entry));
+        Assert.Equal("Build before testing.", entry.Summary);
+    }
+
+    [Fact]
+    public async Task ExtractEntities_DropsChainOfThoughtLines()
+    {
+        var adapter = new InMemoryEnrichmentAdapter().SetResponse(
+            EnrichmentPrompt.Entities,
+            "RavenDB\nThe user wants me to act as an information extractor\n1. Project names\nIntakeService");
+        using var svc = new EnrichmentService(adapter);
+
+        Assert.Equal(["RavenDB", "IntakeService"], await svc.ExtractEntitiesAsync("some content"));
+    }
+
     [Fact]
     public async Task EnrichMemory_AllEntitiesDuplicate_ReportsNoChange()
     {

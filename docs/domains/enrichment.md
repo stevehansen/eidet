@@ -51,6 +51,14 @@ facade sees the new backend on its next call.
 - **A redaction tombstone is never enriched.** `EnrichMemoryAsync` refuses content with the redaction
   prefix — otherwise the model would paraphrase the scrubbed payload straight back into `Summary` and
   therefore into `SearchText`.
+- **A body-less heading is never enriched either.** `EnrichMemoryAsync` refuses content where
+  `MarkdownIntake.IsHeadingOnly` holds. Asked to describe a label, a model supplies the knowledge the
+  label implies, and that fabrication then *outranks* the real fields because L1 renders `OneLiner`
+  first: on a field corpus, 843 heading-only memories carried an invented one-liner and 59 of them
+  reached wake-ups as assertions the repo never made — while the summary that honestly said "this is a
+  heading, not content" stayed hidden behind it. **intake** rejects these at the gate now; this is the
+  backstop for what earlier builds stored, and enrichment must not be the component that turns
+  `## Development Patterns` into advice about iterative development.
 - **`Summary == null` is the work queue.** The subscription query and the unenriched stats both key on
   it, which is exactly why redaction writes `""` instead of `null` (**memory**).
 - **The one-liner is re-generated only while it still equals the deterministic heuristic one.** That
@@ -105,13 +113,29 @@ facade sees the new backend on its next call.
   embedding (see **recall**). Changing an extraction prompt therefore changes what is *reachable*, not
   just what is rendered — and a corpus that never ran enrichment has no cue expansion at all. The
   abstraction arm is exempt: it falls back to `Content` at index time, so it is never enrichment-gated.
+- **Extracted entities run `EntityHygiene.Clean`, and the rules key on *shape*.** A reasoning model
+  answers the extraction prompt with its own chain of thought often enough to matter — 443 such strings
+  across 223 memories on one corpus ("The user wants me to act as an information extractor", a numbered
+  restatement of the entity types it was asked about, once a bare `<channel|>` token) — plus markdown
+  leftovers (1,574 numbered-list fragments, 338 with fences, 241 bare heading markers). Wording is
+  unbounded and cannot be filtered; shape can. Identifiers are short, unpunctuated, and never
+  sentences, which is what keeps `Vidyano.RavenDB` and `/api/eidet/context` while dropping the prose
+  around them. `Clean` is idempotent, so **maintenance** re-runs it as repair. The **deterministic**
+  extractor cleans too (`EntityExtractor.Extract`), and that is not redundant: while any deriver emits
+  noise, maintenance's repair of the field cannot persist — the backfill re-derives what repair just
+  dropped and the two stages undo each other on every pass. Hygiene belongs at every derivation point,
+  not only at the LLM one.
 - **`ReviewDriftAsync` returning null is normal** (unavailable, no content, or unparseable) and means
   "retry on a future run", not "no drift".
 
 ## Executable references
 
 - `tests/Eidet.Core.Tests/Services/EnrichmentServiceTests.cs` — **the authority on field policy**: which
-  fields are filled, the tombstone refusal, and the unavailable-port short circuits.
+  fields are filled, the tombstone and body-less-heading refusals, the chain-of-thought entity drop, and
+  the unavailable-port short circuits.
+- `tests/Eidet.Core.Tests/Text/EntityHygieneTests.cs` — **the authority on what survives the entity
+  field**, in both directions: the corpus's real chain-of-thought leakage on one side, and the
+  identifiers that must not be filtered away on the other.
 - `tests/Eidet.Core.Tests/Services/EnrichmentServiceDriftReviewTests.cs` +
   `tests/Eidet.Core.Tests/Enrichment/ReflectionProposalParserTests.cs` — settle the structured calls and
   their tolerant parsing (including malformed output ⇒ null/empty).

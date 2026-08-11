@@ -242,6 +242,14 @@ public class IntakeService
                 return;
             }
 
+            // Length is not emptiness: a heading long enough to pass the check above can still carry no
+            // body at all, and storing one buys a memory whose every rendered form has to be invented.
+            if (MarkdownIntake.IsHeadingOnly(candidate.Content))
+            {
+                Skip(item, "heading with no body");
+                return;
+            }
+
             // Always-on write gate, per candidate: a secret-bearing or low-signal candidate is
             // skipped with the gate's reason surfaced and the batch continues — intake never
             // bulk-aborts on one bad candidate and never stores unscanned content (closes the

@@ -31,7 +31,12 @@ knows exactly one source. Every seeded memory lands on the import trust floor
   resolved per-project directory, and Eidet never writes there.
 - **A verb runs only its own extractors** (filtered by type), so file extractors never ride along on a
   git or interop run.
-- **Markdown rules live only in `MarkdownIntake`** — heading split, length floor, tag mining.
+- **Markdown rules live only in `MarkdownIntake`** — heading split, length floor, body-less predicate,
+  tag mining.
+- **A heading with no body is rejected, not stored** (`IsHeadingOnly`, reason `"heading with no body"`).
+  Length cannot catch it — `## Development Patterns` is 23 chars — and every rendered form of a
+  body-less memory has to be invented: 843 of 1,000 in the field carried a fabricated one-liner, 59 of
+  which reached wake-ups. One letter or digit outside the headings/fences counts as a body.
 
 ## Key files / reuse
 

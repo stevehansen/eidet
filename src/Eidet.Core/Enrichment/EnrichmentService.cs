@@ -1,6 +1,8 @@
 using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
+using Eidet.Core.Intake;
 using Eidet.Core.Services;
+using Eidet.Core.Text;
 
 namespace Eidet.Core.Enrichment;
 
@@ -87,6 +89,12 @@ public sealed class EnrichmentService : IDisposable
         // A redaction tombstone must never be re-described by the model — its scrubbed
         // payload would leak back into Summary/SearchText via the LLM's paraphrase.
         if (entry.Content.StartsWith(MemoryEntry.RedactedPrefix, StringComparison.Ordinal)) return false;
+        // Nor may a body-less heading be described: asked to summarize a label, the model supplies the
+        // knowledge the label implies, and that fabrication then outranks the content in L1 (which
+        // renders OneLiner first). Intake now rejects these at the gate, so this is the backstop for
+        // entries stored before that gate existed or arriving by another path — enrichment must not be
+        // the component that turns "## Development Patterns" into advice about iterative development.
+        if (MarkdownIntake.IsHeadingOnly(entry.Content)) return false;
 
         var changed = false;
 
@@ -145,10 +153,10 @@ public sealed class EnrichmentService : IDisposable
         var raw = await GenerateAsync(EnrichmentPrompt.Entities, content, ct);
         if (string.IsNullOrWhiteSpace(raw)) return [];
 
-        return raw.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(e => e.Length > 1 && e.Length < 100)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        // Hygiene rather than a length window: the failure mode is a reasoning model answering with its
+        // own chain of thought, and those lines are the right length. EntityHygiene drops them on shape.
+        return EntityHygiene.Clean(
+            raw.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
     }
 
     public Task<string?> MergeObservationsAsync(IReadOnlyList<string> observations, CancellationToken ct = default)
