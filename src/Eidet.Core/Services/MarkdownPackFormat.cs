@@ -353,7 +353,9 @@ public static partial class MarkdownPackFormat
                 // A poisoned pack (MemoryGraft, #34 / STRIDE T-7) controls its own bytes and could write
                 // `provenance=userStated` to self-assign full trust and dodge the Pack floor. Clamp any
                 // declared provenance that would raise the trust floor above Pack's back down to Pack;
-                // lower- or equal-trust origins (e.g. Intake) are left as declared.
+                // only equally-untrusted origins (Reflection, Unknown) are left as declared. `intake`
+                // is now among the clamped values: it means "read from a local file in this repo", which
+                // is exactly the claim a remote pack is not entitled to make about itself.
                 if (MemoryTrust.ProvenanceTrust(entry.Provenance) > MemoryTrust.ProvenanceTrust(MemoryProvenance.Pack))
                     entry.Provenance = MemoryProvenance.Pack;
 

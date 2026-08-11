@@ -75,8 +75,20 @@ incumbent is a correction's whole purpose.
   reopens the laundering hole (STRIDE T-8).
 - **`ProvenanceTrust` has no fallback to full trust.** Trusted origins are enumerated explicitly;
   `Unknown` and any undefined ordinal that slips past the deserializer's closed-world guard land on
-  the import floor. `Unknown` sits at *exactly* the import floor, not a third tier, because the
+  the import floor. `Unknown` sits at *exactly* the import floor, not a lower tier, because the
   pack-import clamp compares floors.
+- **There are three provenance tiers, not two: 1.0 first-party, `0.7` intake, `0.5` import.** Intake
+  reads files already in the repo the agent is working in — the same bytes any tool call would read —
+  so it is not the remote-import surface the `0.5` floor exists to hold down; but nobody vouched for
+  the content either, so it does not reach 1.0. The value is measured, not chosen: at `0.5`, a term
+  appearing in exactly ONE live memory of a repo was found by the index every time and still ranked
+  below memories that did not contain it, because the floor multiplies the whole fused score
+  (hit@5 53% for intake-owned facts vs 94% for agent-stored ones on an 87-repo corpus that is 79%
+  intake). Sweeping the floor put the knee at `0.7`; `1.0` buys almost nothing past it. A de-boost is
+  only free when what it holds down is redundant.
+- **`intake` is a clamped declaration on the pack path.** Because the intake tier now sits *above*
+  Pack's floor, a pack declaring `provenance=intake` is clamped back to `Pack` — "read from a local
+  file in this repo" is exactly the claim a remote pack is not entitled to make about itself.
 - **A synthesis is only born fully trusted when every contributor was trusted.** One untrusted
   contributor demotes the emission to the least-trusted contributor's provenance, so
   compression cannot amplify a poisoned import. `Unknown` deliberately fails the trusted test.

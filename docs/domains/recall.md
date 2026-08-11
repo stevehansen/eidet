@@ -57,6 +57,16 @@ expansion follows edges somebody **authored**; cue expansion follows entities en
   it.** Trust, ROI, layer de-boost, and quarantine are applied by the caller *after* `Fuse`, because
   the benchmark scorecard calls `Fuse` directly and folding retrieval policy in would unfairly
   penalize its Procedure/Heuristic gold cases. Owned by `src/Eidet.Core/Memory/RecallScoring.cs`.
+- **A trust floor multiplies the *whole* fused score, so no amount of retrieval evidence can outweigh
+  it.** That is the intended shape of an anti-poisoning gate, and it is also its cost: a floor set too
+  low makes a memory unreachable rather than merely lower-ranked. Measured when intake sat on the
+  import floor — a term appearing in exactly ONE live memory of a repo was returned by the lexical arm
+  every time and still ranked below memories that did not contain it at all (hit@5 53% for intake-owned
+  facts against 94% for agent-stored ones; one case at rank 94 of 100). Dividing the multiplier out over
+  the same candidates moved hit@1 from 9/69 to 49/69 with zero regressions, which is what identified
+  the floor rather than the blend as the cause. **writepath** owns the tiers; recall is where the cost of
+  getting one wrong actually shows up, so a floor change is a recall-behaviour change and belongs in a
+  measurement, not an argument.
 - **What is rendered is part of the read path, not a presentation detail.** A memory's `OneLiner` is a
   ~12-word model abstraction that reliably drops the class names, thresholds and file paths that make
   it actionable, so a renderer preferring it hands the agent a topic label and silently discards the

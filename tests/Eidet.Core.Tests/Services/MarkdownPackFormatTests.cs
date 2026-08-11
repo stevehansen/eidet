@@ -455,8 +455,40 @@ public class MarkdownPackFormatTests
     [Fact]
     public void Deserialize_PreservesDeclaredProvenanceThatDoesNotEscalateTrust()
     {
-        // A declared provenance at or below Pack's trust floor (e.g. intake, also 0.5) is honored as-is
+        // A declared provenance at or below Pack's trust floor (reflection, also 0.5) is honored as-is
         // — only trust-escalating declarations are clamped.
+        var md = """
+            ---
+            title: Test
+            eidet:
+              id: test
+              version: 1.0.0
+              author: test
+            ---
+
+            # Test
+
+            ## Insights
+
+            ### Reflected insight
+            <!-- eidet: provenance=reflection -->
+
+            Synthesized from earlier observations.
+            """;
+
+        var pack = MarkdownPackFormat.Deserialize(md);
+        Assert.Equal(MemoryProvenance.Reflection, pack.Entries[0].Provenance);
+    }
+
+    /// <summary>
+    /// A pack cannot declare itself into the intake tier. <c>intake</c> asserts "this was read from a
+    /// local file in the repo you are working in", which is exactly the claim a remote pack is not
+    /// entitled to make — and since that tier now sits above Pack's floor, honoring the declaration
+    /// would hand an imported entry a trust promotion for one line of markdown.
+    /// </summary>
+    [Fact]
+    public void Deserialize_ClampsDeclaredIntakeProvenanceDownToPack()
+    {
         var md = """
             ---
             title: Test
@@ -477,7 +509,7 @@ public class MarkdownPackFormatTests
             """;
 
         var pack = MarkdownPackFormat.Deserialize(md);
-        Assert.Equal(MemoryProvenance.Intake, pack.Entries[0].Provenance);
+        Assert.Equal(MemoryProvenance.Pack, pack.Entries[0].Provenance);
     }
 
     [Fact]

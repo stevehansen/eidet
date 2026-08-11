@@ -250,8 +250,12 @@ public class ReflectionEngineTests
         // The laundering is defeated: the mint inherits the least-trusted contributor's provenance,
         // so MemoryTrust keeps demoting it — it never reads as the trusted Reflection stamp.
         Assert.Equal(importProvenance, minted.Provenance);
-        Assert.True(MemoryTrust.Factor(minted) <= 0.5,
-            $"laundered reflection trust ({MemoryTrust.Factor(minted)}) must not exceed the import floor");
+        // Measured against the CONTRIBUTOR's own floor rather than a constant: what defeats laundering is
+        // that synthesis cannot be more trusted than the weakest thing it was built from, and the import
+        // tiers no longer share one number (Pack 0.5, Intake 0.7).
+        Assert.True(MemoryTrust.Factor(minted) <= MemoryTrust.ProvenanceTrust(importProvenance),
+            $"laundered reflection trust ({MemoryTrust.Factor(minted)}) must not exceed its contributor's floor");
+        Assert.True(MemoryTrust.Factor(minted) < 1.0, "synthesis over an import must stay provisional");
         Assert.Equal(importProvenance, result.Candidates.Single().Provenance);
     }
 

@@ -10,11 +10,18 @@ namespace Eidet.Core.Memory;
 /// The gate exists because the most dangerous memories are the cheapest to inject: a single
 /// imported pack entry (MemoryGraft-style single-shot poisoning) or a wrongly-recalled
 /// Procedure/Heuristic is net-negative even before it is echoed. So both the import surface
-/// (Intake/Pack) and the action-shaped types (Procedure/Heuristic) start PROVISIONAL — their
+/// (Pack/Reflection) and the action-shaped types (Procedure/Heuristic) start PROVISIONAL — their
 /// retrieval weight is held below full trust — and only earned echoes (minus fizzles) lift them
 /// back toward 1.0. Untainted first-party knowledge (UserStated/AgentInferred/ToolOutput/System
 /// observations and insights) is fully trusted from the start, so this never penalizes the
 /// honest path.
+///
+/// Repo-file intake gets a THIRD tier of its own (<see cref="IntakeTrust"/>, 0.7) rather than sharing
+/// the import floor. A de-boost is only free when the memory it holds down is redundant; when the
+/// corpus is mostly intake, holding intake at the import floor makes the repo's own documentation
+/// unreachable behind session chatter — measured, not theorized. The floor a memory sits on has to
+/// track how it actually arrived, or the gate stops being a poisoning control and becomes a
+/// relevance bug.
 ///
 /// Two later hardenings (#80) close the gap between a trust CLAIM and a verified one. Provenance that
 /// was never established (<see cref="MemoryProvenance.Unknown"/>) is treated as an import, not as a
@@ -32,8 +39,30 @@ public static class MemoryTrust
     /// accumulated several echoes, so a single feedback event cannot flip it to full trust.</summary>
     private const double EchoSmoothing = 3.0;
 
-    /// <summary>Trust floor for the import / poisoning surface (Intake, Pack, Reflection); 1.0 for everything else.</summary>
+    /// <summary>Trust floor for the import / poisoning surface (Pack, Reflection, Unknown); 1.0 for everything else.</summary>
     private const double ImportTrust = 0.5;
+
+    /// <summary>
+    /// Trust floor for repo-file intake — above the import floor, below first-party.
+    ///
+    /// Intake reads files that are ALREADY in the repo the agent is working in: the same bytes any
+    /// tool call would read, from a tree the user controls. It is therefore not the remote-import
+    /// surface <see cref="ImportTrust"/> exists to hold down — nobody smuggled a CLAUDE.md in over
+    /// the wire. But it is still unvouched: a file asserting something is weaker evidence than an
+    /// agent or a user asserting it, so intake does not reach 1.0 either.
+    ///
+    /// The value was measured, not picked. On an 87-repo field corpus (79% intake), a term appearing
+    /// in exactly ONE live memory of a repo was found by the index every time and then ranked below
+    /// memories that did not contain it at all, because the floor multiplies the whole fused score:
+    /// hit@5 for intake-owned facts was 53% against 94% for agent-stored ones. Sweeping the floor
+    /// over the same probes put the knee at 0.7 — hit@5 56% → 90%, median rank 5 → 2 — with 1.0
+    /// buying almost nothing beyond it (91%). Below the knee the repo's own documentation is
+    /// effectively unreachable; above it, nothing is gained but poisoning resistance is spent.
+    ///
+    /// Equal to <see cref="ActionTypeTrust"/> by coincidence, not by coupling: they answer different
+    /// questions (who vouched for this vs. what happens if it is wrong) and may move apart.
+    /// </summary>
+    private const double IntakeTrust = 0.7;
 
     /// <summary>Trust floor for action-shaped types (Procedure, Heuristic); 1.0 for Insight/Observation.</summary>
     private const double ActionTypeTrust = 0.7;
@@ -72,10 +101,12 @@ public static class MemoryTrust
     }
 
     /// <summary>
-    /// Provenance trust floor. Intake and Pack are the import / poisoning surface and stay
-    /// provisional (0.5); Reflection is LLM-synthesized net-new content that must EARN trust via
-    /// echoes rather than being born trusted, so it shares the same provisional floor. First-party
-    /// origins (UserStated, AgentInferred, ToolOutput, Consolidation, System) are fully trusted.
+    /// Provenance trust floor. Pack is the import / poisoning surface and stays provisional (0.5);
+    /// Reflection is LLM-synthesized net-new content that must EARN trust via echoes rather than
+    /// being born trusted, so it shares the same provisional floor. Intake sits above them on its
+    /// own floor (0.7) because it reads local repo files rather than accepting remote bytes.
+    /// First-party origins (UserStated, AgentInferred, ToolOutput, Consolidation, System) are fully
+    /// trusted.
     /// Public so consolidation / reflection can identify untrusted contributing sources.
     ///
     /// Note what is NOT here: a fallback to full trust. The trusted origins are enumerated explicitly and
@@ -87,9 +118,12 @@ public static class MemoryTrust
     {
         MemoryProvenance.UserStated or MemoryProvenance.AgentInferred or MemoryProvenance.ToolOutput
             or MemoryProvenance.Consolidation or MemoryProvenance.System => 1.0,
-        MemoryProvenance.Intake or MemoryProvenance.Pack or MemoryProvenance.Reflection => ImportTrust,
-        // EXACTLY the import floor, not a third tier: the pack-import clamp in MarkdownPackFormat compares
-        // provenance floors, so any other value here would have to be re-reasoned there.
+        // Repo-file intake sits on its own floor between the two: see IntakeTrust for why local files
+        // are not the remote-import surface, and for the measurement that fixed the value.
+        MemoryProvenance.Intake => IntakeTrust,
+        MemoryProvenance.Pack or MemoryProvenance.Reflection => ImportTrust,
+        // EXACTLY the import floor, never the intake floor: the pack-import clamp in MarkdownPackFormat
+        // compares provenance floors, so lifting Unknown would let a pack declare its way past Pack.
         MemoryProvenance.Unknown => ImportTrust,
         _ => ImportTrust,
     };

@@ -25,6 +25,10 @@ entity; this domain owns whether a write happens and what trust it earns.
 - **No insecure default in `ProvenanceTrust`** — trusted origins are enumerated, everything else
   (including `Unknown`) lands on the import floor. `Unknown` sits at *exactly* that floor because the
   pack-import clamp compares floors.
+- **Three tiers: 1.0 first-party, `0.7` intake, `0.5` import.** Intake reads local repo files, so it
+  is not the remote-import surface — holding it at `0.5` made repos' own docs unreachable behind
+  session chatter (measured: hit@5 53% vs 94%). A pack declaring `provenance=intake` is clamped to
+  `Pack`, since the intake tier now outranks it.
 - **A synthesis inherits its least-trusted contributor** unless every contributor is trusted
   (`ProvenanceRules`) — that's the anti-laundering guarantee.
 - **De-boost, never hide.** A quarantined or broken-commitment memory stays recallable so it can earn

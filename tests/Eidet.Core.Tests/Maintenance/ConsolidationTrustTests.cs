@@ -78,9 +78,10 @@ public class ConsolidationTrustTests
     public async Task Create_picks_least_trusted_contributor_provenance()
     {
         var store = new InMemoryEidetStore();
-        // Both Intake and Pack floor at 0.5, but the engine orders by ProvenanceTrust and takes
-        // the first; both are equally untrusted, so the result must be one of the two import origins
-        // (never Consolidation, never the trusted AgentInferred one).
+        // Pack (0.5) is now strictly below Intake (0.7), so "least trusted" has one answer and the rule
+        // is pinned exactly rather than as a set: the synthesis inherits Pack — never Consolidation,
+        // never the trusted AgentInferred one, and never the middle tier just because it also failed to
+        // be fully trusted.
         await store.StoreAsync(Observation("a", "config sets the cache ttl to five minutes", MemoryProvenance.AgentInferred, "cache"));
         await store.StoreAsync(Observation("b", "config sets the cache size to one gig", MemoryProvenance.Intake, "cache"));
         await store.StoreAsync(Observation("c", "config sets the cache backend to redis", MemoryProvenance.Pack, "cache"));
@@ -89,7 +90,7 @@ public class ConsolidationTrustTests
         await engine.ConsolidateAsync(Repo);
 
         var insight = (await store.BrowseAsync(Repo, 0, 50, MemoryType.Insight)).Single();
-        Assert.Contains(insight.Provenance, new[] { MemoryProvenance.Intake, MemoryProvenance.Pack });
+        Assert.Equal(MemoryProvenance.Pack, insight.Provenance);
         Assert.True(MemoryTrust.ProvenanceTrust(insight.Provenance) < 1.0);
     }
 

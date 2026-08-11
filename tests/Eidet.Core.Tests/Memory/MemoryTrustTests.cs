@@ -6,7 +6,7 @@ namespace Eidet.Core.Tests.Memory;
 /// <summary>
 /// Unit tests for <see cref="MemoryTrust"/> (issue #34) — the derived, never-stored anti-poisoning
 /// trust factor. The contract: trust ∈ (0, 1.0], starting at the LOWER of the provenance floor
-/// (Intake/Pack = 0.5, else 1.0) and the type floor (Procedure/Heuristic = 0.7, else 1.0), then
+/// (Pack/Reflection/Unknown = 0.5, Intake = 0.7, else 1.0) and the type floor (Procedure/Heuristic = 0.7, else 1.0), then
 /// lifted toward 1.0 by earned echoes: <c>trust = floor + (1 - floor) · echo/(echo + fizzle + K)</c>
 /// with K = 3.
 ///
@@ -50,7 +50,6 @@ public class MemoryTrustTests
     // ─── Provenance floor (type held neutral at Insight) ──────────────────
 
     [Theory]
-    [InlineData(MemoryProvenance.Intake)]
     [InlineData(MemoryProvenance.Pack)]
     [InlineData(MemoryProvenance.Reflection)]
     [InlineData(MemoryProvenance.Unknown)] // #80: "we don't know" is treated as an import, not as vouched-for
@@ -58,6 +57,26 @@ public class MemoryTrustTests
     {
         var trust = MemoryTrust.Factor(Entry(provenance, MemoryType.Insight));
         Assert.Equal(0.5, trust);
+    }
+
+    /// <summary>
+    /// Intake is a tier of its own, strictly between the import floor and full trust. It reads local
+    /// repo files, so it is not the remote-import surface — but nobody vouched for the content either.
+    /// Pinned as an ORDERING, not just a value: what must not regress is intake collapsing back onto
+    /// the import floor (which made a repo's own documentation unreachable behind session chatter) or
+    /// drifting up to full trust (which would make a planted CLAUDE.md indistinguishable from a
+    /// user's own statement).
+    /// </summary>
+    [Fact]
+    public void Intake_provenance_sits_strictly_between_the_import_floor_and_full_trust()
+    {
+        var intake = MemoryTrust.ProvenanceTrust(MemoryProvenance.Intake);
+
+        Assert.Equal(0.7, intake);
+        Assert.True(intake > MemoryTrust.ProvenanceTrust(MemoryProvenance.Pack), "intake must outrank remote imports");
+        Assert.True(intake > MemoryTrust.ProvenanceTrust(MemoryProvenance.Unknown), "intake must outrank unestablished provenance");
+        Assert.True(intake < MemoryTrust.ProvenanceTrust(MemoryProvenance.UserStated), "intake must not reach vouched-for trust");
+        Assert.Equal(0.7, MemoryTrust.Factor(Entry(MemoryProvenance.Intake, MemoryType.Insight)));
     }
 
     [Theory]
@@ -73,7 +92,7 @@ public class MemoryTrustTests
     }
 
     [Theory]
-    [InlineData(MemoryProvenance.Intake, 0.5)]
+    [InlineData(MemoryProvenance.Intake, 0.7)] // local repo files: above imports, below vouched-for
     [InlineData(MemoryProvenance.Pack, 0.5)]
     [InlineData(MemoryProvenance.Reflection, 0.5)] // LLM-synthesized: shares the import/poisoning floor
     [InlineData(MemoryProvenance.AgentInferred, 1.0)]
@@ -98,9 +117,6 @@ public class MemoryTrustTests
     {
         Assert.Equal(
             MemoryTrust.ProvenanceTrust(MemoryProvenance.Pack),
-            MemoryTrust.ProvenanceTrust(MemoryProvenance.Unknown));
-        Assert.Equal(
-            MemoryTrust.ProvenanceTrust(MemoryProvenance.Intake),
             MemoryTrust.ProvenanceTrust(MemoryProvenance.Unknown));
     }
 
@@ -168,9 +184,11 @@ public class MemoryTrustTests
     [Fact]
     public void IntakeHeuristic_floor_is_min_of_floors()
     {
-        // min(provenance 0.5, type 0.7) == 0.5.
+        // min(provenance 0.7, type 0.7) == 0.7. The two floors coincide here, which is exactly why the
+        // NotEqual matters: a product would be 0.49, and only the min rule leaves this at 0.7.
         var trust = MemoryTrust.Factor(Entry(MemoryProvenance.Intake, MemoryType.Heuristic));
-        Assert.Equal(0.5, trust);
+        Assert.Equal(0.7, trust);
+        Assert.NotEqual(0.49, trust, precision: 6);
     }
 
     // ─── Echo-lift formula: exact pinned values ───────────────────────────
