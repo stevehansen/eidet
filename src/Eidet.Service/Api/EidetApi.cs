@@ -27,6 +27,7 @@ public class EidetApiServer
     private readonly CanonEndpoints _canonEndpoints;
     private readonly LayerEndpoints _layerEndpoints;
     private readonly MaintenanceEndpoints _maintenanceEndpoints;
+    private readonly MaintenanceRuns _maintenanceRuns = new();
     private readonly QualityEndpoint _qualityEndpoint;
     private readonly ScheduledTasksEndpoint _scheduledTasksEndpoint;
     private readonly UsageEndpoints _usageEndpoints;
@@ -54,7 +55,7 @@ public class EidetApiServer
         _looseEndEndpoints = new LooseEndEndpoints(dispatcher, options.LooseEnds);
         _canonEndpoints = new CanonEndpoints(options.Canon);
         _layerEndpoints = new LayerEndpoints(options.Layers, options.LayerSync);
-        _maintenanceEndpoints = new MaintenanceEndpoints(dispatcher);
+        _maintenanceEndpoints = new MaintenanceEndpoints(dispatcher, _maintenanceRuns);
         _qualityEndpoint = new QualityEndpoint(options.Quality, options.Usage);
         _scheduledTasksEndpoint = new ScheduledTasksEndpoint(options.ScheduledTasks);
         _usageEndpoints = new UsageEndpoints(options.Usage);
@@ -180,6 +181,7 @@ public class EidetApiServer
         r.MapPost("/api/eidet/consolidate", (ctx, _, ct) => _memoryBulk.Consolidate(ctx, ct));
         r.MapPost("/api/eidet/reflect", (ctx, _, ct) => _memoryBulk.Reflect(ctx, ct));
         r.MapPost("/api/maintenance", (ctx, _, ct) => _maintenanceEndpoints.Maintenance(ctx, ct));
+        r.MapPrefix("GET", "/api/maintenance/runs/", (ctx, runId, _) => _maintenanceEndpoints.Run(ctx, runId));
         // Admin scope enforced by the /api/config prefix rule in ApiKeyService.GetRequiredScope
         r.MapPost("/api/config/enrichment/reload", (ctx, _, ct) => ReloadEnrichment(ctx, ct));
         r.MapGet("/api/eidet/export", (ctx, _, ct) => _memoryBulk.Export(ctx, ct));

@@ -54,6 +54,11 @@ final, and `ForgetIntegrityStage` runs last so it audits what this run produced.
 - **Reflection output must pass the write gates** (LLM-fresh text) and all trust-bearing fields are
   engine-owned, never model-owned.
 - **Retire by forget-with-reason, never hard delete.** Quarantined memories are exempt from eviction.
+- **One pass per repo, whoever asks** — `CoalescingMaintenanceRunner` wraps the orchestrator, so a
+  caller arriving mid-run rides that run instead of starting a second. Cross-run twin of the shared-store
+  rule: two passes over one repo revert each other's field edits, just as silently. Only the repo-path
+  overload coalesces — a `MaintenanceRequest` carries a stage subset, so two are not interchangeable.
+  `POST /api/maintenance` answers `202` + a run id past 30s, which is what makes overlap ordinary.
 - **Optional stages ship dormant** — drift, reflection, budget eviction, deprecation all no-op without
   config (drift/reflection also need an available backend).
 
@@ -61,6 +66,7 @@ final, and `ForgetIntegrityStage` runs last so it audits what this run produced.
 
 - `src/Eidet.Core/Maintenance/MaintenanceOrchestrator.cs` — order + isolation + the bulk scope.
 - `src/Eidet.Core/Maintenance/IMaintenanceStage.cs` — the contract, `MaintenanceContext`, `ForTest`.
+- `src/Eidet.Core/Maintenance/CoalescingMaintenanceRunner.cs` — the per-repo gate; `src/Eidet.Service/Api/MaintenanceRuns.cs` holds the REST run handles.
 - `src/Eidet.Core/Maintenance/SharedEntryStore.cs` — the pass-scoped id → instance map. Read its header
   before adding a stage that mutates an existing entry.
 - `src/Eidet.Core/Maintenance/{ConsolidationEngine,DedupEngine,ReflectionEngine}.cs` — dual-use engines

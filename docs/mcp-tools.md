@@ -111,7 +111,7 @@ These are deliberately **not** on the MCP surface — agents rarely need them in
 |-----------|---------------|-------|
 | Intake | `POST /api/eidet/intake` | Also fires automatically on first `eidet_context` for a new repo |
 | Consolidate | `POST /api/eidet/consolidate` | Also runs as a maintenance stage |
-| Maintenance | `POST /api/maintenance` | TTL expiry, dedup, decay, enrichment, auto-consolidation |
+| Maintenance | `POST /api/maintenance` | TTL expiry, dedup, decay, enrichment, auto-consolidation; `202` + `GET /api/maintenance/runs/{id}` when a run outlasts 30s |
 | Version history | `GET /api/eidet/{id}` (version chain) | Supersession ancestry |
 | Curation / edit | `PUT /api/eidet/{id}` | Versioned on content change |
 | Pack export | `POST` export endpoints | Portable `.eidet` pack |

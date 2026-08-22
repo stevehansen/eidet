@@ -87,6 +87,7 @@ Every store attempt passes through these gates, in order. Any gate can reject th
 | **Consolidation**  | A scheduled pass that merges related **Observations** into stable **Insights**                     | Compaction, rollup, summarization      |
 | **Lineage**        | The `DerivedFrom` set recording which **Memories** a synthesis was built from. Read across the whole history, retired members included — "these sources were already consolidated" is a fact retiring a **Memory** cannot undo | Sources, parents, provenance (reserved) |
 | **Maintenance**    | The periodic pipeline that runs **TTL expiry**, dedup, **FadeMem** decay, and **Enrichment**       | Housekeeping, cleanup, cron            |
+| **Maintenance run** | One execution of the **Maintenance** pipeline over one repo. At most one is in flight per repo, whoever asked; a REST caller that outwaits the grace window gets a **run id** to poll while it continues | Job, task, sweep, pass                 |
 | **Intake**         | Bulk ingestion of project files (CLAUDE.md, README, docs) as seed **Memories**                     | Import, bootstrap, seeding             |
 | **Git-History Intake** | **Intake** that mines merged commit history into seed Procedure/Insight **Memories** — problem from the message, fix pattern from change stats, never raw diffs | Git import, commit harvesting          |
 | **Watermark**      | Per-repo cursor (`GitIntakeLastSha`) marking the newest commit a **Git-History Intake** run processed; the next run resumes past it | Checkpoint, cursor, marker             |

@@ -16,6 +16,8 @@ public sealed class EidetClient : IDisposable
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 
+    private static readonly TimeSpan MaintenancePollInterval = TimeSpan.FromSeconds(5);
+
     private readonly HttpClient _http;
 
     public EidetClient(string url = "http://localhost:19380", string? apiKey = null)
@@ -149,8 +151,27 @@ public sealed class EidetClient : IDisposable
     public async Task<ConsolidateResult> ConsolidateAsync(string repo, CancellationToken ct = default) =>
         await PostAsync<ConsolidateResult>($"api/eidet/consolidate?repo={Uri.EscapeDataString(repo)}", ct);
 
-    public async Task<Dictionary<string, JsonElement>> MaintenanceAsync(string repo, CancellationToken ct = default) =>
-        await PostAsync<Dictionary<string, JsonElement>>($"api/maintenance?repo={Uri.EscapeDataString(repo)}", ct);
+    /// <summary>
+    /// Runs the maintenance pipeline. A pass that outlives the service's grace window is handed back
+    /// as a run id to poll; this follows it to the end, so the result is always the finished report —
+    /// a slow repo takes longer, it does not fail.
+    /// </summary>
+    public async Task<Dictionary<string, JsonElement>> MaintenanceAsync(string repo, CancellationToken ct = default)
+    {
+        var res = await _http.PostAsync($"api/maintenance?repo={Uri.EscapeDataString(repo)}", null, ct);
+        var body = await ReadAsync<Dictionary<string, JsonElement>>(res, ct);
+        if (res.StatusCode != System.Net.HttpStatusCode.Accepted) return body;
+
+        var poll = body["poll"].GetString()!.TrimStart('/');
+        while (true)
+        {
+            await Task.Delay(MaintenancePollInterval, ct);
+            var run = await GetAsync<MaintenanceRunStatus>(poll, ct);
+            if (run.Status == "running") continue;
+            if (run.Status == "failed") throw new EidetException(500, run.Error ?? "maintenance failed");
+            return run.Report ?? [];
+        }
+    }
 
     /// <summary>Render memories as markdown; format "agents" renders the AGENTS.md interop shape.</summary>
     public async Task<string> ExportMarkdownAsync(string repo, string? format = null, CancellationToken ct = default)
@@ -224,6 +245,12 @@ public sealed class EidetClient : IDisposable
 
     public void Dispose() => _http.Dispose();
 }
+
+/// <summary>Envelope returned while polling a maintenance run.</summary>
+internal sealed record MaintenanceRunStatus(
+    string Status,
+    Dictionary<string, JsonElement>? Report = null,
+    string? Error = null);
 
 public class EidetException : Exception
 {

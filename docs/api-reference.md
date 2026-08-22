@@ -348,10 +348,50 @@ legitimately lower. A converged corpus consolidates to all zeros.
 
 ### POST /api/maintenance — Run Maintenance
 
-Runs the full 7-stage maintenance pipeline (TTL expiry, retention, dedup, decay, cleanup, enrichment, consolidation).
+Runs the full maintenance pipeline (TTL expiry, retention, dedup, decay, cleanup, enrichment,
+consolidation).
 
 ```bash
 curl -X POST "http://localhost:19380/api/maintenance?repo=P%3A%5CMyProject"
+```
+
+A run that finishes within **30 seconds** answers `200` with the report. One that does not answers
+`202` and keeps going — a large repo with drift review enabled runs for well over ten minutes, and
+blocking for that long made a successful run indistinguishable from a dead service:
+
+```json
+{
+  "runId": "9f1c...",
+  "repo": "P--MyProject",
+  "status": "running",
+  "startedAt": "2026-08-13T09:12:04.7Z",
+  "poll": "/api/maintenance/runs/9f1c..."
+}
+```
+
+Only one pass per repo runs at a time. A caller that gives up and retries starts no second pass —
+it gets a new run id reporting the same one — and a hand-triggered run cannot collide with the
+scheduler's.
+
+### GET /api/maintenance/runs/{id} — Poll a Run
+
+```bash
+curl "http://localhost:19380/api/maintenance/runs/9f1c..."
+```
+
+`status` is `running`, `completed`, or `failed`; `report` carries the same body a `200` from the POST
+would have returned, and `error` replaces it on failure. Results stay pollable for an hour after the
+run finishes, then the id 404s. Admin scope, like the POST — the report is an operator surface.
+
+```json
+{
+  "runId": "9f1c...",
+  "repo": "P--MyProject",
+  "status": "completed",
+  "startedAt": "2026-08-13T09:12:04.7Z",
+  "completedAt": "2026-08-13T09:26:41.2Z",
+  "report": { "repoId": "P--MyProject", "stages": [] }
+}
 ```
 
 ### GET /api/eidet/export — Export as Markdown

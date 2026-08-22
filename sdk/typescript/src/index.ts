@@ -314,8 +314,25 @@ export class EidetClient {
     return this.post(`/api/eidet/consolidate?repo=${enc(repo)}`);
   }
 
+  /**
+   * Run the maintenance pipeline. A pass that outlives the service's grace window is handed back
+   * as a run id to poll; this follows it to the end, so the resolved value is always the finished
+   * report — a slow repo takes longer, it does not fail.
+   */
   async maintenance(repo: string): Promise<Record<string, unknown>> {
-    return this.post(`/api/maintenance?repo=${enc(repo)}`);
+    const res = await this.fetch(`/api/maintenance?repo=${enc(repo)}`, { method: 'POST' });
+    if (!res.ok) throw new EidetError(res.status, await res.text());
+
+    const body = (await res.json()) as Record<string, unknown>;
+    if (res.status !== 202) return body;
+
+    for (;;) {
+      await new Promise((done) => setTimeout(done, MAINTENANCE_POLL_MS));
+      const run = await this.get<MaintenanceRunStatus>(body.poll as string);
+      if (run.status === 'running') continue;
+      if (run.status === 'failed') throw new EidetError(500, run.error ?? 'maintenance failed');
+      return run.report ?? {};
+    }
   }
 
   /** Render memories as markdown; format 'agents' renders the AGENTS.md interop shape. */
@@ -425,6 +442,14 @@ export class EidetError extends Error {
     super(`Eidet API error ${status}: ${body}`);
     this.name = 'EidetError';
   }
+}
+
+const MAINTENANCE_POLL_MS = 5000;
+
+interface MaintenanceRunStatus {
+  status: 'running' | 'completed' | 'failed';
+  report?: Record<string, unknown>;
+  error?: string;
 }
 
 function enc(s: string): string {

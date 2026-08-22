@@ -206,7 +206,8 @@ All endpoints on `localhost:19380` (configurable). Provided for tool integration
 | `GET` | `/api/status` | Version, uptime, memory stats |
 | `GET` | `/api/config` | Read configuration |
 | `PUT` | `/api/config` | Update configuration |
-| `POST` | `/api/maintenance` | Trigger maintenance run |
+| `POST` | `/api/maintenance` | Trigger maintenance run — `200` with the report, or `202` + run id past the 30s grace window |
+| `GET` | `/api/maintenance/runs/{id}` | Poll a run started by the above (admin scope; results kept 1h) |
 | `POST` | `/api/config/enrichment/reload` | Reapply enrichment config on the running service (admin scope) |
 
 ---

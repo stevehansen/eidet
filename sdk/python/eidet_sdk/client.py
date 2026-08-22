@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -54,6 +55,10 @@ class EidetError(Exception):
         self.status = status
         self.body = body
         super().__init__(f"Eidet API error {status}: {body}")
+
+
+_MAINTENANCE_POLL_SECONDS = 5.0
+_MAINTENANCE_POST_TIMEOUT = 60.0
 
 
 class EidetClient:
@@ -265,7 +270,29 @@ class EidetClient:
         return self._post(f"/api/eidet/consolidate?repo={repo}")
 
     def maintenance(self, repo: str) -> dict[str, Any]:
-        return self._post(f"/api/maintenance?repo={repo}")
+        """Run the maintenance pipeline.
+
+        A pass that outlives the service's grace window is handed back as a run id to poll; this
+        follows it to the end, so the return value is always the finished report — a slow repo takes
+        longer, it does not fail. The POST gets its own timeout because the client-wide one is the
+        same length as the grace window.
+        """
+        res = self._client.post(f"/api/maintenance?repo={repo}", timeout=_MAINTENANCE_POST_TIMEOUT)
+        if not res.is_success:
+            raise EidetError(res.status_code, res.text)
+
+        body = res.json()
+        if res.status_code != 202:
+            return body
+
+        while True:
+            time.sleep(_MAINTENANCE_POLL_SECONDS)
+            run = self._get(body["poll"])
+            if run["status"] == "running":
+                continue
+            if run["status"] == "failed":
+                raise EidetError(500, run.get("error") or "maintenance failed")
+            return run.get("report") or {}
 
     def export_markdown(self, repo: str, format: str | None = None) -> str:
         """Render memories as markdown; format="agents" renders the AGENTS.md interop shape."""

@@ -127,6 +127,17 @@ public class ApiKeyServiceTests
         Assert.Equal("admin", ApiKeyService.GetRequiredScope("POST", "/api/config/enrichment/reload"));
     }
 
+    /// <summary>
+    /// Polling a run is a read, but the report it hands back is the same operator surface as the
+    /// run itself — so the maintenance paths are admin whatever the method, and must not fall
+    /// through to the read:all default.
+    /// </summary>
+    [Fact]
+    public void GetRequiredScope_PollingAMaintenanceRunIsAdmin()
+    {
+        Assert.Equal("admin", ApiKeyService.GetRequiredScope("GET", "/api/maintenance/runs/abc123"));
+    }
+
     [Fact]
     public void GetRequiredScope_UIIsPublic()
     {

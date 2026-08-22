@@ -169,6 +169,18 @@ this run produced.
   long enough to earn the echo that clears it.
 - **Decay is skipped for an inactive repo**, and `IsRepoActive` is derived in exactly one place so a
   CLI caller can't accidentally decay a dormant corpus.
+- **One pipeline execution per repo at a time.** `CoalescingMaintenanceRunner` wraps the orchestrator,
+  so a caller arriving while a repo's run is in flight is handed *that* run's report instead of
+  starting a second pass. This is the cross-run twin of the one-object-per-memory invariant above:
+  two concurrent passes read overlapping scored pages and write whole documents, so each reverts the
+  other's field edits — the same failure the shared store removes *within* a pass, and equally silent.
+  Nothing enforced it before because the two service callers rarely overlapped: the REST caller
+  blocked for the whole run, so a collision meant a hand-triggered run landing inside the scheduler's
+  tick. `POST /api/maintenance` now answers `202` with a run id past a 30-second grace window, which
+  makes overlap ordinary — a caller that stops waiting and retries would otherwise start a second pass
+  over a repo already being rewritten. Only the repo-path overload coalesces; a `MaintenanceRequest`
+  carries a stage subset and retention overrides, so two of them are not interchangeable and sharing
+  one run would silently hand a caller someone else's pass.
 - **The optional stages ship dormant.** Drift review, reflection, budget eviction, and deprecation all
   no-op unless their config enables them (drift and reflection additionally require an available
   enrichment backend).
@@ -191,6 +203,8 @@ this run produced.
 | `src/Eidet.Core/Maintenance/TagOverlapGrouper.cs`, `src/Eidet.Core/Text/WordSimilarity.cs` | Deterministic grouping / similarity helpers |
 | `src/Eidet.Core/Memory/RetentionScore.cs` | The eviction ordering key |
 | `src/Eidet.Core/Maintenance/IMaintenanceRunner.cs` | The thin facade the scheduler / REST / CLI depend on |
+| `src/Eidet.Core/Maintenance/CoalescingMaintenanceRunner.cs` | The per-repo gate: concurrent callers ride one pass |
+| `src/Eidet.Service/Api/MaintenanceRuns.cs` | REST run handles — a pass that outlives its request, polled by id |
 
 ## Gotchas
 
@@ -234,6 +248,16 @@ this run produced.
   them distinct.
 - **The observation retention stage applies a grace window on top of the cutoff**, so a recently
   *accessed* old observation survives. "Older than the retention window" alone doesn't predict expiry.
+- **The per-repo gate is in-process, so `eidet maintain` is outside it.** The CLI builds its own
+  orchestrator against the same database, so a CLI run can still overlap the service's — the gate
+  covers every caller *inside* the service (scheduler, REST, MCP) and nothing beyond it. Pre-existing
+  and unchanged; closing it needs a lease in the store rather than a lock in memory.
+- **A REST maintenance call can return before the run does.** Past 30 seconds the response is `202`
+  plus a run id, and the pass continues on the host lifetime token — so a `200` is a finished pass but
+  a completed *request* is not. A caller wanting the report follows `poll` (all three SDKs do this
+  internally); a test asserting on the report must not stop at the POST. The run id is not the unit of
+  work: two POSTs for one repo yield two ids reporting the same pass, because deduplication lives one
+  layer down in the runner.
 
 ## Executable references
 
@@ -251,6 +275,14 @@ this run produced.
   backfill agreeing about the entity field**: that extraction output already satisfies the predicate repair
   applies, that no run-on spills in, that a second and third round of repair-then-backfill affect nothing,
   and that emptying-then-refilling still leaves real identifiers behind.
+- `tests/Eidet.Core.Tests/Maintenance/CoalescingMaintenanceRunnerTests.cs` +
+  `tests/Eidet.Service.Tests/Api/MaintenanceRunsTests.cs` — **the authority on one pass per repo and on a
+  run outliving its request**: that concurrent callers share a run and a finished one is never re-handed,
+  that a path and its normalized id are the same repo, that stage-subset requests are *not* coalesced,
+  and that the grace window decides who waits rather than whether the work continues. The envelope's
+  wire names are pinned there too, because three SDKs and the Web UI parse them.
+  `tests/Eidet.Integration.Tests/MaintenanceApiTests.cs` adds the live-listener half: a fast run still
+  answers with the bare report, and the poll route is reachable rather than swallowed by a catch-all.
 - `tests/Eidet.Core.Tests/Maintenance/DedupEngineTests.cs` + `DedupGuardVetoTests.cs` +
   `RecallConsistencyGuardTests.cs` — settle survivor selection, tag union, the veto, the
   `LastMergeRejectedAt` stamp, that live near-duplicates crowding the survivor out is a *correct* veto,

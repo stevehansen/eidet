@@ -72,12 +72,14 @@ public static class ApiKeyService
         if (path == "/api/health" || path == "/api/status" || path == "/ui" || path.StartsWith("/ui/"))
             return "";
 
+        // Maintenance and config are admin whatever the method: a run's report is an operator
+        // surface, so polling one must not fall through to read:all with the reads below.
+        if (path == "/api/maintenance" || path.StartsWith("/api/maintenance/") || path.StartsWith("/api/config"))
+            return "admin";
+
         // Write operations
         if (method is "POST" or "PUT" or "DELETE")
         {
-            if (path == "/api/maintenance" || path.StartsWith("/api/config"))
-                return "admin";
-
             if (path == "/api/eidet" || path == "/api/eidet/intake")
                 return "write:observations";
 

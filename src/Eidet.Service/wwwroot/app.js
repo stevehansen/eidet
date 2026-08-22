@@ -2177,6 +2177,26 @@
       '</span><span class="config-value">' + escHtml(String(value)) + '</span></div>';
   }
 
+  // Maintenance answers 200 with the report when it finishes inside the service's grace window and
+  // 202 with a run id when it does not. A long run is not a failure, so follow it to the end.
+  async function runMaintenance(output) {
+    var res = await fetch('/api/maintenance?repo=' + encRepo(), { method: 'POST' });
+    if (!res.ok) throw new Error('API error: ' + res.status);
+    var body = await res.json();
+    if (res.status !== 202) return body;
+
+    var started = Date.now();
+    for (;;) {
+      output.textContent = 'Maintenance still running (' +
+        Math.round((Date.now() - started) / 1000) + 's)...';
+      await new Promise(function (done) { setTimeout(done, 5000); });
+      var run = await api(body.poll);
+      if (run.status === 'running') continue;
+      if (run.status === 'failed') throw new Error(run.error);
+      return run.report;
+    }
+  }
+
   async function runAction(action) {
     var result = document.getElementById('actionResult');
     if (!currentRepo) { result.textContent = 'No repo selected'; return; }
@@ -2194,7 +2214,7 @@
       } else if (action === 'consolidate') {
         data = await apiPost('/api/eidet/consolidate?repo=' + encRepo());
       } else if (action === 'maintenance') {
-        data = await apiPost('/api/maintenance?repo=' + encRepo());
+        data = await runMaintenance(result);
       }
       result.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
     } catch (e) {

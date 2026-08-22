@@ -123,12 +123,14 @@ public sealed class EidetHost : IDisposable
         var consolidationEngine = new ConsolidationEngine(eidetStore, enrichment, memory: memorySvc);
         var reflectionEngine = new ReflectionEngine(
             eidetStore, enrichment, memory: memorySvc, looseEnds: looseEndStore, config: config.Enrichment.Reflection);
-        IMaintenanceRunner maintenanceRunner = new MaintenanceOrchestrator(
+        // Coalesced so the scheduler's tick and a hand-triggered REST run cannot rewrite one repo
+        // at the same time — the second caller rides the first run instead of starting a second.
+        IMaintenanceRunner maintenanceRunner = new CoalescingMaintenanceRunner(new MaintenanceOrchestrator(
             eidetStore, memorySvc, enrichment, consolidationEngine,
             drift: config.Enrichment.DriftReview,
             reflection: reflectionEngine,
             budget: config.Memory.Budget,
-            deprecate: config.Memory.Deprecate);
+            deprecate: config.Memory.Deprecate));
         var exportSvc = new ExportService(eidetStore, memory: memorySvc);
         var integrityAuditor = new IntegrityAuditor(memorySvc, eidetStore);
         var qualitySvc = new QualityService(eidetStore, integrityAuditor);
