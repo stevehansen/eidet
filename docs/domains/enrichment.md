@@ -127,6 +127,12 @@ facade sees the new backend on its next call.
   not only at the LLM one.
 - **`ReviewDriftAsync` returning null is normal** (unavailable, no content, or unparseable) and means
   "retry on a future run", not "no drift".
+- **Drift review is the enrichment surface with an unbounded budget, and the only one whose cost is
+  recurring.** Every other call is per-memory and happens once; drift review is `NightlyBatch` calls per
+  repo per night, and until `ReviewIntervalDays` existed it re-reviewed settled memories forever — 27
+  repos × 25 calls held a local 12B model busy for over two hours a night, indefinitely. When adding a
+  model-calling stage, ask what makes it stop, not just what caps one run. The startup banner's
+  `Nightly AI:` line is where the answer becomes visible to whoever is running the service.
 
 ## Executable references
 

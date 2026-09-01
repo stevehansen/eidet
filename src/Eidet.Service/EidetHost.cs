@@ -44,6 +44,19 @@ public sealed class EidetHost : IDisposable
     public int ApiKeyCount { get; }
     public int MaintenanceIntervalHours { get; }
     public int ConsolidationIntervalHours { get; }
+
+    /// <summary>The wall-clock anchor the nightly pass lands on, <c>HH:mm</c> local.</summary>
+    public string MaintenanceAtLocalTime { get; }
+
+    /// <summary>
+    /// Whether the nightly pass will call the model at all, and what it will spend per repo when it
+    /// does. This is the largest recurring cost in a running Eidet — a drift review batch is
+    /// <c>NightlyBatch</c> model calls per repo per night — and it had no surface anywhere, so
+    /// turning it off looked identical to leaving it on. Captured at startup like the other banner
+    /// values: it describes the configuration this process is running, not the file on disk.
+    /// </summary>
+    public bool NightlyModelWorkEnabled { get; }
+    public string NightlyModelWork { get; }
     public string RavenUrl { get; }
     public string EnrichmentUrl { get; private set; }
     public bool HooksEnabled { get; }
@@ -70,6 +83,8 @@ public sealed class EidetHost : IDisposable
         ApiKeyCount = config.Auth.ApiKeys.Count;
         MaintenanceIntervalHours = config.Maintenance.IntervalHours;
         ConsolidationIntervalHours = config.Maintenance.ConsolidationIntervalHours;
+        MaintenanceAtLocalTime = config.Maintenance.ScheduledTime.ToString(@"HH\:mm");
+        (NightlyModelWorkEnabled, NightlyModelWork) = DescribeNightlyModelWork(config.Enrichment);
         RavenUrl = config.Storage.Mode == StorageMode.Embedded
             ? $"Embedded ({config.Storage.DataDir ?? "default"})"
             : config.Storage.RavenUrl;
@@ -195,6 +210,28 @@ public sealed class EidetHost : IDisposable
         _healthMonitor?.ReconfigureEnrichment(fresh.Enabled, fresh.Provider, fresh.Model, fresh.Url, EnrichmentHealthy);
 
         return new EnrichmentReloadResult(fresh.Enabled, fresh.Provider.ToString(), fresh.Url, fresh.Model, EnrichmentHealthy);
+    }
+
+    /// <summary>
+    /// Renders <see cref="NightlyModelWork"/>. Every stage named here is gated on enrichment being
+    /// enabled as well as its own switch, so an unreachable backend is reported as off rather than
+    /// as work that will not happen.
+    /// </summary>
+    internal static (bool Enabled, string Detail) DescribeNightlyModelWork(EnrichmentConfig config)
+    {
+        if (!config.Enabled) return (false, "enrichment disabled");
+
+        var parts = new List<string>();
+        if (config.DriftReview.Enabled)
+            parts.Add(config.DriftReview.ReviewIntervalDays > 0
+                ? $"drift review ≤{config.DriftReview.NightlyBatch}/repo, re-reviewed every {config.DriftReview.ReviewIntervalDays}d"
+                : $"drift review ≤{config.DriftReview.NightlyBatch}/repo, every night");
+        if (config.Reflection.Enabled)
+            parts.Add($"reflection ≤{config.Reflection.NightlyBatch}/repo");
+
+        return parts.Count == 0
+            ? (false, "drift review and reflection both off")
+            : (true, string.Join(", ", parts));
     }
 
     public async Task<bool> CheckEnrichmentAsync(CancellationToken ct = default)

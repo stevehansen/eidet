@@ -497,7 +497,8 @@ eidet uninstall
   },
   "maintenance": {
     "intervalHours": 24,
-    "consolidationIntervalHours": 6
+    "consolidationIntervalHours": 6,
+    "atLocalTime": "03:00"
   },
   "enrichment": {
     "ollamaEnabled": false,

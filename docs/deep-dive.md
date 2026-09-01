@@ -813,6 +813,7 @@ eidet config set service.port 19380  # Change a setting
 | `memory.autoIntakeOnFirstSession` | `true` | Auto-scan project files on first session |
 | `maintenance.intervalHours` | `24` | Maintenance frequency |
 | `maintenance.consolidationIntervalHours` | `6` | Consolidation frequency |
+| `maintenance.atLocalTime` | `03:00` | Local anchor the nightly pass lands on |
 | `enrichment.ollamaEnabled` | `false` | Enable Ollama enrichment |
 | `enrichment.ollamaModel` | `gemma4` | Which model for enrichment |
 

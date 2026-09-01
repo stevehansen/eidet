@@ -143,7 +143,10 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         AnsiConsole.WriteLine();
 
         await host.StartSchedulerAsync(cancellation);
-        AnsiConsole.MarkupLine($"  Scheduler: [green]Active[/] (persisted — maintenance every {host.MaintenanceIntervalHours}h, consolidation every {host.ConsolidationIntervalHours}h)");
+        AnsiConsole.MarkupLine($"  Scheduler: [green]Active[/] (persisted — maintenance every {host.MaintenanceIntervalHours}h at {host.MaintenanceAtLocalTime} local, consolidation every {host.ConsolidationIntervalHours}h)");
+        AnsiConsole.MarkupLine(host.NightlyModelWorkEnabled
+            ? $"  Nightly AI: [green]Active[/] ({Markup.Escape(host.NightlyModelWork)})"
+            : $"  Nightly AI: [dim]Off[/] ({Markup.Escape(host.NightlyModelWork)})");
 
         if (host.EnrichmentEnabled)
         {

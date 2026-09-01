@@ -136,6 +136,13 @@ public sealed class ScheduledTaskService : IDisposable
             // Update interval from config (in case it changed)
             task.IntervalHours = intervalHours;
 
+            // A stored NextRunAt carries the phase of whatever schedule wrote it, including the
+            // drifted one this grid replaces — re-anchor a future run so the configured hour takes
+            // effect on restart. An overdue run stays overdue: a night missed while the service was
+            // down should still happen, now, rather than wait for the next anchor.
+            if (type == ScheduledTaskType.Maintenance && task.NextRunAt > now)
+                task.NextRunAt = NextOnGridUtc(_config.ScheduledTime, task.IntervalHours, now);
+
             // If it was running when the service died, reset to pending
             if (task.Status == ScheduledTaskStatus.Running)
             {
@@ -167,15 +174,37 @@ public sealed class ScheduledTaskService : IDisposable
     };
 
     /// <summary>
-    /// When a task should run after the one that just finished. The update check is pinned to a
-    /// wall-clock hour rather than an interval — "every 24h" drifts to whenever the service last
-    /// restarted, which is exactly the middle of a working day for a tool that replaces its own
-    /// binary.
+    /// When a task should run after the one that just finished. Neither of the two nightly tasks
+    /// counts from completion: the update check is pinned to a wall-clock hour, and maintenance
+    /// lands on a grid anchored to one. "Now + 24h" is not a daily schedule — it is a daily
+    /// schedule plus however long the run took, compounding until the pass walks into the workday.
+    /// Consolidation, which is short and runs several times a day, keeps the plain interval.
     /// </summary>
-    private DateTime NextRunAfter(ScheduledTask task, DateTime nowUtc) =>
-        task.TaskType == ScheduledTaskType.UpdateCheck
-            ? NextLocalTimeUtc(_update.ScheduledTime, nowUtc)
-            : nowUtc + TimeSpan.FromHours(task.IntervalHours);
+    private DateTime NextRunAfter(ScheduledTask task, DateTime nowUtc) => task.TaskType switch
+    {
+        ScheduledTaskType.UpdateCheck => NextLocalTimeUtc(_update.ScheduledTime, nowUtc),
+        ScheduledTaskType.Maintenance => NextOnGridUtc(_config.ScheduledTime, task.IntervalHours, nowUtc),
+        _ => nowUtc + TimeSpan.FromHours(task.IntervalHours),
+    };
+
+    /// <summary>
+    /// The next slot on the fixed grid of <paramref name="intervalHours"/> steps anchored at
+    /// <paramref name="anchor"/> local time. Pure, so the walk-forward cases are testable without
+    /// waiting for a clock.
+    ///
+    /// A long run costs its own slot and nothing more: the following slot is where the anchor says
+    /// it is, not where the run happened to finish. Interval is clamped to a week so a nonsense
+    /// config value cannot turn the loops below into a long walk.
+    /// </summary>
+    internal static DateTime NextOnGridUtc(TimeOnly anchor, int intervalHours, DateTime nowUtc)
+    {
+        var interval = TimeSpan.FromHours(Math.Clamp(intervalHours, 1, 24 * 7));
+        var nowLocal = DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc).ToLocalTime();
+        var slot = nowLocal.Date + anchor.ToTimeSpan();
+        while (slot > nowLocal) slot -= interval;  // today's anchor can still be ahead of us
+        while (slot <= nowLocal) slot += interval;
+        return DateTime.SpecifyKind(slot, DateTimeKind.Local).ToUniversalTime();
+    }
 
     /// <summary>
     /// The next occurrence of a local wall-clock time, as UTC. Pure, so the rollover and

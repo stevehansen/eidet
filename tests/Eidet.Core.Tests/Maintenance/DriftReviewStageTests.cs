@@ -123,7 +123,10 @@ public class DriftReviewStageTests
         await store.StoreAsync(oldestVerdict);
         using var enrichment = WithResponse(OkJson);
 
-        var report = await RunDriftStageAsync(store, enrichment, new DriftReviewConfig { NightlyBatch = 2 });
+        // A short re-review interval keeps both seeded verdicts eligible, so this exercises the
+        // ordering rather than the convergence filter below.
+        var report = await RunDriftStageAsync(store, enrichment,
+            new DriftReviewConfig { NightlyBatch = 2, ReviewIntervalDays = 1 });
 
         Assert.Equal(2, report.AffectedBy(DriftReviewStage.StageName));
         Assert.Equal("fresh", neverReviewed.Drift!.Reason); // never-reviewed wins the batch
@@ -155,6 +158,81 @@ public class DriftReviewStageTests
         Assert.Null(notLatest.Drift);
         Assert.Null(layered.Drift);
         Assert.Null(expired.Drift);
+    }
+
+    // ─── Convergence ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SettledCorpus_CostsNothing()
+    {
+        // The stage's whole load profile. ReviewedAt doubles as the coverage cursor, so before the
+        // re-review interval existed a corpus nobody had touched still spent NightlyBatch model
+        // calls per repo per night, forever, re-reviewing the oldest verdicts in rotation.
+        var now = DateTime.UtcNow;
+        var store = new CountingStore();
+        var entries = Enumerable.Range(0, 5)
+            .Select(i => MakeEntry($"e{i}", now.AddDays(-300), drift: new DriftReview
+            {
+                Verdict = DriftVerdictKind.Ok, ReviewedAt = now.AddDays(-i - 1), Reason = "old",
+            }))
+            .ToList();
+        foreach (var e in entries) await store.StoreAsync(e);
+        using var enrichment = WithResponse(OkJson);
+
+        var report = await RunDriftStageAsync(store, enrichment, new DriftReviewConfig());
+
+        Assert.Equal(0, report.AffectedBy(DriftReviewStage.StageName));
+        Assert.All(entries, e => Assert.Equal("old", e.Drift!.Reason));
+        Assert.Equal(0, store.UpdateCount);
+    }
+
+    [Fact]
+    public async Task VerdictOlderThanTheInterval_IsOfferedToTheModelAgain()
+    {
+        var now = DateTime.UtcNow;
+        var store = new InMemoryEidetStore();
+        var aged = MakeEntry("aged", now.AddDays(-300), drift: new DriftReview
+        {
+            Verdict = DriftVerdictKind.Ok, ReviewedAt = now.AddDays(-91), Reason = "old",
+        });
+        var recent = MakeEntry("recent", now.AddDays(-300), drift: new DriftReview
+        {
+            Verdict = DriftVerdictKind.Ok, ReviewedAt = now.AddDays(-89), Reason = "old",
+        });
+        await store.StoreAsync(aged);
+        await store.StoreAsync(recent);
+        using var enrichment = WithResponse(OkJson);
+
+        var report = await RunDriftStageAsync(store, enrichment, new DriftReviewConfig());
+
+        Assert.Equal(1, report.AffectedBy(DriftReviewStage.StageName));
+        Assert.Equal("fresh", aged.Drift!.Reason);
+        Assert.Equal("old", recent.Drift!.Reason);
+    }
+
+    [Fact]
+    public async Task ReviewIntervalZero_RestoresNightlyReReview()
+    {
+        // The escape hatch for anyone who wants the old always-on sweep back.
+        var now = DateTime.UtcNow;
+        var store = new InMemoryEidetStore();
+        var entry = MakeEntry("e1", now.AddDays(-30), drift: new DriftReview
+        {
+            Verdict = DriftVerdictKind.Ok, ReviewedAt = now, Reason = "old",
+        });
+        await store.StoreAsync(entry);
+        using var enrichment = WithResponse(OkJson);
+
+        var report = await RunDriftStageAsync(store, enrichment, new DriftReviewConfig { ReviewIntervalDays = 0 });
+
+        Assert.Equal(1, report.AffectedBy(DriftReviewStage.StageName));
+        Assert.Equal("fresh", entry.Drift!.Reason);
+    }
+
+    [Fact]
+    public void DefaultsToQuarterlyReReview()
+    {
+        Assert.Equal(90, new DriftReviewConfig().ReviewIntervalDays);
     }
 
     // ─── Verdict handling per autonomy ────────────────────────────────────

@@ -184,6 +184,17 @@ this run produced.
 - **The optional stages ship dormant.** Drift review, reflection, budget eviction, and deprecation all
   no-op unless their config enables them (drift and reflection additionally require an available
   enrichment backend).
+- **Every stage converges on a corpus nobody is touching.** A pass over an unchanged repo must approach
+  zero work, and for the model-calling stages zero *model calls*. Drift review is the one that got this
+  wrong: `Drift.ReviewedAt` doubles as the coverage cursor, so ordering by it and always taking
+  `NightlyBatch` re-reviewed the oldest verdicts forever — a permanent nightly cost, on memories nothing
+  had touched since the verdict. `ReviewIntervalDays` (default 90) is what closes it; `0` restores the
+  always-on sweep for anyone who wants it.
+- **The nightly pass is anchored, not chained.** `NextRunAfter` schedules maintenance on a grid anchored
+  to `maintenance.atLocalTime`, never at completion + interval. Chaining is not a daily schedule: it is a
+  daily schedule plus the run's own duration, so a pass that takes two hours starts two hours later every
+  day and walks around the clock into the working day. A long or missed run costs its own slot and
+  nothing more.
 
 ## Key files
 
@@ -203,6 +214,8 @@ this run produced.
 | `src/Eidet.Core/Maintenance/TagOverlapGrouper.cs`, `src/Eidet.Core/Text/WordSimilarity.cs` | Deterministic grouping / similarity helpers |
 | `src/Eidet.Core/Memory/RetentionScore.cs` | The eviction ordering key |
 | `src/Eidet.Core/Maintenance/IMaintenanceRunner.cs` | The thin facade the scheduler / REST / CLI depend on |
+| `src/Eidet.Core/Services/ScheduledTaskService.cs` | The persisted alarm clock — `NextOnGridUtc` is what keeps the pass on its anchor |
+| `src/Eidet.Core/Maintenance/Stages/DriftReviewStage.cs` | Candidate filter (incl. the re-review interval), batch ordering, autonomy |
 | `src/Eidet.Core/Maintenance/CoalescingMaintenanceRunner.cs` | The per-repo gate: concurrent callers ride one pass |
 | `src/Eidet.Service/Api/MaintenanceRuns.cs` | REST run handles — a pass that outlives its request, polled by id |
 
@@ -306,6 +319,16 @@ this run produced.
 - `tests/Eidet.Core.Tests/Maintenance/RetentionStagesTests.cs` + `RoiDecayStageTests.cs` +
   `FadeMemCurveTests.cs` — settle eviction ordering, the quarantine exemption, ROI demotion, and the
   per-type curves.
+- `tests/Eidet.Core.Tests/Maintenance/MaintenanceScheduleTests.cs` — **the authority on the pass staying
+  put**: that the daily grid always lands on the configured local anchor, that a run taking hours does not
+  move the next one, that thirty consecutive long runs leave the anchor where it was (the regression: the
+  pass had walked from 21:20 to 16:21 and back around over five weeks), that a missed window collapses to
+  one slot rather than a backlog, and that a nonsense interval still yields a time in the future.
+- `tests/Eidet.Core.Tests/Maintenance/DriftReviewStageTests.cs` — the convergence half is **the authority
+  on a settled corpus costing nothing**: no candidates, no model calls, and no writes while every verdict
+  is inside `ReviewIntervalDays`; the entry returns once its verdict ages past it; `0` restores the nightly
+  sweep. `tests/Eidet.Service.Tests/NightlyModelWorkTests.cs` covers the banner line that makes the
+  setting visible.
 - `tests/Eidet.Core.Tests/Maintenance/{ReflectionEngine,ReflectionStage,DriftReviewStage,OllamaEnrichmentStage}Tests.cs`
   — settle the dormant-by-default gates and the LLM-facing stages' behaviour when the backend is absent.
 - `tests/Eidet.Core.Tests/Maintenance/MaintenanceRepoActiveDerivationTests.cs` — settles the single

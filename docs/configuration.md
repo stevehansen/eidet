@@ -79,6 +79,12 @@ These are useful for Docker and CI/CD environments.
 |-----|------|---------|-------------|
 | `maintenance.intervalHours` | int | `24` | Hours between maintenance runs |
 | `maintenance.consolidationIntervalHours` | int | `6` | Hours between consolidation runs |
+| `maintenance.atLocalTime` | string | `03:00` | Local wall-clock time the nightly pass is anchored to |
+
+The anchor is what keeps the pass where you put it. Runs are scheduled on a grid anchored to
+`atLocalTime`, not at "whenever the last one finished plus `intervalHours`" — a pass that takes two
+hours would otherwise start two hours later every day and walk into the working day. A long or missed
+run costs its own slot and nothing more.
 
 ### update
 
@@ -120,6 +126,19 @@ eidet update --rollback       # go back to the previously installed version
 | `enrichment.autoOneLiner` | bool | `true` | Auto-generate one-liner summaries |
 | `enrichment.autoForesight` | bool | `true` | Auto-generate foresight hints |
 | `enrichment.autoConsolidation` | bool | `true` | Use LLM for consolidation merges |
+| `enrichment.driftReview.enabled` | bool | `true` | Nightly LLM re-read of stored memories for staleness |
+| `enrichment.driftReview.nightlyBatch` | int | `25` | Model calls per repo per run — the recurring cost |
+| `enrichment.driftReview.minAgeDays` | int | `7` | Ignore memories younger than this |
+| `enrichment.driftReview.reviewIntervalDays` | int | `90` | How long a verdict stands before re-review. `0` = every night |
+| `enrichment.driftReview.minModelConfidence` | float | `0.7` | Below this a verdict is recorded but not acted on |
+| `enrichment.driftReview.autonomy` | string | `Decay` | `FlagOnly`, `Decay`, or `Expire` |
+| `enrichment.reflection.enabled` | bool | `false` | Mint new memories from feedback residue (dormant) |
+
+Drift review is the only enrichment surface whose cost recurs: it is `nightlyBatch` model calls per
+repo per night. `reviewIntervalDays` is what makes it converge — a memory drops out of the candidate
+set until its verdict ages past the interval, so a corpus nobody is touching costs nothing. Setting it
+to `0` restores an unbounded nightly sweep. The startup banner's `Nightly AI:` line reports what the
+running service will actually spend.
 
 ### auth
 

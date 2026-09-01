@@ -52,10 +52,19 @@ public class UpdateConfig
     /// <see cref="AtLocalTime"/> as a time, falling back to 04:00 rather than throwing — an
     /// unparseable value should cost the configured hour, not the whole scheduler.
     /// </summary>
-    public TimeOnly ScheduledTime =>
-        TimeOnly.TryParse(AtLocalTime, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+    public TimeOnly ScheduledTime => LocalTimeSetting.Parse(AtLocalTime, new TimeOnly(4, 0));
+}
+
+/// <summary>
+/// An <c>HH:mm</c> config value read as a time. Unparseable input yields the fallback rather than
+/// throwing: a typo in config.json should cost the configured hour, not the whole scheduler.
+/// </summary>
+internal static class LocalTimeSetting
+{
+    public static TimeOnly Parse(string value, TimeOnly fallback) =>
+        TimeOnly.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
             ? parsed
-            : new TimeOnly(4, 0);
+            : fallback;
 }
 
 public class ServiceConfig
@@ -116,6 +125,19 @@ public class MaintenanceConfig
 {
     public int IntervalHours { get; set; } = 24;
     public int ConsolidationIntervalHours { get; set; } = 6;
+
+    /// <summary>
+    /// Local wall-clock time the nightly pass is anchored to, <c>HH:mm</c>. The anchor is what
+    /// keeps a long run from moving the series: without it the next run is scheduled from the
+    /// previous one's completion, so a two-hour pass walks two hours later every day until it
+    /// lands in the middle of the working day.
+    /// </summary>
+    public string AtLocalTime { get; set; } = "03:00";
+
+    /// <summary>
+    /// <see cref="AtLocalTime"/> as a time, falling back to 03:00 rather than throwing.
+    /// </summary>
+    public TimeOnly ScheduledTime => LocalTimeSetting.Parse(AtLocalTime, new TimeOnly(3, 0));
 }
 
 public class EnrichmentConfig
@@ -136,6 +158,15 @@ public class DriftReviewConfig
     public bool Enabled { get; set; } = true;             // still gated by EnrichmentConfig.Enabled at runtime
     public int NightlyBatch { get; set; } = 25;
     public int MinAgeDays { get; set; } = 7;
+
+    /// <summary>
+    /// How long a verdict stands before the entry is offered to the model again. This is what makes
+    /// the stage converge: <c>Drift.ReviewedAt</c> doubles as the coverage cursor, so without a
+    /// re-review interval the stage keeps handing the oldest verdicts back to the model forever —
+    /// <see cref="NightlyBatch"/> calls per repo per night, on memories nothing has touched since.
+    /// 0 restores that always-on behaviour.
+    /// </summary>
+    public int ReviewIntervalDays { get; set; } = 90;
     public float MinModelConfidence { get; set; } = 0.7f; // below: verdict recorded, no action
     public DriftAutonomy Autonomy { get; set; } = DriftAutonomy.Decay;
 }

@@ -21,11 +21,12 @@ internal sealed class DriftReviewStage : IMaintenanceStage
             var page = await ctx.Store.BrowseAsync(ctx.RepoId, skip, PageSize, ct: ct);
             candidates.AddRange(page.Where(e =>
                 e.IsLatest && e.LayerId == null && e.Validity.IsValidAt(ctx.Now)
-                && (ctx.Now - e.CreatedAt).TotalDays >= ctx.Drift.MinAgeDays));
+                && (ctx.Now - e.CreatedAt).TotalDays >= ctx.Drift.MinAgeDays
+                && IsDueForReview(e, ctx)));
             if (page.Count < PageSize) break;
         }
 
-        // Never-reviewed entries first, then the ones with the oldest verdicts — ReviewedAt
+        // Never-reviewed entries first, then the ones whose verdicts have aged out — ReviewedAt
         // is the coverage cursor that walks the corpus across nightly runs. DistinctBy guards
         // against concurrent stores shifting BrowseAsync pages mid-collection.
         var batch = candidates
@@ -66,6 +67,13 @@ internal sealed class DriftReviewStage : IMaintenanceStage
 
         return new StageOutcome(Name, reviewed);
     }
+
+    // A settled corpus costs nothing: an entry drops out of the candidate set until its verdict
+    // ages past ReviewIntervalDays. Supersession mints a new id, so an edited memory arrives with
+    // no verdict at all and sorts to the front of the very next run.
+    private static bool IsDueForReview(MemoryEntry entry, MaintenanceContext ctx) =>
+        entry.Drift is null
+        || (ctx.Now - entry.Drift.ReviewedAt).TotalDays >= ctx.Drift.ReviewIntervalDays;
 
     private static async Task<IReadOnlyList<string>> FindNewerSiblingOneLinersAsync(
         MaintenanceContext ctx, MemoryEntry entry, CancellationToken ct)

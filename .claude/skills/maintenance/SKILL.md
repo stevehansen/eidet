@@ -61,6 +61,13 @@ final, and `ForgetIntegrityStage` runs last so it audits what this run produced.
   `POST /api/maintenance` answers `202` + a run id past 30s, which is what makes overlap ordinary.
 - **Optional stages ship dormant** — drift, reflection, budget eviction, deprecation all no-op without
   config (drift/reflection also need an available backend).
+- **A pass over an unchanged corpus must converge to zero work** — zero *model calls* for the stages that
+  call one. Drift review's `ReviewedAt` doubles as a coverage cursor, so ordering by it and always taking
+  `NightlyBatch` re-reviewed settled memories forever; `ReviewIntervalDays` (90, `0` = old behaviour) is
+  what stops it.
+- **The nightly pass is anchored, not chained** — `NextOnGridUtc(maintenance.atLocalTime, …)`, never
+  completion + interval, which walks the pass forward by its own duration every day until it runs in the
+  middle of the working day.
 
 ## Key files / reuse
 
