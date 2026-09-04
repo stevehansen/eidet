@@ -32,7 +32,7 @@ public sealed class ReflectionEngine
     private readonly EnrichmentService _enrichment;
     private readonly MemoryService _memory;
     private readonly ILooseEndStore? _looseEnds;
-    private readonly ReflectionConfig _config;
+    private ReflectionConfig _config;
 
     // Aggressive near-duplicate suppression (matches ConsolidationEngine's existing-insight probe) — the
     // primary bound on LLM over-generation alongside the NightlyBatch cap and dormant-by-default gate.
@@ -58,6 +58,9 @@ public sealed class ReflectionEngine
     /// <see cref="ReflectionConfig.Enabled"/> and the batch/threshold knobs, read by the pipeline
     /// stage so the enable gate and the mining knobs can never diverge across two config instances.</summary>
     public ReflectionConfig Config => _config;
+
+    /// <summary>Applies reloaded settings to the next pass; a pass already running finishes on the old ones.</summary>
+    public void Reconfigure(ReflectionConfig config) => _config = config;
 
     public async Task<ReflectionResult> ReflectAsync(
         string repoId, bool dryRun = false, ReflectionSource source = ReflectionSource.All,

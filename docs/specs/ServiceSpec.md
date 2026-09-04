@@ -606,7 +606,13 @@ pinned (`--to`), and it persists its own task state *first* — the updater's fi
 the service that called it. Platform-specific work stays in one place: the Windows trampoline
 (a detached script that waits for file locks to release, retries against MCP clients that respawn
 `eidet mcp`, verifies the installed version, and restarts the service), and a direct replace on
-macOS/Linux where loaded files are not locked.
+macOS/Linux where loaded files are not locked. Both paths run `dotnet tool update` with
+`--ignore-failed-sources`: a private feed in the user's NuGet.Config with an expired token must not
+abort an update that only nuget.org can serve. And both restart the service **whether or not the
+update succeeded** — the updater's first act was to stop it, so a failed install hands the host back
+its previous version rather than leaving it without memory until someone notices. The trampoline
+appends the failing command's own output to `update.log`, since "returned error" alone was not
+diagnosable after the fact.
 
 Rollback is `eidet update --rollback`: reinstall the version recorded in `version-history.json`
 before this one. Exact and reproducible *because* releases are immutable — the predecessor is

@@ -141,7 +141,9 @@ Drift review is the only enrichment surface whose cost recurs: it is `nightlyBat
 repo per night. `reviewIntervalDays` is what makes it converge — a memory drops out of the candidate
 set until its verdict ages past the interval, so a corpus nobody is touching costs nothing. Setting it
 to `0` restores an unbounded nightly sweep. The startup banner's `Nightly AI:` line reports what the
-running service will actually spend.
+running service will actually spend, and so does `eidet enrichment reload`, which applies drift-review
+and reflection changes to the running service without a restart. Every `enrichment.*` key in this table
+is an `eidet config set` key.
 
 A private network model in front of a local one is the intended shape for `fallbacks`: the network
 cluster is fast but not always reachable, the local server always is. Each backend keeps its own

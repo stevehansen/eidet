@@ -98,6 +98,77 @@ public class UpdateCommandTests
     }
 
     [Fact]
+    public void GenerateWindowsTrampolineScript_IgnoresFailedNuGetSources()
+    {
+        // Regression (2026-09-04): a private GitHub Packages feed in the user's NuGet.Config with an
+        // expired token made every `dotnet tool update` abort with "Unable to load the service
+        // index" — five attempts, then the trampoline exited with the service still stopped.
+        var scriptPath = UpdateCommand.GenerateWindowsTrampolineScript("0.13.0", "0.14.0", restartService: true);
+
+        try
+        {
+            var content = File.ReadAllText(scriptPath);
+            Assert.Contains("dotnet tool update -g eidet --version 0.14.0 --ignore-failed-sources", content);
+        }
+        finally
+        {
+            File.Delete(scriptPath);
+        }
+    }
+
+    [Fact]
+    public void GenerateWindowsTrampolineScript_RestartsServiceEvenWhenUpdateFails()
+    {
+        // The updater's first act is to stop the service. A failed install must hand it back on
+        // the old version rather than leave the host without memory: both failure branches jump
+        // to the restart label, which precedes cleanup.
+        var scriptPath = UpdateCommand.GenerateWindowsTrampolineScript("0.13.0", "0.14.0", restartService: true);
+
+        try
+        {
+            var content = File.ReadAllText(scriptPath);
+            var updateFailedIdx = content.IndexOf("UPDATE FAILED", StringComparison.Ordinal);
+            var verifyFailedIdx = content.IndexOf("VERIFY FAILED", StringComparison.Ordinal);
+            var restartLabelIdx = content.IndexOf(":RESTART", StringComparison.Ordinal);
+            var schtasksIdx = content.IndexOf("schtasks.exe /run /tn \"Eidet\"", StringComparison.Ordinal);
+            var cleanupIdx = content.IndexOf(":CLEANUP", StringComparison.Ordinal);
+
+            Assert.True(updateFailedIdx >= 0 && content.IndexOf("goto RESTART", updateFailedIdx, StringComparison.Ordinal) > updateFailedIdx,
+                "update failure must jump to RESTART");
+            Assert.True(verifyFailedIdx >= 0 && content.IndexOf("goto RESTART", verifyFailedIdx, StringComparison.Ordinal) > verifyFailedIdx,
+                "verify failure must jump to RESTART");
+            Assert.True(restartLabelIdx > verifyFailedIdx && schtasksIdx > restartLabelIdx && cleanupIdx > schtasksIdx,
+                "the restart label must sit between the failure branches and cleanup");
+            Assert.DoesNotContain("goto CLEANUP", content);
+        }
+        finally
+        {
+            File.Delete(scriptPath);
+        }
+    }
+
+    [Fact]
+    public void GenerateWindowsTrampolineScript_LogsUpdateOutputOnFailure()
+    {
+        // "returned error" alone left the cause undiagnosable from update.log; the captured
+        // output of the failing command must be appended to it.
+        var scriptPath = UpdateCommand.GenerateWindowsTrampolineScript("0.13.0", "0.14.0", restartService: false);
+
+        try
+        {
+            var content = File.ReadAllText(scriptPath);
+            Assert.Contains("> \"%TEMP%\\eidet-update-output.txt\" 2>&1", content);
+            var failedIdx = content.IndexOf("UPDATE FAILED", StringComparison.Ordinal);
+            Assert.True(failedIdx >= 0 && content.IndexOf("type \"%TEMP%\\eidet-update-output.txt\" >>", failedIdx, StringComparison.Ordinal) > failedIdx,
+                "the failure branch must append the captured output to the log");
+        }
+        finally
+        {
+            File.Delete(scriptPath);
+        }
+    }
+
+    [Fact]
     public void GenerateWindowsTrampolineScript_IncludesServiceRestart_WhenRunning()
     {
         var scriptPath = UpdateCommand.GenerateWindowsTrampolineScript("0.1.0", "0.3.0", restartService: true);

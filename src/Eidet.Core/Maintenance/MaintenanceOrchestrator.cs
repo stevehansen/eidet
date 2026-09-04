@@ -16,7 +16,7 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
     private readonly ConsolidationEngine _consolidation;
     private readonly ReflectionEngine _reflection;
     private readonly IReadOnlyList<IMaintenanceStage> _stages;
-    private readonly DriftReviewConfig _drift;
+    private DriftReviewConfig _drift;
     private readonly BudgetConfig _budget;
     private readonly DeprecateConfig _deprecate;
 
@@ -47,6 +47,19 @@ public sealed class MaintenanceOrchestrator : IMaintenanceRunner
         _drift = drift ?? new();
         _budget = budget ?? new();
         _deprecate = deprecate ?? new();
+    }
+
+    /// <summary>
+    /// Applies reloaded enrichment settings to the next pass. The pipeline captured its
+    /// <see cref="DriftReviewConfig"/> and the <see cref="ReflectionEngine"/> its
+    /// <see cref="ReflectionConfig"/> at construction, so without this a live config reload changed
+    /// what the banner and <c>/api/status</c> reported but not what ran at night. A pass already
+    /// in flight finishes on the values it started with.
+    /// </summary>
+    public void Reconfigure(DriftReviewConfig drift, ReflectionConfig reflection)
+    {
+        _drift = drift;
+        _reflection.Reconfigure(reflection);
     }
 
     public static IReadOnlyList<IMaintenanceStage> DefaultStages() =>

@@ -151,6 +151,8 @@ public class EidetApiServer
             enabled = result.Enabled,
             provider = result.Provider,
             url = result.Url,
+            nightlyModelWorkEnabled = result.NightlyModelWorkEnabled,
+            nightlyModelWork = result.NightlyModelWork,
             model = result.Model,
             healthy = result.Healthy,
         });

@@ -142,6 +142,14 @@ internal static class ConfigHelper
         ["enrichment.autoOneLiner"] = (c => c.Enrichment.AutoOneLiner.ToString(), (c, v) => c.Enrichment.AutoOneLiner = bool.Parse(v)),
         ["enrichment.autoForesight"] = (c => c.Enrichment.AutoForesight.ToString(), (c, v) => c.Enrichment.AutoForesight = bool.Parse(v)),
         ["enrichment.autoConsolidation"] = (c => c.Enrichment.AutoConsolidation.ToString(), (c, v) => c.Enrichment.AutoConsolidation = bool.Parse(v)),
+        // The nightly model spend (the banner's "Nightly AI:" line) is decided here; until these keys
+        // existed the only way to turn drift review on or off was editing the file by hand.
+        ["enrichment.driftReview.enabled"] = (c => c.Enrichment.DriftReview.Enabled.ToString(), (c, v) => c.Enrichment.DriftReview.Enabled = bool.Parse(v)),
+        ["enrichment.driftReview.nightlyBatch"] = (c => c.Enrichment.DriftReview.NightlyBatch.ToString(), (c, v) => c.Enrichment.DriftReview.NightlyBatch = int.Parse(v)),
+        ["enrichment.driftReview.minAgeDays"] = (c => c.Enrichment.DriftReview.MinAgeDays.ToString(), (c, v) => c.Enrichment.DriftReview.MinAgeDays = int.Parse(v)),
+        ["enrichment.driftReview.reviewIntervalDays"] = (c => c.Enrichment.DriftReview.ReviewIntervalDays.ToString(), (c, v) => c.Enrichment.DriftReview.ReviewIntervalDays = int.Parse(v)),
+        ["enrichment.driftReview.autonomy"] = (c => c.Enrichment.DriftReview.Autonomy.ToString(), (c, v) => c.Enrichment.DriftReview.Autonomy = Enum.Parse<DriftAutonomy>(v, true)),
+        ["enrichment.reflection.enabled"] = (c => c.Enrichment.Reflection.Enabled.ToString(), (c, v) => c.Enrichment.Reflection.Enabled = bool.Parse(v)),
 
         // Auth
         ["auth.enabled"] = (c => c.Auth.Enabled.ToString(), (c, v) => c.Auth.Enabled = bool.Parse(v)),

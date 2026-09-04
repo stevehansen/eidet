@@ -221,6 +221,14 @@ this run produced.
 
 ## Gotchas
 
+- **The pipeline captures its drift-review and reflection settings at construction, and a live config
+  reload reaches them only through `MaintenanceOrchestrator.Reconfigure`.** `POST
+  /api/config/enrichment/reload` calls it (hosting layer) with the fresh `DriftReviewConfig` and
+  `ReflectionConfig`, so a toggled `enrichment.driftReview.enabled` applies to the next pass without a
+  restart. Before that existed the endpoint reported success while the nightly pass kept the old values
+  (STRIDE E-7 residual, v1.22 → closed v1.24). A pass already running finishes on what it started with. If
+  a new stage grows its own config object, route it through `Reconfigure` too — otherwise the banner and
+  `/api/status` describe one thing and the night does another.
 - **In-memory fakes hide the stale-write failure entirely.** Every store fake in the suite hands back the
   instance it stored, so stages share state by accident and no write can revert another — which is why a
   1,500-test suite reported health the field corpus did not have. `SharedEntryStoreTests.StaleQueryStore`

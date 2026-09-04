@@ -17,7 +17,9 @@ using Raven.Client.Documents;
 namespace Eidet.Service;
 
 /// <summary>What an enrichment config reload applied, as reported to the caller.</summary>
-public sealed record EnrichmentReloadResult(bool Enabled, string Provider, string Url, string Model, bool Healthy);
+public sealed record EnrichmentReloadResult(
+    bool Enabled, string Provider, string Url, string Model, bool Healthy,
+    bool NightlyModelWorkEnabled, string NightlyModelWork);
 
 /// <summary>
 /// Shared hosting logic used by both the console ServeCommand and the Windows Service.
@@ -29,6 +31,7 @@ public sealed class EidetHost : IDisposable
     private readonly EnrichmentService _enrichment;
     private readonly ScheduledTaskService _scheduler;
     private readonly EnrichmentWorker _enrichmentWorker;
+    private readonly MaintenanceOrchestrator _maintenance;
     private readonly EidetApiServer _apiServer;
     private readonly EidetConfig _config;
     private HealthMonitor? _healthMonitor;
@@ -55,15 +58,15 @@ public sealed class EidetHost : IDisposable
     /// turning it off looked identical to leaving it on. Captured at startup like the other banner
     /// values: it describes the configuration this process is running, not the file on disk.
     /// </summary>
-    public bool NightlyModelWorkEnabled { get; }
-    public string NightlyModelWork { get; }
+    public bool NightlyModelWorkEnabled { get; private set; }
+    public string NightlyModelWork { get; private set; }
     public string RavenUrl { get; }
     public string EnrichmentUrl { get; private set; }
     public int EnrichmentFallbackCount { get; private set; }
     public bool HooksEnabled { get; }
 
     private EidetHost(IDocumentStore store, IEidetStore eidetStore, EnrichmentService enrichment,
-        ScheduledTaskService scheduler, EnrichmentWorker enrichmentWorker,
+        ScheduledTaskService scheduler, EnrichmentWorker enrichmentWorker, MaintenanceOrchestrator maintenance,
         EidetApiServer apiServer, EidetConfig config,
         string bind, int port)
     {
@@ -72,6 +75,7 @@ public sealed class EidetHost : IDisposable
         _enrichment = enrichment;
         _scheduler = scheduler;
         _enrichmentWorker = enrichmentWorker;
+        _maintenance = maintenance;
         _apiServer = apiServer;
         _config = config;
         BindAddress = bind;
@@ -142,12 +146,13 @@ public sealed class EidetHost : IDisposable
             eidetStore, enrichment, memory: memorySvc, looseEnds: looseEndStore, config: config.Enrichment.Reflection);
         // Coalesced so the scheduler's tick and a hand-triggered REST run cannot rewrite one repo
         // at the same time — the second caller rides the first run instead of starting a second.
-        IMaintenanceRunner maintenanceRunner = new CoalescingMaintenanceRunner(new MaintenanceOrchestrator(
+        var maintenance = new MaintenanceOrchestrator(
             eidetStore, memorySvc, enrichment, consolidationEngine,
             drift: config.Enrichment.DriftReview,
             reflection: reflectionEngine,
             budget: config.Memory.Budget,
-            deprecate: config.Memory.Deprecate));
+            deprecate: config.Memory.Deprecate);
+        IMaintenanceRunner maintenanceRunner = new CoalescingMaintenanceRunner(maintenance);
         var exportSvc = new ExportService(eidetStore, memory: memorySvc);
         var integrityAuditor = new IntegrityAuditor(memorySvc, eidetStore);
         var qualitySvc = new QualityService(eidetStore, integrityAuditor);
@@ -183,7 +188,7 @@ public sealed class EidetHost : IDisposable
         });
         var enrichmentWorker = new EnrichmentWorker(store, enrichment, memorySvc);
 
-        var host = new EidetHost(store, eidetStore, enrichment, scheduler, enrichmentWorker, apiServer, config, actualBind, actualPort);
+        var host = new EidetHost(store, eidetStore, enrichment, scheduler, enrichmentWorker, maintenance, apiServer, config, actualBind, actualPort);
         apiServer.EnrichmentReloadHandler = host.ReloadEnrichmentAsync;
         return host;
     }
@@ -191,14 +196,17 @@ public sealed class EidetHost : IDisposable
     /// <summary>
     /// Re-reads the Enrichment section of config.json and applies it to the running service:
     /// swaps the enrichment adapter (every consumer shares the facade), retargets the health
-    /// monitor's probe, and starts the enrich-on-store worker when enrichment just became
-    /// enabled. Only the Enrichment section is reapplied — everything else needs a restart.
+    /// monitor's probes, hands the drift-review and reflection settings to the maintenance
+    /// pipeline for its next pass, and starts the enrich-on-store worker when enrichment just
+    /// became enabled. Only the Enrichment section is reapplied — everything else needs a restart.
     /// </summary>
     public async Task<EnrichmentReloadResult> ReloadEnrichmentAsync(CancellationToken ct = default)
     {
         var fresh = ConfigManager.Load().Enrichment;
         _config.Enrichment = fresh; // shared root config — keeps /api/status truthful
         _enrichment.Reconfigure(fresh);
+        _maintenance.Reconfigure(fresh.DriftReview, fresh.Reflection);
+        (NightlyModelWorkEnabled, NightlyModelWork) = DescribeNightlyModelWork(fresh);
 
         EnrichmentEnabled = fresh.Enabled;
         EnrichmentProvider = fresh.Provider;
@@ -212,7 +220,8 @@ public sealed class EidetHost : IDisposable
 
         _healthMonitor?.ReconfigureEnrichment(fresh, EnrichmentHealthy);
 
-        return new EnrichmentReloadResult(fresh.Enabled, fresh.Provider.ToString(), fresh.Url, fresh.Model, EnrichmentHealthy);
+        return new EnrichmentReloadResult(fresh.Enabled, fresh.Provider.ToString(), fresh.Url, fresh.Model, EnrichmentHealthy,
+            NightlyModelWorkEnabled, NightlyModelWork);
     }
 
     /// <summary>

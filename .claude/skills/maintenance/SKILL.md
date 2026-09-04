@@ -83,6 +83,9 @@ final, and `ForgetIntegrityStage` runs last so it audits what this run produced.
 
 ## Gotchas
 
+- Drift-review and reflection config are captured at construction; a live reload reaches them only via
+  `MaintenanceOrchestrator.Reconfigure` (called by the enrichment reload endpoint). A stage with its own
+  config object must be routed through it, or the banner describes one thing and the night does another.
 - `FadeMemCurve.Defaults` is keyed by `MemoryType` — a new type not added there throws at decay time
   *and* breaks recall recency.
 - Dedup's semantic and lexical thresholds are a pair; move one and duplicate behaviour shifts silently.

@@ -153,4 +153,46 @@ public class ConfigCommandTests
         Assert.Contains(pairs, p => p.Key == "auth.enabled");
         Assert.Contains(pairs, p => p.Key == "auth.requireForNonLocalhost");
     }
+
+    [Fact]
+    public void SetValue_DriftReviewKeys_ReachTheNestedConfig()
+    {
+        // The nightly model spend is decided by these; until they existed the only way to turn
+        // drift review on or off was editing config.json by hand.
+        var config = new EidetConfig();
+        Assert.True(ConfigHelper.SetValue(config, "enrichment.driftReview.enabled", "false"));
+        Assert.True(ConfigHelper.SetValue(config, "enrichment.driftReview.nightlyBatch", "10"));
+        Assert.True(ConfigHelper.SetValue(config, "enrichment.driftReview.reviewIntervalDays", "30"));
+        Assert.True(ConfigHelper.SetValue(config, "enrichment.driftReview.autonomy", "expire"));
+        Assert.True(ConfigHelper.SetValue(config, "enrichment.reflection.enabled", "true"));
+
+        Assert.False(config.Enrichment.DriftReview.Enabled);
+        Assert.Equal(10, config.Enrichment.DriftReview.NightlyBatch);
+        Assert.Equal(30, config.Enrichment.DriftReview.ReviewIntervalDays);
+        Assert.Equal(DriftAutonomy.Expire, config.Enrichment.DriftReview.Autonomy);
+        Assert.True(config.Enrichment.Reflection.Enabled);
+        Assert.Equal("False", ConfigHelper.GetValue(config, "enrichment.driftReview.enabled"));
+    }
+
+    [Fact]
+    public void ApiKey_NeverPrintsItsValue()
+    {
+        var config = new EidetConfig();
+        Assert.Equal("", ConfigHelper.GetValue(config, "enrichment.apiKey"));
+        ConfigHelper.SetValue(config, "enrichment.apiKey", "sk-secret");
+        Assert.Equal("sk-secret", config.Enrichment.ApiKey);
+        Assert.Equal("(set)", ConfigHelper.GetValue(config, "enrichment.apiKey"));
+        Assert.DoesNotContain(ConfigHelper.GetAllValues(config), p => p.Value.Contains("sk-secret"));
+    }
+
+    [Fact]
+    public void Thinking_DefaultUnsetsIt()
+    {
+        var config = new EidetConfig();
+        Assert.Equal("default", ConfigHelper.GetValue(config, "enrichment.thinking"));
+        ConfigHelper.SetValue(config, "enrichment.thinking", "false");
+        Assert.False(config.Enrichment.Thinking);
+        ConfigHelper.SetValue(config, "enrichment.thinking", "default");
+        Assert.Null(config.Enrichment.Thinking);
+    }
 }

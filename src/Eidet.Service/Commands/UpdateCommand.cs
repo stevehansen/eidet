@@ -540,8 +540,13 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
         //    supervising `eidet mcp` respawns it and re-locks the tool store, so we re-kill
         //    immediately before each attempt and retry to out-race the respawn
         // 3. Verifies the install and records version history from the new binary
-        // 4. Restarts the scheduled task if it was running
-        // 5. Writes a brief log file
+        // 4. Restarts the scheduled task if it was running — on success AND on failure. The
+        //    updater's first act was to stop the service; a failed update must hand it back on
+        //    the old version, not leave the host without memory until someone notices (which
+        //    is what happened when an unrelated, credential-less NuGet feed made every
+        //    `dotnet tool update` abort — hence --ignore-failed-sources as well).
+        // 5. Writes a brief log file, including the update's own output when it failed —
+        //    "returned error" alone left the cause undiagnosable from the log
         // 6. Cleans itself up
         var script = $"""
             @echo off
@@ -574,13 +579,18 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             echo Killing remaining eidet processes (attempt %ATTEMPT%)...
             taskkill /f /im eidet.exe 2>nul
             echo Running dotnet tool update...
-            dotnet tool update -g eidet --version {latestVersion}
+            REM --ignore-failed-sources: a feed unrelated to eidet (a private GitHub Packages source
+            REM whose token expired) otherwise aborts the whole update with "Unable to load the
+            REM service index", and nuget.org is the only source that can serve eidet anyway.
+            dotnet tool update -g eidet --version {latestVersion} --ignore-failed-sources > "%TEMP%\eidet-update-output.txt" 2>&1
+            type "%TEMP%\eidet-update-output.txt"
             if not errorlevel 1 goto UPDATE_OK
             if %ATTEMPT% geq 5 (
                 echo UPDATE FAILED >> "{logPath}"
                 echo %date% %time% - Update from v{currentVersion} to v{latestVersion} FAILED after %ATTEMPT% attempts >> "{logPath}"
-                echo dotnet tool update -g eidet --version {latestVersion} returned error >> "{logPath}"
-                goto CLEANUP
+                echo dotnet tool update -g eidet --version {latestVersion} --ignore-failed-sources returned error: >> "{logPath}"
+                type "%TEMP%\eidet-update-output.txt" >> "{logPath}"
+                goto RESTART
             )
             echo Update attempt %ATTEMPT% failed - store likely re-locked by a respawned mcp. Retrying...
             timeout /t 2 /nobreak >nul
@@ -596,13 +606,15 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
                 echo VERIFY FAILED >> "{logPath}"
                 echo %date% %time% - Update from v{currentVersion} to v{latestVersion} could not be verified >> "{logPath}"
                 echo Installed binary did not report v{latestVersion} — dotnet tool update may have silently re-resolved. >> "{logPath}"
-                goto CLEANUP
+                goto RESTART
             )
 
             echo %date% %time% - Updated from v{currentVersion} to v{latestVersion} >> "{logPath}"
             echo Update successful.
+
+            :RESTART
+            REM Reached on success and on failure alike: whatever version is installed now must serve.
             {(restartService ? $"""
-            REM Restart the scheduled task
             echo Restarting Eidet service...
             schtasks.exe /run /tn "Eidet"
             if errorlevel 1 (
@@ -616,7 +628,8 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             echo %date% %time% - Service was not running, skipping restart >> "{logPath}"
             """)}
             :CLEANUP
-            REM Clean up this script
+            REM Clean up this script and the captured update output
+            del "%TEMP%\eidet-update-output.txt" 2>nul
             (goto) 2>nul & del "%~f0"
             """;
 
@@ -654,8 +667,10 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             // Pin the version explicitly: `dotnet tool` falls back to the NuGet flat
             // container when an exact version is requested, sidestepping the search-index
             // lag (10–30 min after publish) that otherwise causes a silent re-resolve to
-            // the previously installed version.
-            var (exitCode, output) = await RunProcessAsync("dotnet", $"tool update -g eidet --version {latestVersion}", ct);
+            // the previously installed version. Ignore failed sources: a private feed in the
+            // user's NuGet.Config with an expired token otherwise aborts the whole update,
+            // and nuget.org is the only source that can serve eidet anyway.
+            var (exitCode, output) = await RunProcessAsync("dotnet", $"tool update -g eidet --version {latestVersion} --ignore-failed-sources", ct);
 
             if (exitCode == 0)
                 return (true, null);

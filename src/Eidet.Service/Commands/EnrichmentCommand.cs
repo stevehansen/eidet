@@ -139,6 +139,15 @@ internal static class EnrichmentReloadClient
                         AnsiConsole.MarkupLine("  [green]✓[/] Service reloaded — enrichment disabled");
                     else
                         AnsiConsole.MarkupLine($"  [green]✓[/] Service reloaded — {(healthy ? "[green]Connected[/]" : "[yellow]Unavailable[/]")} ({Markup.Escape(model ?? "")} @ {Markup.Escape(url ?? "")})");
+                    // Same verdict as the startup banner, so "is the nightly model work on?" is
+                    // answered by the reload rather than by the next restart.
+                    if (root.TryGetProperty("nightlyModelWork", out var nightly))
+                    {
+                        var nightlyOn = root.TryGetProperty("nightlyModelWorkEnabled", out var ne) && ne.GetBoolean();
+                        AnsiConsole.MarkupLine(nightlyOn
+                            ? $"    Nightly AI: [green]Active[/] ({Markup.Escape(nightly.GetString() ?? "")})"
+                            : $"    Nightly AI: [dim]Off[/] ({Markup.Escape(nightly.GetString() ?? "")})");
+                    }
                 }
                 return 0;
             case 401 or 403:

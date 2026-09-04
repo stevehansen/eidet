@@ -45,7 +45,10 @@ Parsers for the structured calls: DriftReviewParser → DriftReview · Reflectio
 
 `EnrichmentService.CreateFromConfig` and `Reconfigure` share one mapping function, which is what makes
 `POST /api/config/enrichment/reload` safe: the adapter is swapped under a lock and every holder of the
-facade sees the new backend on its next call.
+facade sees the new backend on its next call. The same reload hands the drift-review and reflection
+settings to the maintenance pipeline (`MaintenanceOrchestrator.Reconfigure`, see **maintenance**) and
+re-renders the `Nightly AI:` verdict, which `eidet enrichment reload` prints — so turning drift review
+on or off is a reload, not a restart.
 
 ## Invariants & rules
 
