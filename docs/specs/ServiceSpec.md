@@ -227,6 +227,7 @@ Interactive wizard that:
 3. **Detects enrichment backends** — probes both Ollama (localhost:11434, `/api/version`) and OpenAI-compatible servers such as LM Studio (localhost:1234, `/v1/models`), plus the currently configured URL
    - Exactly one found: suggests enabling it; a tie asks which to use (non-interactive prefers Ollama)
    - OpenAI-compatible servers get their model picked from the live `/v1/models` list (a model id from the server is required for it to work at all)
+   - A custom OpenAI-compatible URL is asked for a bearer token (`enrichment.apiKey`, for a private network cluster) and whether to turn the model's thinking off (`enrichment.thinking`); switching away from a working backend offers to keep it as a fallback (`enrichment.fallbacks`)
    - None found: explains benefits, offers skip (enrichment is optional; `eidet enrichment setup` configures it later)
 4. **Configures MCP** — detects Claude Code, Claude Desktop, offers to add MCP config
 5. **Installs service** — registers as system service, starts it
@@ -664,7 +665,9 @@ eidet instructions --project           # Create in project CLAUDE.md
 ```bash
 eidet enrichment setup                 # Interactive wizard: detect Ollama/LM Studio, pick
                                        # provider + URL + model (from the backend's live model
-                                       # list), save all keys atomically, offer live-apply
+                                       # list), API key + thinking for a network cluster, keep
+                                       # the previous backend as a fallback, save all keys
+                                       # atomically, offer live-apply
 eidet enrichment reload                # Tell the running service to reapply the Enrichment
                                        # config section without a restart (POST
                                        # /api/config/enrichment/reload; --api-key <KEY> when

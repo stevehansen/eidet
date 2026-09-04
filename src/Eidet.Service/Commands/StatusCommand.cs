@@ -99,6 +99,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
                     enabled = config.Enrichment.Enabled,
                     provider = config.Enrichment.Provider.ToString(),
                     url = config.Enrichment.Url,
+                    fallbacks = config.Enrichment.Fallbacks.Count,
                     unenriched = backlog?.Count,
                     oldestUnenriched = backlog?.OldestCreatedAt,
                 },
@@ -149,7 +150,8 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
             if (ravenVersion != null)
                 AnsiConsole.MarkupLine($"  RavenDB:    v{ravenVersion}");
 
-            AnsiConsole.MarkupLine($"  Enrichment: {(config.Enrichment.Enabled ? $"{config.Enrichment.Provider} @ {config.Enrichment.Url}{FormatBacklog(backlog)}" : "[dim]Disabled[/]")}");
+            var fallbacks = config.Enrichment.Fallbacks.Count switch { 0 => "", 1 => " (+1 fallback)", var n => $" (+{n} fallbacks)" };
+            AnsiConsole.MarkupLine($"  Enrichment: {(config.Enrichment.Enabled ? $"{config.Enrichment.Provider} @ {config.Enrichment.Url}{fallbacks}{FormatBacklog(backlog)}" : "[dim]Disabled[/]")}");
             AnsiConsole.MarkupLine($"  Config:     {ConfigManager.GetConfigPath()}");
             AnsiConsole.MarkupLine($"  Logs:       {Path.Combine(ConfigManager.GetConfigDir(), "logs", "eidet.log")}");
             AnsiConsole.MarkupLine($"  MCP:        {FormatMcpClients(mcpClients)}");

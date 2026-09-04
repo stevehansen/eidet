@@ -2,15 +2,17 @@
 
 The optional local-LLM layer — the only place in Eidet where a model touches a memory.
 
-**Status:** current as of 0.10.0 (setup wizard + live config reload) · **Governing issues:**
+**Status:** current as of 0.14.0 (network-first fallback chain, bearer auth, thinking switch) · **Governing issues:**
 [#21](https://github.com/stevehansen/eidet/issues/21) (OpenAI-compatible backends),
 [#60](https://github.com/stevehansen/eidet/issues/60) (Reflector prompts), plus the nightly drift review.
 **Priming skill:** [`.claude/skills/enrichment/SKILL.md`](../../.claude/skills/enrichment/SKILL.md)
 
 ## What it is
 
-A ports-and-adapters wrapper around a local model server (Ollama-native or any OpenAI-compatible
-endpoint: LM Studio, llama.cpp, vLLM). It generates the derived fields a memory can live without —
+A ports-and-adapters wrapper around one or more model servers (Ollama-native or any OpenAI-compatible
+endpoint: LM Studio, llama.cpp, vLLM — on this machine, or a private network cluster reached with a
+bearer token). Backends form an ordered chain: a fast network model first, an always-on local one
+behind it. It generates the derived fields a memory can live without —
 `Summary`, `OneLiner`, `ForesightHint`, extra `Entities` — plus three analytical calls: observation
 merging for consolidation, drift review, and reflection proposals.
 
@@ -22,11 +24,17 @@ stages that schedule it (**maintenance**), and it never decides whether a memory
 
 ```
 EnrichmentService (facade — owns "which fields does this memory still need", merge semantics)
-   └─ IEnrichmentPort  ── OllamaEnrichmentAdapter      (native /api/generate)
-                       ├─ OpenAiEnrichmentAdapter      (/v1/chat/completions)
+   └─ IEnrichmentPort  ── OllamaEnrichmentAdapter      (native /api/chat, think on/off)
+                       ├─ OpenAiEnrichmentAdapter      (/v1/chat/completions, optional chat_template_kwargs.thinking)
+                       ├─ FallbackEnrichmentAdapter    (ordered chain of the above — one per configured backend)
                        ├─ NullEnrichmentAdapter        (IsAvailable == false; the disabled default)
                        └─ InMemoryEnrichmentAdapter    (public, for tests)
-        shared: EnrichmentHealthCache · EnrichmentPrompts · OllamaTextSanitizer
+        shared: EnrichmentHttp (URL normalisation, bearer auth, probe path) · EnrichmentHealthCache ·
+                EnrichmentPrompts · OllamaTextSanitizer
+
+Config: EnrichmentConfig IS the primary EnrichmentBackendConfig (flat keys predate fallbacks) and
+carries Fallbacks: [EnrichmentBackendConfig]; Backends = [primary, ..fallbacks] is the derived view
+every consumer iterates.
 
 Two drivers, one net:
   EnrichmentWorker      — RavenDB data subscription, fires the moment a memory is stored
@@ -71,7 +79,25 @@ facade sees the new backend on its next call.
   top-scored selection silently skipped low-scoring documents in repos past the scan cap.
 - **Health verdicts expire optimistically.** Once the cache goes stale, `IsAvailable` returns true
   regardless of the last verdict, so a backend that comes back is re-probed instead of being pinned off
-  forever.
+  forever. The probe itself has a 5-second budget, separate from the 120-second completion timeout,
+  so a black-holed host (a VPN that is not up) costs seconds before the chain moves on.
+- **The chain is tried in config order, per call, and the first backend that is up *and answers* wins.**
+  A backend that is down, rejects the request, fails mid-call, or returns an empty completion hands
+  the request to the next; the caller never learns which one answered except through `ModelName`,
+  which names the backend behind the most recent answer (the primary's until something has answered).
+  A recovered primary takes over on its next call — nothing pins the chain to the fallback.
+- **Every surface that reaches a backend goes through `EnrichmentHttp`.** URL normalisation (a
+  trailing `/v1` is dropped — the adapters add the versioned path themselves), the bearer token, and
+  the provider's probe path live in one place, so a backend that needs auth is reachable from the
+  adapter, model discovery, the health monitor and `eidet doctor` alike — or from none of them.
+- **Thinking is a per-backend switch, and unset means absent.** `thinking: false` rides as
+  `chat_template_kwargs.thinking` on OpenAI-compatible servers (the field the vLLM/llama.cpp chat
+  template honours) and as Ollama's native `think`. Unset puts nothing on the wire: a strict gateway
+  rejects unknown fields, and a rejected request would surface only as a silently unenriched memory.
+  Measured 2026-09-04 on deepseek-v4-flash-0731 (vLLM): default answered with 95 completion tokens
+  and its thoughts in a separate `message.reasoning` field; `thinking: false` answered with 38 in
+  under half the time. `reasoning_effort: "none"` happened to work on that build too, but
+  `low`/`minimal` are accepted and ignored, so the template kwarg is the one we send.
 - **Model output is advisory content only.** Every trust-bearing field on a synthesized memory
   (importance, confidence, provenance) is stamped by the calling engine, and LLM-fresh text passes the
   write gates (**maintenance**, **writepath**).
@@ -83,6 +109,9 @@ facade sees the new backend on its next call.
 | `src/Eidet.Core/Enrichment/EnrichmentService.cs` | The facade: field policy, `Reconfigure`, the analytical calls |
 | `src/Eidet.Core/Enrichment/IEnrichmentPort.cs` | The port + `EnrichmentPrompt` / `EnrichmentRequest` |
 | `src/Eidet.Core/Enrichment/{OllamaEnrichmentAdapter,OpenAiEnrichmentAdapter}.cs` | The two real backends |
+| `src/Eidet.Core/Enrichment/FallbackEnrichmentAdapter.cs` | The chain: one port over N backends, first-up-and-answering wins |
+| `src/Eidet.Core/Enrichment/EnrichmentHttp.cs` | URL normalisation, bearer auth, probe path — the only way to build a backend `HttpClient` |
+| `src/Eidet.Core/Configuration/EidetConfig.cs` (`EnrichmentBackendConfig`, `EnrichmentConfig.Fallbacks`/`Backends`) | One backend's shape; the primary-plus-fallbacks view |
 | `src/Eidet.Core/Enrichment/{NullEnrichmentAdapter,InMemoryEnrichmentAdapter}.cs` | Disabled default; test double (public on purpose) |
 | `src/Eidet.Core/Enrichment/EnrichmentPrompts.cs` | Every prompt string, and residue rendering |
 | `src/Eidet.Core/Enrichment/OllamaTextSanitizer.cs` | Strips `<channel\|>` / `<think>` CoT leakage |
@@ -90,7 +119,8 @@ facade sees the new backend on its next call.
 | `src/Eidet.Core/Enrichment/{DriftReviewParser,ReflectionProposalParser}.cs` | Tolerant parsers — unparseable ⇒ skip and retry later |
 | `src/Eidet.Core/Services/EnrichmentWorker.cs` | The store-time subscription driver |
 | `src/Eidet.Core/Maintenance/Stages/{OllamaEnrichment,EnrichmentCleanup,HeuristicEnrichmentBackfill}Stage.cs` | Nightly sweep, retroactive CoT cleanup, heuristic backfill |
-| `src/Eidet.Service/Commands/EnrichmentCommand.cs` | `eidet enrichment setup` / `reload` — backend detection and atomic config write |
+| `src/Eidet.Service/Commands/EnrichmentCommand.cs` | `eidet enrichment setup` / `reload` — backend detection, API key + thinking prompts, keep-as-fallback offer, atomic config write |
+| `src/Eidet.Service/HealthMonitor.cs` · `src/Eidet.Service/Commands/DoctorCommand.cs` | Probe the chain directly (bypassing the adapters' cache); the monitor names the answering backend, doctor prints one row per backend |
 | `src/Eidet.Core/Services/{OllamaService,OpenAiCompatibleService}.cs` | Lower-level backend clients (status, model listing) used by setup/status |
 
 ## Gotchas
@@ -101,9 +131,24 @@ facade sees the new backend on its next call.
 - **The health cache is per-adapter instance**, so a reload starts from an unknown verdict (and
   therefore an optimistic `IsAvailable`). A `status` call right after a reload can look healthy before
   the first real probe.
-- **CoT sanitizing runs on fresh responses only inside the Ollama adapter** —
+- **CoT sanitizing runs on fresh responses only inside the adapters** —
   `EnrichmentCleanupStage` exists precisely because fields stored before it existed are still corrupt.
-  Don't assume stored `Summary` values are clean.
+  Don't assume stored `Summary` values are clean. A vLLM host started *with* a reasoning parser puts
+  the thoughts in a separate `reasoning`/`reasoning_content` field the adapter never reads; one
+  started without puts them inline as `<think>` blocks, which the sanitizer strips. Either way the
+  answer is correct — turning thinking off is a cost lever, not a correctness fix.
+- **A wrong or missing bearer token looks exactly like an offline server.** `/v1/models` answers 401,
+  the health cache records "unhealthy", and the adapter falls through to the next backend or returns
+  null — no error is logged. `eidet doctor` is the surface that tells the two apart (it prints the
+  HTTP status and points at `apiKey`); the wizard says "offline, or the API key rejected".
+- **`ModelName` on a chain is the *last answering* backend, not the configured primary.** Drift
+  reviews stamp `review.Model` from it right after the call, so a review made while the primary was
+  down is honestly attributed to the fallback. Concurrent calls can interleave, so treat it as a
+  label, not a lock.
+- **The flat `provider`/`url`/`model`/`apiKey`/`thinking` keys *are* the primary backend.**
+  `EnrichmentConfig` inherits `EnrichmentBackendConfig`; there is no separate `primary` object, and
+  `Backends` is a derived view that is never serialised. `eidet config set` addresses the primary's
+  keys only — fallbacks are edited in the file or through the wizard.
 - **The nightly enrichment batch is capped per repo per run**, so a large unenriched backlog drains over
   several nights. `GetUnenrichedStatsAsync` is how the backlog becomes visible.
 - **The drift review folds age and "today" into the prompt text** because the request type carries only
@@ -148,6 +193,15 @@ facade sees the new backend on its next call.
 - `tests/Eidet.Core.Tests/Services/EnrichmentWorkerTests.cs` — settles the subscription driver,
   including that a failed enrichment is still acked.
 - `tests/Eidet.Core.Tests/Services/EnrichmentHealthCacheTests.cs` — settles the optimistic-expiry rule.
+- `tests/Eidet.Core.Tests/Enrichment/FallbackEnrichmentAdapterTests.cs` — **the authority on the chain**:
+  first-up-and-answering wins, down/empty falls through, `ModelName` follows the answer, a recovered
+  primary takes over.
+- `tests/Eidet.Core.Tests/Enrichment/{EnrichmentHttpTests,OpenAiEnrichmentAdapterTests}.cs` — settle
+  `/v1` normalisation, the bearer header, and that the thinking kwarg is present only when configured.
+- `tests/Eidet.Core.Tests/Configuration/ConfigManagerTests.cs` (`Enrichment_ChainWithKeyAndThinking_RoundTrips`,
+  `Enrichment_LegacyFlatConfig_HasNoFallbacks`) — settle the config shape and that `Backends` is never
+  persisted.
+- `tests/Eidet.Service.Tests/HealthMonitorTests.cs` — the monitor reports the chain (`+N fallback`) on reload.
 - `tests/Eidet.Core.Tests/Maintenance/OllamaEnrichmentStageTests.cs` — settles the retry sweep selecting
   unenriched (not top-scored) entries.
 - `tests/Eidet.Core.Tests/Services/{OllamaServiceTests,OpenAiCompatibleServiceTests}.cs` — settle backend

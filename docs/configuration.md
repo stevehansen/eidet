@@ -123,6 +123,9 @@ eidet update --rollback       # go back to the previously installed version
 | `enrichment.ollamaEnabled` | bool | `false` | Enable Ollama enrichment |
 | `enrichment.ollamaUrl` | string | `http://localhost:11434` | Ollama API URL |
 | `enrichment.ollamaModel` | string | `gemma4` | Model for enrichment tasks |
+| `enrichment.apiKey` | string | — | Bearer token sent with every request. For a private network cluster behind a gateway; local servers ignore it. `config get`/`list` print `(set)`, never the value |
+| `enrichment.thinking` | bool | *unset* | `false` turns a reasoning model's thinking off (`chat_template_kwargs.thinking` on vLLM/llama.cpp, `think` on Ollama) — ~5x cheaper per call. Unset sends nothing; `default` unsets |
+| `enrichment.fallbacks` | array | `[]` | Backends tried in order when the one before is offline or fails a call — each with `provider`, `url`, `model`, optional `apiKey`, `thinking`. Edit in the file or via `eidet enrichment setup` |
 | `enrichment.autoOneLiner` | bool | `true` | Auto-generate one-liner summaries |
 | `enrichment.autoForesight` | bool | `true` | Auto-generate foresight hints |
 | `enrichment.autoConsolidation` | bool | `true` | Use LLM for consolidation merges |
@@ -139,6 +142,29 @@ repo per night. `reviewIntervalDays` is what makes it converge — a memory drop
 set until its verdict ages past the interval, so a corpus nobody is touching costs nothing. Setting it
 to `0` restores an unbounded nightly sweep. The startup banner's `Nightly AI:` line reports what the
 running service will actually spend.
+
+A private network model in front of a local one is the intended shape for `fallbacks`: the network
+cluster is fast but not always reachable, the local server always is. Each backend keeps its own
+health verdict (cached five minutes, probed with a five-second budget), so an offline primary costs
+one probe per five minutes and every call goes straight to the fallback. `eidet doctor` shows one row
+per backend; the service log names the backend that answers and reports when a fallback takes over.
+The URL may be written with or without a trailing `/v1` — both mean the same server.
+
+```json
+{
+  "enrichment": {
+    "enabled": true,
+    "provider": "OpenAiCompatible",
+    "url": "https://cortex.example.com",
+    "model": "deepseek-v4-flash",
+    "apiKey": "…",
+    "thinking": false,
+    "fallbacks": [
+      { "provider": "Ollama", "url": "http://localhost:11434", "model": "gemma4" }
+    ]
+  }
+}
+```
 
 ### auth
 

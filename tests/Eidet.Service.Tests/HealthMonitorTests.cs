@@ -1,17 +1,26 @@
 using Eidet.Core.Configuration;
 using Eidet.Core.Domain;
+using Eidet.Core.Enrichment;
 using Eidet.Core.Storage;
 
 namespace Eidet.Service.Tests;
 
 public class HealthMonitorTests
 {
+    private const string RavenUrl = "http://localhost:8080";
+
+    private static EnrichmentConfig Enrichment(bool enabled, EnrichmentProvider provider, string model, string url) =>
+        new() { Enabled = enabled, Provider = provider, Model = model, Url = url };
+
+    private static EnrichmentConfig Disabled() =>
+        Enrichment(false, EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434");
+
     [Theory]
     [InlineData(EnrichmentProvider.Ollama, "/api/tags")]
     [InlineData(EnrichmentProvider.OpenAiCompatible, "/v1/models")]
-    public void ProbePathFor_IsProviderSpecific(EnrichmentProvider provider, string expected)
+    public void ProbePath_IsProviderSpecific(EnrichmentProvider provider, string expected)
     {
-        Assert.Equal(expected, HealthMonitor.ProbePathFor(provider));
+        Assert.Equal(expected, EnrichmentHttp.ProbePath(provider));
     }
 
     [Fact]
@@ -19,8 +28,7 @@ public class HealthMonitorTests
     {
         using var cts = new CancellationTokenSource();
         using var monitor = new HealthMonitor(
-            new StubStore(healthy: true), enrichmentEnabled: false,
-            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            new StubStore(healthy: true), Disabled(), RavenUrl,
             initialEnrichmentHealthy: false, cts.Token);
 
         var state = monitor.CurrentState;
@@ -33,8 +41,8 @@ public class HealthMonitorTests
     {
         using var cts = new CancellationTokenSource();
         using var monitor = new HealthMonitor(
-            new StubStore(healthy: true), enrichmentEnabled: true,
-            EnrichmentProvider.OpenAiCompatible, "gemma4", "http://localhost:1234", "http://localhost:8080",
+            new StubStore(healthy: true),
+            Enrichment(true, EnrichmentProvider.OpenAiCompatible, "gemma4", "http://localhost:1234"), RavenUrl,
             initialEnrichmentHealthy: true, cts.Token);
 
         var state = monitor.CurrentState;
@@ -47,15 +55,16 @@ public class HealthMonitorTests
     {
         using var cts = new CancellationTokenSource();
         using var monitor = new HealthMonitor(
-            new StubStore(healthy: true), enrichmentEnabled: true,
-            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            new StubStore(healthy: true),
+            Enrichment(true, EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434"), RavenUrl,
             initialEnrichmentHealthy: true, cts.Token);
 
         var events = new List<(string Component, bool Healthy, string Detail)>();
         monitor.OnStatusChanged += (c, h, d) => events.Add((c, h, d));
 
-        monitor.ReconfigureEnrichment(enabled: true, EnrichmentProvider.OpenAiCompatible,
-            "google/gemma-4-12b", "http://localhost:1234", healthy: true);
+        monitor.ReconfigureEnrichment(
+            Enrichment(true, EnrichmentProvider.OpenAiCompatible, "google/gemma-4-12b", "http://localhost:1234"),
+            healthy: true);
 
         var e = Assert.Single(events);
         Assert.Equal("Enrichment", e.Component);
@@ -66,19 +75,38 @@ public class HealthMonitorTests
     }
 
     [Fact]
+    public void ReconfigureEnrichment_WithFallbacks_NamesTheChain()
+    {
+        using var cts = new CancellationTokenSource();
+        using var monitor = new HealthMonitor(
+            new StubStore(healthy: true), Disabled(), RavenUrl,
+            initialEnrichmentHealthy: false, cts.Token);
+
+        var events = new List<(string Component, bool Healthy, string Detail)>();
+        monitor.OnStatusChanged += (c, h, d) => events.Add((c, h, d));
+
+        var chain = Enrichment(true, EnrichmentProvider.OpenAiCompatible, "deepseek", "https://cortex.example/v1");
+        chain.Fallbacks.Add(new EnrichmentBackendConfig { Provider = EnrichmentProvider.Ollama, Url = "http://localhost:11434", Model = "gemma4" });
+        monitor.ReconfigureEnrichment(chain, healthy: true);
+
+        var e = Assert.Single(events);
+        Assert.Contains("deepseek @ https://cortex.example/v1", e.Detail);
+        Assert.Contains("+1 fallback", e.Detail);
+    }
+
+    [Fact]
     public void ReconfigureEnrichment_Disabled_ReportsDisabled()
     {
         using var cts = new CancellationTokenSource();
         using var monitor = new HealthMonitor(
-            new StubStore(healthy: true), enrichmentEnabled: true,
-            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            new StubStore(healthy: true),
+            Enrichment(true, EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434"), RavenUrl,
             initialEnrichmentHealthy: true, cts.Token);
 
         var events = new List<(string Component, bool Healthy, string Detail)>();
         monitor.OnStatusChanged += (c, h, d) => events.Add((c, h, d));
 
-        monitor.ReconfigureEnrichment(enabled: false, EnrichmentProvider.Ollama,
-            "gemma4", "http://localhost:11434", healthy: false);
+        monitor.ReconfigureEnrichment(Disabled(), healthy: false);
 
         var e = Assert.Single(events);
         Assert.True(e.Healthy); // disabled is not a problem state
@@ -91,15 +119,15 @@ public class HealthMonitorTests
     {
         using var cts = new CancellationTokenSource();
         using var monitor = new HealthMonitor(
-            new StubStore(healthy: true), enrichmentEnabled: false,
-            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            new StubStore(healthy: true), Disabled(), RavenUrl,
             initialEnrichmentHealthy: false, cts.Token);
 
         var events = new List<(string Component, bool Healthy, string Detail)>();
         monitor.OnStatusChanged += (c, h, d) => events.Add((c, h, d));
 
-        monitor.ReconfigureEnrichment(enabled: true, EnrichmentProvider.OpenAiCompatible,
-            "qwen", "http://localhost:1234", healthy: false);
+        monitor.ReconfigureEnrichment(
+            Enrichment(true, EnrichmentProvider.OpenAiCompatible, "qwen", "http://localhost:1234"),
+            healthy: false);
 
         var e = Assert.Single(events);
         Assert.False(e.Healthy);
@@ -111,8 +139,8 @@ public class HealthMonitorTests
     {
         using var cts = new CancellationTokenSource();
         var monitor = new HealthMonitor(
-            new StubStore(healthy: true), enrichmentEnabled: true,
-            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            new StubStore(healthy: true),
+            Enrichment(true, EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434"), RavenUrl,
             initialEnrichmentHealthy: false, cts.Token);
 
         monitor.Dispose();
@@ -138,8 +166,7 @@ public class HealthMonitorTests
         using var cts = new CancellationTokenSource();
         var store = new StubStore(healthy: true);
         using var monitor = new HealthMonitor(
-            store, enrichmentEnabled: false,
-            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            store, Disabled(), RavenUrl,
             initialEnrichmentHealthy: false, cts.Token);
 
         var events = new List<(string Component, bool Healthy, string Detail)>();
@@ -149,11 +176,7 @@ public class HealthMonitorTests
         store.Healthy = false;
         monitor.Start();
 
-        // Wait for at least one tick (initial delay is 10s, but we use internal method)
-        // We test the event mechanism by triggering the tick manually via reflection
-        // or by waiting briefly. Since the timer has a 10s initial delay, let's use a
-        // shorter approach: directly invoke the health check via the start + short wait.
-        // For a unit test, we'll wait up to 15 seconds for the first tick.
+        // The timer has a 10s initial delay; wait up to 15 seconds for the first tick.
         var deadline = DateTime.UtcNow.AddSeconds(15);
         while (events.Count == 0 && DateTime.UtcNow < deadline)
             await Task.Delay(500);
@@ -169,12 +192,10 @@ public class HealthMonitorTests
     {
         using var cts = new CancellationTokenSource();
         var store = new StubStore(healthy: false);
-        // Start with RavenDB already down by setting initial state
         // The monitor assumes RavenDB is healthy at start, so a false store will trigger "down" first,
         // then we flip to healthy to trigger "recovered"
         using var monitor = new HealthMonitor(
-            store, enrichmentEnabled: false,
-            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            store, Disabled(), RavenUrl,
             initialEnrichmentHealthy: false, cts.Token);
 
         var events = new List<(string Component, bool Healthy, string Detail)>();
@@ -208,8 +229,7 @@ public class HealthMonitorTests
         using var cts = new CancellationTokenSource();
         var store = new StubStore(healthy: true);
         using var monitor = new HealthMonitor(
-            store, enrichmentEnabled: false,
-            EnrichmentProvider.Ollama, "gemma4", "http://localhost:11434", "http://localhost:8080",
+            store, Disabled(), RavenUrl,
             initialEnrichmentHealthy: false, cts.Token);
 
         var events = new List<(string Component, bool Healthy, string Detail)>();

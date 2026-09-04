@@ -65,6 +65,7 @@ internal sealed class MetaEndpoints
                 provider = _config.Enrichment.Provider.ToString(),
                 model = _config.Enrichment.Model,
                 url = _config.Enrichment.Url,
+                fallbacks = _config.Enrichment.Fallbacks.Count,
                 unenriched = backlog.Count,
                 oldestUnenriched = backlog.OldestCreatedAt,
             };

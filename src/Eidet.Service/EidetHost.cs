@@ -59,6 +59,7 @@ public sealed class EidetHost : IDisposable
     public string NightlyModelWork { get; }
     public string RavenUrl { get; }
     public string EnrichmentUrl { get; private set; }
+    public int EnrichmentFallbackCount { get; private set; }
     public bool HooksEnabled { get; }
 
     private EidetHost(IDocumentStore store, IEidetStore eidetStore, EnrichmentService enrichment,
@@ -89,6 +90,7 @@ public sealed class EidetHost : IDisposable
             ? $"Embedded ({config.Storage.DataDir ?? "default"})"
             : config.Storage.RavenUrl;
         EnrichmentUrl = config.Enrichment.Url;
+        EnrichmentFallbackCount = config.Enrichment.Fallbacks.Count;
         HooksEnabled = config.Hooks.AnyEnabled();
     }
 
@@ -202,12 +204,13 @@ public sealed class EidetHost : IDisposable
         EnrichmentProvider = fresh.Provider;
         EnrichmentModel = fresh.Model;
         EnrichmentUrl = fresh.Url;
+        EnrichmentFallbackCount = fresh.Fallbacks.Count;
         EnrichmentHealthy = fresh.Enabled && await _enrichment.CheckHealthAsync(ct);
 
         if (fresh.Enabled)
             await _enrichmentWorker.StartAsync(ct); // no-op when already running or backend down
 
-        _healthMonitor?.ReconfigureEnrichment(fresh.Enabled, fresh.Provider, fresh.Model, fresh.Url, EnrichmentHealthy);
+        _healthMonitor?.ReconfigureEnrichment(fresh, EnrichmentHealthy);
 
         return new EnrichmentReloadResult(fresh.Enabled, fresh.Provider.ToString(), fresh.Url, fresh.Model, EnrichmentHealthy);
     }
@@ -261,15 +264,7 @@ public sealed class EidetHost : IDisposable
     /// </summary>
     public HealthMonitor StartHealthMonitor(CancellationToken ct)
     {
-        _healthMonitor = new HealthMonitor(
-            _eidetStore,
-            EnrichmentEnabled,
-            EnrichmentProvider,
-            EnrichmentModel,
-            EnrichmentUrl,
-            RavenUrl,
-            EnrichmentHealthy,
-            ct);
+        _healthMonitor = new HealthMonitor(_eidetStore, _config.Enrichment, RavenUrl, EnrichmentHealthy, ct);
         _healthMonitor.Start();
         return _healthMonitor;
     }

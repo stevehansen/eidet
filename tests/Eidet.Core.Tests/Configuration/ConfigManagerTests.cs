@@ -35,6 +35,47 @@ public class ConfigManagerTests
     }
 
     [Fact]
+    public void Enrichment_ChainWithKeyAndThinking_RoundTrips()
+    {
+        var options = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        };
+        var config = new EidetConfig();
+        config.Enrichment.Enabled = true;
+        config.Enrichment.Provider = EnrichmentProvider.OpenAiCompatible;
+        config.Enrichment.Url = "https://cortex.example/v1";
+        config.Enrichment.Model = "deepseek-v4-flash";
+        config.Enrichment.ApiKey = "sk-test";
+        config.Enrichment.Thinking = false;
+        config.Enrichment.Fallbacks.Add(new EnrichmentBackendConfig { Provider = EnrichmentProvider.Ollama, Url = "http://localhost:11434", Model = "gemma4" });
+
+        var json = JsonSerializer.Serialize(config, options);
+        var back = JsonSerializer.Deserialize<EidetConfig>(json, options)!.Enrichment;
+
+        Assert.Equal("sk-test", back.ApiKey);
+        Assert.False(back.Thinking);
+        var fallback = Assert.Single(back.Fallbacks);
+        Assert.Equal(EnrichmentProvider.Ollama, fallback.Provider);
+        Assert.Equal("gemma4", fallback.Model);
+        Assert.Null(fallback.Thinking);
+        Assert.Equal(2, back.Backends.Count);
+        Assert.Same(back, back.Backends[0]);
+        Assert.DoesNotContain("\"backends\"", json); // derived view, never persisted
+    }
+
+    [Fact]
+    public void Enrichment_LegacyFlatConfig_HasNoFallbacks()
+    {
+        var enrichment = DeserializeEnrichment("""{"enrichment":{"enabled":true,"provider":"Ollama","url":"http://localhost:11434","model":"gemma4"}}""");
+        Assert.Empty(enrichment.Fallbacks);
+        Assert.Null(enrichment.ApiKey);
+        Assert.Null(enrichment.Thinking);
+        Assert.Single(enrichment.Backends);
+    }
+
+    [Fact]
     public void Load_NoFile_ReturnsDefaults()
     {
         var config = new EidetConfig();

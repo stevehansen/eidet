@@ -118,7 +118,8 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         if (host.EnrichmentEnabled)
         {
             var healthy = await host.CheckEnrichmentAsync(cancellation);
-            AnsiConsole.MarkupLine($"  Enrichment: {(healthy ? "[green]Connected[/]" : "[yellow]Unavailable[/]")} ({host.EnrichmentModel} @ {Markup.Escape(host.EnrichmentUrl)})");
+            var fallbacks = host.EnrichmentFallbackCount switch { 0 => "", 1 => ", +1 fallback", var n => $", +{n} fallbacks" };
+            AnsiConsole.MarkupLine($"  Enrichment: {(healthy ? "[green]Connected[/]" : "[yellow]Unavailable[/]")} ({host.EnrichmentModel} @ {Markup.Escape(host.EnrichmentUrl)}{fallbacks})");
         }
 
         if (host.AuthEnabled)

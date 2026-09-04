@@ -444,6 +444,34 @@ public class EnrichmentServiceTests
         Assert.IsType<OllamaEnrichmentAdapter>(GetPort(svc));
     }
 
+    [Fact]
+    public void CreateFromConfig_WithFallbacks_UsesFallbackChain_PrimaryModelFirst()
+    {
+        var cfg = new EnrichmentConfig
+        {
+            Enabled = true,
+            Provider = EnrichmentProvider.OpenAiCompatible,
+            Url = "https://cortex.example/v1",
+            Model = "deepseek",
+            ApiKey = "k",
+            Thinking = false,
+            Fallbacks = [new EnrichmentBackendConfig { Provider = EnrichmentProvider.Ollama, Url = "http://localhost:11434", Model = "gemma4" }],
+        };
+        using var svc = EnrichmentService.CreateFromConfig(cfg);
+        Assert.IsType<FallbackEnrichmentAdapter>(GetPort(svc));
+        Assert.Equal("deepseek", svc.ModelName);
+    }
+
+    [Fact]
+    public void ModelName_PrefersThePortsOpinion_OverTheConfiguredName()
+    {
+        // A chain reports whichever backend answered; the facade must not override that with
+        // the primary's configured model, or drift reviews would be stamped with the wrong model.
+        var port = new InMemoryEnrichmentAdapter();
+        using var svc = new EnrichmentService(port, modelName: "configured");
+        Assert.Equal("configured", svc.ModelName); // the in-memory double has no opinion
+    }
+
     // ─── Reconfigure (live enrichment config reload) ─────────────────────
 
     [Fact]

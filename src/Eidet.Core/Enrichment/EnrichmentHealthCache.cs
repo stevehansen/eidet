@@ -9,6 +9,11 @@ internal sealed class EnrichmentHealthCache
 {
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
+    // The probe gets its own budget, well under the client's 120s completion timeout: a backend
+    // that is *down* usually refuses instantly, but one behind a VPN that is not connected just
+    // black-holes, and a fallback chain must move on in seconds rather than wait out a completion.
+    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
+
     private readonly HttpClient _http;
     private bool? _lastHealthy;
     private DateTime _lastCheck = DateTime.MinValue;
@@ -29,7 +34,9 @@ internal sealed class EnrichmentHealthCache
 
         try
         {
-            var response = await _http.GetAsync(probePath, ct);
+            using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            probeCts.CancelAfter(ProbeTimeout);
+            using var response = await _http.GetAsync(probePath, probeCts.Token);
             _lastHealthy = response.IsSuccessStatusCode;
         }
         catch

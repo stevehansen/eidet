@@ -131,6 +131,10 @@ internal static class ConfigHelper
         ["enrichment.provider"] = (c => c.Enrichment.Provider.ToString(), (c, v) => c.Enrichment.Provider = Enum.Parse<EnrichmentProvider>(v, true)),
         ["enrichment.url"] = (c => c.Enrichment.Url, (c, v) => c.Enrichment.Url = v),
         ["enrichment.model"] = (c => c.Enrichment.Model, (c, v) => c.Enrichment.Model = v),
+        // The token itself never prints — `config list` would otherwise put it in every pasted diagnostic.
+        ["enrichment.apiKey"] = (c => string.IsNullOrEmpty(c.Enrichment.ApiKey) ? "" : "(set)", (c, v) => c.Enrichment.ApiKey = v.Length == 0 ? null : v),
+        // true/false, or "default" to send nothing and let the server decide.
+        ["enrichment.thinking"] = (c => c.Enrichment.Thinking?.ToString() ?? "default", (c, v) => c.Enrichment.Thinking = v.Equals("default", StringComparison.OrdinalIgnoreCase) ? null : bool.Parse(v)),
         // Legacy aliases (pre-v0.2) — same getters/setters so existing scripts keep working.
         ["enrichment.ollamaEnabled"] = (c => c.Enrichment.Enabled.ToString(), (c, v) => c.Enrichment.Enabled = bool.Parse(v)),
         ["enrichment.ollamaUrl"] = (c => c.Enrichment.Url, (c, v) => c.Enrichment.Url = v),

@@ -15,13 +15,14 @@ public sealed class EnrichmentService : IDisposable
 {
     private IEnrichmentPort _port;
     private bool _ownsPort;
+    private string? _configuredModel;
     private readonly object _swapLock = new();
 
     public EnrichmentService(IEnrichmentPort port, bool ownsPort = true, string? modelName = null)
     {
         _port = port;
         _ownsPort = ownsPort;
-        ModelName = modelName;
+        _configuredModel = modelName;
     }
 
     public static EnrichmentService CreateOllama(string ollamaUrl, string model)
@@ -31,8 +32,9 @@ public sealed class EnrichmentService : IDisposable
         => new(new NullEnrichmentAdapter());
 
     /// <summary>
-    /// Builds the enrichment service the config asks for: disabled → null adapter,
-    /// OpenAI-compatible provider → <see cref="OpenAiEnrichmentAdapter"/>, otherwise Ollama.
+    /// Builds the enrichment service the config asks for: disabled → null adapter; one backend →
+    /// its adapter (OpenAI-compatible or Ollama); a primary with fallbacks →
+    /// <see cref="FallbackEnrichmentAdapter"/> over one adapter per backend, in config order.
     /// </summary>
     public static EnrichmentService CreateFromConfig(EnrichmentConfig cfg)
     {
@@ -43,10 +45,16 @@ public sealed class EnrichmentService : IDisposable
     private static (IEnrichmentPort Port, string? ModelName) CreatePort(EnrichmentConfig cfg)
     {
         if (!cfg.Enabled) return (new NullEnrichmentAdapter(), null);
-        return cfg.Provider == EnrichmentProvider.OpenAiCompatible
-            ? (new OpenAiEnrichmentAdapter(cfg.Url, cfg.Model), cfg.Model)
-            : (new OllamaEnrichmentAdapter(cfg.Url, cfg.Model), cfg.Model);
+        var backends = cfg.Backends.Select(CreateBackendPort).ToList();
+        return backends.Count == 1
+            ? (backends[0], cfg.Model)
+            : (new FallbackEnrichmentAdapter(backends), cfg.Model);
     }
+
+    private static IEnrichmentPort CreateBackendPort(EnrichmentBackendConfig b) =>
+        b.Provider == EnrichmentProvider.OpenAiCompatible
+            ? new OpenAiEnrichmentAdapter(b.Url, b.Model, b.ApiKey, b.Thinking)
+            : new OllamaEnrichmentAdapter(b.Url, b.Model, b.ApiKey, b.Thinking);
 
     /// <summary>
     /// Swaps the backing adapter to whatever <paramref name="cfg"/> asks for — the same mapping
@@ -66,15 +74,18 @@ public sealed class EnrichmentService : IDisposable
             disposeOld = _ownsPort;
             _port = port;
             _ownsPort = true;
-            ModelName = model;
+            _configuredModel = model;
         }
         if (disposeOld && old is IDisposable d) d.Dispose();
     }
 
     public bool IsAvailable => _port.IsAvailable;
 
-    /// <summary>Model identifier recorded on drift reviews; null when enrichment is disabled.</summary>
-    public string? ModelName { get; private set; }
+    /// <summary>
+    /// Model identifier recorded on drift reviews; null when enrichment is disabled. Asks the port
+    /// first, so a fallback chain names the backend that actually answered rather than the primary.
+    /// </summary>
+    public string? ModelName => _port.ModelName ?? _configuredModel;
 
     public Task<bool> CheckHealthAsync(CancellationToken ct = default) => _port.CheckHealthAsync(ct);
 

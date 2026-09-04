@@ -13,19 +13,19 @@ internal sealed class OllamaEnrichmentAdapter : IEnrichmentPort, IDisposable
     private readonly HttpClient _http;
     private readonly EnrichmentHealthCache _health;
     private readonly string _model;
+    private readonly bool _think;
 
-    public OllamaEnrichmentAdapter(string ollamaUrl, string model)
+    public OllamaEnrichmentAdapter(string ollamaUrl, string model, string? apiKey = null, bool? thinking = null)
     {
         _model = model;
-        _http = new HttpClient
-        {
-            BaseAddress = new Uri(ollamaUrl.TrimEnd('/')),
-            Timeout = TimeSpan.FromSeconds(120),
-        };
+        _think = thinking ?? false;
+        _http = EnrichmentHttp.CreateClient(ollamaUrl, apiKey, TimeSpan.FromSeconds(120));
         _health = new EnrichmentHealthCache(_http);
     }
 
     public bool IsAvailable => _health.IsAvailable;
+
+    public string? ModelName => _model;
 
     public Task<bool> CheckHealthAsync(CancellationToken ct = default)
         => _health.CheckAsync("/api/tags", ct);
@@ -45,7 +45,7 @@ internal sealed class OllamaEnrichmentAdapter : IEnrichmentPort, IDisposable
                 model = _model,
                 messages = new[] { new { role = "user", content = prompt } },
                 stream = false,
-                think = false,
+                think = _think,
             };
 
             var json = JsonSerializer.Serialize(payload, JsonOpts);

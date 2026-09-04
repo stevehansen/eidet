@@ -73,7 +73,8 @@ Every store attempt passes through these gates, in order. Any gate can reject th
 | **Write gate**     | A deterministic, local, always-on check that runs before a **Memory** is persisted                 | Filter, validator                      |
 | **Secret scanner** | The **Write gate** that rejects **Content** matching credential patterns (13 built-in)             | Credential filter, secret filter       |
 | **Signal gate**    | The **Write gate** that rejects low-signal, trivially-derivable **Content**                        | Noise filter, quality gate             |
-| **Enrichment**     | Optional Ollama-backed post-write step that generates **Summary**, **One-liner**, **Foresight hint** | Summarization, augmentation          |
+| **Enrichment**     | Optional model-backed post-write step that generates **Summary**, **One-liner**, **Foresight hint** | Summarization, augmentation          |
+| **Enrichment backend** | One model server **Enrichment** talks to — Ollama or any OpenAI-compatible endpoint, local or a private network cluster. The primary plus its ordered **fallbacks** form a chain tried in order per call | Provider (alone), LLM, endpoint |
 
 ## Lifecycle
 

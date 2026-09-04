@@ -418,9 +418,13 @@ The signal gate prevents low-value content from polluting the memory store:
 
 ---
 
-## Enrichment: Ollama
+## Enrichment: Ollama, LM Studio, or a private cluster
 
-Ollama integration is entirely optional. When enabled, Eidet uses a local LLM to enrich memories with:
+Enrichment is entirely optional. When enabled, Eidet uses a model server — Ollama's native API, or any OpenAI-compatible endpoint (LM Studio, llama.cpp, vLLM) — to enrich memories with the fields below.
+
+### Backends and fallback
+
+The configured primary backend plus an ordered `enrichment.fallbacks` list form a chain. Every call goes to the first backend that answers its health probe and returns text; one that is offline, rejects the request, or fails mid-call hands the call to the next. The intended shape is a fast private network model (a vLLM cluster behind a bearer token, `apiKey`) in front of an always-on local one. Each backend has its own five-minute health cache with a five-second probe budget, so an unreachable primary costs one probe per five minutes and nothing per call. A per-backend `thinking: false` turns a reasoning model's chain of thought off at the chat template (`chat_template_kwargs.thinking` on vLLM/llama.cpp, `think` on Ollama), which on DeepSeek-class models is roughly a fivefold saving per call; unset sends nothing so a strict gateway is never handed a field it does not know. The service log names the backend that answers and reports when a fallback takes over; `eidet doctor` prints one row per backend.
 
 ### One-liner Summaries
 A single-sentence distillation of the memory's content. These are what agents see in L1 context, so they need to be dense and accurate. Example:

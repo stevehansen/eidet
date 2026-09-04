@@ -1,4 +1,5 @@
 using Eidet.Core.Configuration;
+using Eidet.Core.Enrichment;
 using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Raven.Client.Documents;
@@ -82,8 +83,8 @@ public sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
         // Service check — is the API server running and healthy?
         checks.Add(await CheckServiceAsync());
 
-        // Ollama check (optional)
-        checks.Add(await CheckEnrichmentAsync(config));
+        // Enrichment backends (optional) — one row per backend in the chain
+        checks.AddRange(await CheckEnrichmentAsync(config));
 
         // Config file check
         checks.Add(CheckConfigFile());
@@ -117,45 +118,66 @@ public sealed class DoctorCommand : AsyncCommand<DoctorCommand.Settings>
             $"Healthy (PID {info.Pid}, port {info.Port}, up {uptime.TotalHours:F0}h {uptime.Minutes}m)");
     }
 
-    private static async Task<CheckResult> CheckEnrichmentAsync(EidetConfig config)
+    private static async Task<List<CheckResult>> CheckEnrichmentAsync(EidetConfig config)
     {
-        var label = config.Enrichment.Provider == EnrichmentProvider.OpenAiCompatible
-            ? "Enrichment (OpenAI)" : "Enrichment (Ollama)";
+        var enrichment = config.Enrichment;
+        if (!enrichment.Enabled)
+            return [new CheckResult(BackendLabel(enrichment, 0), true, "Disabled (optional)", Optional: true)];
 
-        if (!config.Enrichment.Enabled)
-            return new CheckResult(label, true, "Disabled (optional)", Optional: true);
+        var results = new List<CheckResult>();
+        var backends = enrichment.Backends;
+        for (var i = 0; i < backends.Count; i++)
+            results.Add(await CheckBackendAsync(backends[i], BackendLabel(backends[i], i), primary: i == 0));
+        return results;
+    }
 
-        var openAi = config.Enrichment.Provider == EnrichmentProvider.OpenAiCompatible;
-        var probePath = openAi ? "/v1/models" : "/api/tags";
+    private static string BackendLabel(EnrichmentBackendConfig backend, int index)
+    {
+        var kind = backend.Provider == EnrichmentProvider.OpenAiCompatible ? "OpenAI" : "Ollama";
+        return index == 0 ? $"Enrichment ({kind})" : $"Enrichment fallback {index} ({kind})";
+    }
+
+    // A fallback's settings live in the enrichment.fallbacks array, which `eidet config set`
+    // does not address — so its fixes point at the file instead of at a key.
+    private static async Task<CheckResult> CheckBackendAsync(EnrichmentBackendConfig backend, string label, bool primary)
+    {
+        var openAi = backend.Provider == EnrichmentProvider.OpenAiCompatible;
+        var where = primary ? null : $"this entry of enrichment.fallbacks in {ConfigManager.GetConfigPath()}";
 
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-            var response = await http.GetAsync($"{config.Enrichment.Url.TrimEnd('/')}{probePath}");
+            using var http = EnrichmentHttp.CreateClient(backend, TimeSpan.FromSeconds(5));
+            var response = await http.GetAsync(EnrichmentHttp.ProbePath(backend.Provider));
             if (response.IsSuccessStatusCode)
             {
                 var body = await response.Content.ReadAsStringAsync();
-                var hasModel = body.Contains(config.Enrichment.Model, StringComparison.OrdinalIgnoreCase);
+                var hasModel = body.Contains(backend.Model, StringComparison.OrdinalIgnoreCase);
                 return hasModel
-                    ? new CheckResult(label, true, $"Connected ({config.Enrichment.Model})")
+                    ? new CheckResult(label, true, $"Connected ({backend.Model})")
                     : new CheckResult(label, false,
-                        $"Connected but model \"{config.Enrichment.Model}\" not found",
+                        $"Connected but model \"{backend.Model}\" not found",
                         Optional: true,
                         Fix: openAi
-                            ? $"Load \"{config.Enrichment.Model}\" in your server, or: eidet config set enrichment.model <name>"
-                            : $"Pull the model: ollama pull {config.Enrichment.Model}");
+                            ? $"Load \"{backend.Model}\" in your server, or set the model: {where ?? "eidet config set enrichment.model <name>"}"
+                            : $"Pull the model: ollama pull {backend.Model}");
             }
 
+            var status = (int)response.StatusCode;
             return new CheckResult(label, false,
-                $"HTTP {(int)response.StatusCode} from {config.Enrichment.Url}",
-                Optional: true);
+                $"HTTP {status} from {backend.Url}",
+                Optional: true,
+                Fix: status is 401 or 403
+                    ? $"The server wants a bearer token: {where ?? "eidet config set enrichment.apiKey <KEY>"}"
+                    : null);
         }
         catch (Exception ex)
         {
             return new CheckResult(label, false,
                 $"Connection failed: {ex.Message}",
                 Optional: true,
-                Fix: "Start the enrichment backend or disable:\n  eidet config set enrichment.enabled false");
+                Fix: primary
+                    ? "Start the enrichment backend or disable:\n  eidet config set enrichment.enabled false"
+                    : "Start the fallback backend, or remove it from enrichment.fallbacks");
         }
     }
 

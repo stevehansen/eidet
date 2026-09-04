@@ -140,17 +140,49 @@ public class MaintenanceConfig
     public TimeOnly ScheduledTime => LocalTimeSetting.Parse(AtLocalTime, new TimeOnly(3, 0));
 }
 
-public class EnrichmentConfig
+/// <summary>
+/// One model server: where it is, how to talk to it, and which model to ask for. The primary
+/// backend is the <see cref="EnrichmentConfig"/> itself (its flat keys predate fallbacks); each
+/// entry of <see cref="EnrichmentConfig.Fallbacks"/> is another one of these.
+/// </summary>
+public class EnrichmentBackendConfig
 {
-    public bool Enabled { get; set; }
     public EnrichmentProvider Provider { get; set; } = EnrichmentProvider.Ollama;
     public string Url { get; set; } = "http://localhost:11434";
     public string Model { get; set; } = "gemma4";
+
+    /// <summary>Bearer token sent on every request when set. Needed for a private network cluster; local servers ignore it.</summary>
+    public string? ApiKey { get; set; }
+
+    /// <summary>
+    /// Whether the model should think out loud. Unset sends nothing and the server applies its
+    /// default. <c>false</c> is the cost lever for a reasoning model on vLLM (DeepSeek, Qwen): it rides
+    /// as <c>chat_template_kwargs.thinking</c>, the field the chat template honours. (The OpenAI
+    /// <c>reasoning_effort</c> knob is a worse bet: <c>low</c>/<c>minimal</c> are accepted and ignored
+    /// by those builds; <c>none</c> did work on deepseek-v4-flash-0731, 2026-09-04.) Ollama maps it to
+    /// its native <c>think</c> field, off by default as before.
+    /// </summary>
+    public bool? Thinking { get; set; }
+}
+
+public class EnrichmentConfig : EnrichmentBackendConfig
+{
+    public bool Enabled { get; set; }
     public bool AutoOneLiner { get; set; } = true;
     public bool AutoForesight { get; set; } = true;
     public bool AutoConsolidation { get; set; } = true;
     public DriftReviewConfig DriftReview { get; set; } = new();
     public ReflectionConfig Reflection { get; set; } = new();
+
+    /// <summary>
+    /// Backends tried in order when the one before is offline or fails a call — a networked
+    /// private model first, a local one behind it. Empty means the primary alone.
+    /// </summary>
+    public List<EnrichmentBackendConfig> Fallbacks { get; set; } = [];
+
+    /// <summary>Primary first, then <see cref="Fallbacks"/> in order.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<EnrichmentBackendConfig> Backends => [this, .. Fallbacks];
 }
 
 public class DriftReviewConfig

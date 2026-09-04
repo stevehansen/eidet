@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Eidet.Core.Enrichment;
 
 namespace Eidet.Core.Services;
 
@@ -12,13 +13,9 @@ public sealed class OpenAiCompatibleService : IDisposable
 {
     private readonly HttpClient _http;
 
-    public OpenAiCompatibleService(string baseUrl)
+    public OpenAiCompatibleService(string baseUrl, string? apiKey = null)
     {
-        _http = new HttpClient
-        {
-            BaseAddress = new Uri(baseUrl.TrimEnd('/')),
-            Timeout = TimeSpan.FromSeconds(10),
-        };
+        _http = EnrichmentHttp.CreateClient(baseUrl, apiKey, TimeSpan.FromSeconds(10));
     }
 
     /// <summary>

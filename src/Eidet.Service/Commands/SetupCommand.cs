@@ -184,6 +184,7 @@ public sealed class SetupCommand : AsyncCommand<SetupCommand.Settings>
                 config.Enrichment.Enabled = true;
                 config.Enrichment.Provider = backend.Provider;
                 config.Enrichment.Url = backend.Url;
+                config.Enrichment.ApiKey = backend.ApiKey;
 
                 // Ollama keeps the configured model (pullable later); an OpenAI-compatible
                 // server only works with a model id from its own list.

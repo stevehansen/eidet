@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Eidet.Core;
 using Eidet.Core.Configuration;
+using Eidet.Core.Enrichment;
 using Eidet.Core.Services;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -8,15 +9,16 @@ using Spectre.Console.Cli;
 namespace Eidet.Service.Commands;
 
 /// <summary>
-/// Probes for local enrichment backends: Ollama (native API) and OpenAI-compatible servers
-/// (LM Studio, llama.cpp, vLLM). Shared by <c>eidet setup</c> and <c>eidet enrichment setup</c>.
+/// Probes for enrichment backends: Ollama (native API) and OpenAI-compatible servers
+/// (LM Studio, llama.cpp, vLLM — local or a private cluster behind a bearer token). Shared by
+/// <c>eidet setup</c> and <c>eidet enrichment setup</c>.
 /// </summary>
 internal static class EnrichmentDetector
 {
     public const string OllamaDefaultUrl = "http://localhost:11434";
     public const string OpenAiDefaultUrl = "http://localhost:1234"; // LM Studio's default port
 
-    public sealed record DetectedBackend(EnrichmentProvider Provider, string Url, List<string> Models)
+    public sealed record DetectedBackend(EnrichmentProvider Provider, string Url, List<string> Models, string? ApiKey = null)
     {
         public string Label => Provider == EnrichmentProvider.Ollama
             ? "Ollama"
@@ -31,22 +33,22 @@ internal static class EnrichmentDetector
     /// </summary>
     public static async Task<List<DetectedBackend>> DetectAsync(EnrichmentConfig current, CancellationToken ct)
     {
-        var candidates = new List<(EnrichmentProvider Provider, string Url)>
+        var candidates = new List<(EnrichmentProvider Provider, string Url, string? ApiKey)>
         {
-            (EnrichmentProvider.Ollama, OllamaDefaultUrl),
-            (EnrichmentProvider.OpenAiCompatible, OpenAiDefaultUrl),
+            (EnrichmentProvider.Ollama, OllamaDefaultUrl, null),
+            (EnrichmentProvider.OpenAiCompatible, OpenAiDefaultUrl, null),
         };
         if (!candidates.Any(c => c.Provider == current.Provider && UrlsEqual(c.Url, current.Url)))
-            candidates.Insert(0, (current.Provider, current.Url));
+            candidates.Insert(0, (current.Provider, current.Url, current.ApiKey));
 
-        var results = await Task.WhenAll(candidates.Select(c => ProbeAsync(c.Provider, c.Url, ct)));
+        var results = await Task.WhenAll(candidates.Select(c => ProbeAsync(c.Provider, c.Url, c.ApiKey, ct)));
         return results.OfType<DetectedBackend>()
             .OrderBy(r => r.Provider == EnrichmentProvider.Ollama ? 0 : 1)
             .ToList();
     }
 
-    /// <summary>Probes a single backend; null when it does not answer.</summary>
-    public static async Task<DetectedBackend?> ProbeAsync(EnrichmentProvider provider, string url, CancellationToken ct)
+    /// <summary>Probes a single backend; null when it does not answer (offline, or rejecting the key).</summary>
+    public static async Task<DetectedBackend?> ProbeAsync(EnrichmentProvider provider, string url, string? apiKey, CancellationToken ct)
     {
         try
         {
@@ -55,12 +57,12 @@ internal static class EnrichmentDetector
                 using var ollama = new OllamaService(url);
                 if (!await ollama.IsAvailableAsync(ct)) return null;
                 var models = await ollama.ListModelsAsync(ct);
-                return new DetectedBackend(provider, url, models.Select(m => m.Name).ToList());
+                return new DetectedBackend(provider, url, models.Select(m => m.Name).ToList(), apiKey);
             }
 
-            using var openAi = new OpenAiCompatibleService(url);
+            using var openAi = new OpenAiCompatibleService(url, apiKey);
             var ids = await openAi.TryListModelsAsync(ct);
-            return ids is null ? null : new DetectedBackend(provider, url, ids);
+            return ids is null ? null : new DetectedBackend(provider, url, ids, apiKey);
         }
         catch
         {
@@ -68,8 +70,8 @@ internal static class EnrichmentDetector
         }
     }
 
-    private static bool UrlsEqual(string a, string b) =>
-        string.Equals(a.TrimEnd('/'), b.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+    public static bool UrlsEqual(string a, string b) =>
+        string.Equals(EnrichmentHttp.NormalizeBaseUrl(a), EnrichmentHttp.NormalizeBaseUrl(b), StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>
@@ -199,12 +201,17 @@ public sealed class EnrichmentSetupCommand : AsyncCommand<EnrichmentSetupCommand
             : detected[choices.IndexOf(picked)];
 
         var model = AskModel(backend, config.Enrichment.Model);
+        var thinking = AskThinking(backend, config.Enrichment);
+        var fallbacks = KeepPreviousAsFallback(config.Enrichment, backend);
 
-        // All four keys in one save — no half-configured state.
+        // The whole backend in one save — no half-configured state.
         config.Enrichment.Enabled = true;
         config.Enrichment.Provider = backend.Provider;
         config.Enrichment.Url = backend.Url;
         config.Enrichment.Model = model;
+        config.Enrichment.ApiKey = backend.ApiKey;
+        config.Enrichment.Thinking = thinking;
+        config.Enrichment.Fallbacks = fallbacks;
         ConfigManager.Save(config);
 
         AnsiConsole.WriteLine();
@@ -213,6 +220,12 @@ public sealed class EnrichmentSetupCommand : AsyncCommand<EnrichmentSetupCommand
         table.AddRow("enrichment.provider", backend.Provider.ToString());
         table.AddRow("enrichment.url", Markup.Escape(backend.Url));
         table.AddRow("enrichment.model", Markup.Escape(model));
+        if (backend.ApiKey is { Length: > 0 })
+            table.AddRow("enrichment.apiKey", "(set)");
+        if (thinking is { } think)
+            table.AddRow("enrichment.thinking", think.ToString().ToLowerInvariant());
+        foreach (var (fallback, i) in fallbacks.Select((f, i) => (f, i)))
+            table.AddRow($"enrichment.fallbacks[{i}]", Markup.Escape($"{fallback.Provider} @ {fallback.Url} ({fallback.Model})"));
         AnsiConsole.Write(table);
         AnsiConsole.MarkupLine($"  [green]✓[/] Config saved to {Markup.Escape(ConfigManager.GetConfigPath())}");
         AnsiConsole.WriteLine();
@@ -238,16 +251,76 @@ public sealed class EnrichmentSetupCommand : AsyncCommand<EnrichmentSetupCommand
                 : EnrichmentDetector.OpenAiDefaultUrl;
         var url = AnsiConsole.Ask("Server URL:", defaultUrl);
 
-        var probed = await EnrichmentDetector.ProbeAsync(provider, url, ct);
+        // Only OpenAI-compatible servers are asked: that is where a private cluster behind a
+        // gateway lives. An empty answer keeps the key already configured for this same server,
+        // so re-running the wizard never silently drops working auth.
+        string? apiKey = null;
+        if (provider == EnrichmentProvider.OpenAiCompatible)
+        {
+            var sameServer = current.Provider == provider && EnrichmentDetector.UrlsEqual(current.Url, url);
+            var keep = sameServer && !string.IsNullOrEmpty(current.ApiKey);
+            var entered = AnsiConsole.Prompt(new TextPrompt<string>(
+                    keep ? "API key [dim](empty keeps the current one)[/]:" : "API key [dim](empty if the server needs none)[/]:")
+                .AllowEmpty()
+                .Secret());
+            apiKey = entered.Length > 0 ? entered : keep ? current.ApiKey : null;
+        }
+
+        var probed = await EnrichmentDetector.ProbeAsync(provider, url, apiKey, ct);
         if (probed is null)
         {
-            AnsiConsole.MarkupLine($"  [yellow]~[/] No response at {Markup.Escape(url)} — configuring anyway (the server may be offline right now)");
-            return new EnrichmentDetector.DetectedBackend(provider, url, []);
+            var why = apiKey is null ? "the server may be offline right now" : "the server may be offline, or the API key rejected";
+            AnsiConsole.MarkupLine($"  [yellow]~[/] No response at {Markup.Escape(url)} — configuring anyway ({why})");
+            return new EnrichmentDetector.DetectedBackend(provider, url, [], apiKey);
         }
 
         AnsiConsole.MarkupLine($"  [green]✓[/] {Markup.Escape(probed.Describe())}");
         return probed;
     }
+
+    /// <summary>
+    /// Only OpenAI-compatible servers get the question — the Ollama adapter already sends
+    /// <c>think: false</c>. "No" leaves the setting unset, which puts nothing on the wire.
+    /// </summary>
+    private static bool? AskThinking(EnrichmentDetector.DetectedBackend backend, EnrichmentConfig current)
+    {
+        if (backend.Provider != EnrichmentProvider.OpenAiCompatible) return null;
+        var off = AnsiConsole.Confirm(
+            "Turn model thinking off? [dim](recommended for reasoning models on vLLM — DeepSeek, Qwen; ~5x faster per call)[/]",
+            defaultValue: current.Thinking == false);
+        return off ? false : null;
+    }
+
+    /// <summary>
+    /// Switching backends offers to keep the old one behind the new — the common move is from an
+    /// always-on local model to a faster network one that is not always reachable. Existing
+    /// fallbacks survive; an entry that now equals the new primary is dropped.
+    /// </summary>
+    private static List<EnrichmentBackendConfig> KeepPreviousAsFallback(EnrichmentConfig current, EnrichmentDetector.DetectedBackend picked)
+    {
+        var fallbacks = current.Fallbacks.Where(f => !SameServer(f, picked.Provider, picked.Url)).ToList();
+        var switching = current.Enabled && !SameServer(current, picked.Provider, picked.Url);
+        if (!switching || fallbacks.Any(f => SameServer(f, current.Provider, current.Url)))
+            return fallbacks;
+
+        if (AnsiConsole.Confirm(
+                $"Keep {current.Provider} @ {Markup.Escape(current.Url)} ({Markup.Escape(current.Model)}) as a fallback for when the new backend is offline?",
+                defaultValue: true))
+        {
+            fallbacks.Insert(0, new EnrichmentBackendConfig
+            {
+                Provider = current.Provider,
+                Url = current.Url,
+                Model = current.Model,
+                ApiKey = current.ApiKey,
+                Thinking = current.Thinking,
+            });
+        }
+        return fallbacks;
+    }
+
+    private static bool SameServer(EnrichmentBackendConfig a, EnrichmentProvider provider, string url) =>
+        a.Provider == provider && EnrichmentDetector.UrlsEqual(a.Url, url);
 
     private static string AskModel(EnrichmentDetector.DetectedBackend backend, string currentModel)
     {
