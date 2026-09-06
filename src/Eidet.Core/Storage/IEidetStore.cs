@@ -249,6 +249,11 @@ public interface IEidetStore
     Task EnsureIndexesAsync(CancellationToken ct = default);
 
     Task<List<string>> GetDistinctRepoIdsAsync(CancellationToken ct = default);
+
+    /// <summary>Live memory count per repo. Exhaustive — see the implementation's note on why a
+    /// truncated distinct scan is the wrong shape here.</summary>
+    Task<Dictionary<string, int>> GetLiveCountsByRepoAsync(CancellationToken ct = default) =>
+        Task.FromResult(new Dictionary<string, int>());
     Task<List<MemoryEntry>> BrowseAsync(string repoId, int skip, int take, MemoryType? type = null, CancellationToken ct = default);
 
     // Layer operations

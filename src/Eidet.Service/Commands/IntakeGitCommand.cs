@@ -4,6 +4,7 @@ using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using Eidet.Core.Domain;
 
 namespace Eidet.Service.Commands;
 
@@ -38,7 +39,7 @@ public sealed class IntakeGitCommand : AsyncCommand<IntakeGitCommand.Settings>
         var intakeSvc = new IntakeService(eidetStore, new MemoryService(eidetStore));
 
         var projectPath = settings.Path ?? Directory.GetCurrentDirectory();
-        var repoId = projectPath;
+        var repoId = RepoPathResolver.Resolve(projectPath);
         var options = new GitIntakeOptions(settings.Since, settings.MaxCommits, settings.AllCommits);
 
         try

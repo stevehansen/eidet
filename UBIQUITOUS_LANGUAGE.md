@@ -29,7 +29,8 @@ Every **Memory** has exactly one of the following types. Each type has its own r
 
 | Term             | Definition                                                                                           | Aliases to avoid                       |
 | ---------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| **Repo**         | A namespace for **Memories**, identified by a normalized filesystem path (e.g. `P--Eidet`)           | Project, workspace, namespace          |
+| **Repo**         | A namespace for **Memories**, identified by a normalized filesystem path (e.g. `P--Eidet`). A git worktree is not its own **Repo** — it resolves to the main checkout | Project, workspace, namespace, worktree |
+| **Re-home**      | Moving a **Repo**'s **Memories** into another **Repo**, retiring each original with a reason — the repair for memories banked under a worktree's own path | Move, migrate, re-parent               |
 | **Layer**        | A read-only or read-write container of **Memories** that can be stacked, Docker-style                | Collection, pool                       |
 | **Local layer**  | The single read-write **Layer**; all new writes land here                                            | Default layer, working layer           |
 | **Shared layer** | A read-only **Layer** imported from a team or author; contributes to **Recall** but not writes       | Team layer, external layer             |

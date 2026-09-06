@@ -196,6 +196,9 @@ internal sealed class SharedEntryStore(IEidetStore inner) : IEidetStore
 
     public Task<List<string>> GetDistinctRepoIdsAsync(CancellationToken ct = default) => inner.GetDistinctRepoIdsAsync(ct);
 
+    public Task<Dictionary<string, int>> GetLiveCountsByRepoAsync(CancellationToken ct = default) =>
+        inner.GetLiveCountsByRepoAsync(ct);
+
     public Task<string> StoreMountedLayerAsync(MemoryLayer layer, CancellationToken ct = default) =>
         inner.StoreMountedLayerAsync(layer, ct);
 

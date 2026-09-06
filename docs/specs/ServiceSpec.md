@@ -654,6 +654,8 @@ eidet stats                            # Memory counts
 eidet export -o memories.md            # Export as markdown
 eidet intake /path/to/project          # Run intake
 eidet maintain                         # Trigger maintenance
+eidet repo list                        # Repos holding memories, flagging any that resolve elsewhere
+eidet repo rehome --from A --to B      # Move a repo's memories (worktree repair; --dry-run first)
 ```
 
 ### Docker & Integration Commands

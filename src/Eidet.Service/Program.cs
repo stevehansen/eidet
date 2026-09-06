@@ -129,6 +129,17 @@ app.Configure(config =>
             .WithDescription("List mounted layers for a repo");
     });
 
+    config.AddBranch("repo", repo =>
+    {
+        repo.SetDescription("Repo-level memory operations");
+
+        repo.AddCommand<RepoListCommand>("list")
+            .WithDescription("List repos holding memories, flagging any that resolve elsewhere");
+
+        repo.AddCommand<RepoRehomeCommand>("rehome")
+            .WithDescription("Move a repo's memories into another repo (worktree repair)");
+    });
+
     config.AddBranch("backup", backup =>
     {
         backup.SetDescription("Backup and restore memory data");

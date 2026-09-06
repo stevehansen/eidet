@@ -16,6 +16,14 @@ public class RavenEidetStore : IEidetStore
     /// <summary>Upper bound on HNSW search breadth for one vector probe.</summary>
     private const int MaxVectorCandidates = 512;
 
+    /// <summary>
+    /// Page size for reduce-index reads that must be exhaustive. Sized for repos × memory types, so a
+    /// paging loop would be dead code — but a cap that truncates silently is the bug
+    /// <see cref="GetLiveCountsByRepoAsync"/> exists to describe, so keep it far above the real row
+    /// count rather than at it.
+    /// </summary>
+    private const int MaxReduceRows = 10_000;
+
     /// <summary>Candidate over-fetch factor for <see cref="GetTopScoredAsync"/> — see the note there.</summary>
     private const int PoolOverfetch = 5;
 
@@ -667,22 +675,37 @@ public class RavenEidetStore : IEidetStore
             typeof(Memories_Search).Assembly, _store, token: ct);
     }
 
-    public async Task<List<string>> GetDistinctRepoIdsAsync(CancellationToken ct = default)
+    public async Task<List<string>> GetDistinctRepoIdsAsync(CancellationToken ct = default) =>
+        [.. (await GetLiveCountsByRepoAsync(ct)).Keys];
+
+    /// <summary>
+    /// Live memory count per repo, read off the map-reduce index that already groups by
+    /// (RepoId, Type) and filters retired entries — so this is one query over ~one row per repo and
+    /// type, not a scan of the corpus.
+    ///
+    /// This exists because the obvious implementation is wrong in a way nothing reports: projecting
+    /// `RepoId` off the search index and calling `Distinct` on the result only ever sees the first
+    /// page of *documents*, so on a corpus of 23k entries it listed 27 of 93 repos and looked like a
+    /// complete answer. Anything built on it — the repo picker, `/api/eidet/repos` — silently omitted
+    /// the repos that mattered most, since the ones missing from a truncated scan are the quiet ones.
+    /// </summary>
+    public async Task<Dictionary<string, int>> GetLiveCountsByRepoAsync(CancellationToken ct = default)
     {
         try
         {
             using var session = _store.OpenAsyncSession();
-            var repoIds = await session.Advanced
-                .AsyncDocumentQuery<MemoryEntry, Memories_Search>()
-                .SelectFields<RepoIdProjection>("RepoId")
-                .Take(1000)
+            var rows = await session
+                .Query<Memories_CountByType.Result, Memories_CountByType>()
+                .Take(MaxReduceRows)
                 .ToListAsync(ct);
 
-            return repoIds
-                .Select(r => r.RepoId)
-                .Where(r => !string.IsNullOrEmpty(r))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            var totals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in rows)
+            {
+                if (string.IsNullOrEmpty(row.RepoId)) continue;
+                totals[row.RepoId] = totals.GetValueOrDefault(row.RepoId) + row.Count;
+            }
+            return totals;
         }
         catch
         {

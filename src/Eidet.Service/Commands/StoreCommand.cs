@@ -44,7 +44,7 @@ public sealed class StoreCommand : AsyncCommand<StoreCommand.Settings>
         var hookRunner = new HookRunner(config.Hooks);
         var svc = new MemoryService(eidetStore, hooks: hookRunner);
 
-        var repoId = settings.Repo ?? Directory.GetCurrentDirectory();
+        var repoId = RepoPathResolver.Resolve(settings.Repo ?? Directory.GetCurrentDirectory());
         var tags = settings.Tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
         try

@@ -3,6 +3,7 @@ using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using Eidet.Core.Domain;
 
 namespace Eidet.Service.Commands;
 
@@ -28,7 +29,7 @@ public sealed class IntakeCommand : AsyncCommand<IntakeCommand.Settings>
         var intakeSvc = new IntakeService(eidetStore, new MemoryService(eidetStore));
 
         var projectPath = settings.Path ?? Directory.GetCurrentDirectory();
-        var repoId = projectPath;
+        var repoId = RepoPathResolver.Resolve(projectPath);
 
         try
         {

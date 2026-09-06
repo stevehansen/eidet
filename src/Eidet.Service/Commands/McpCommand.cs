@@ -8,6 +8,7 @@ using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Eidet.Service.Mcp;
 using Spectre.Console.Cli;
+using Eidet.Core.Domain;
 
 namespace Eidet.Service.Commands;
 
@@ -54,7 +55,7 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
             var exportSvc = new ExportService(eidetStore, memorySvc);
             var layerSvc = new LayerService(eidetStore);
             var usageTracker = new UsageTracker(store);
-            var workDir = settings.Repo ?? settings.WorkDir ?? Directory.GetCurrentDirectory();
+            var workDir = RepoPathResolver.Resolve(settings.Repo ?? settings.WorkDir ?? Directory.GetCurrentDirectory());
             var server = new McpServer(memorySvc, intakeSvc, consolidationEngine, maintenanceRunner, looseEndSvc, workDir,
                 autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker,
                 export: exportSvc, layers: layerSvc);

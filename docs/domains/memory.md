@@ -50,6 +50,20 @@ means deciding which domain owns writing it — see Gotchas.
   and content-addressed); callers never invent a third and never pattern-match the shape by hand —
   `MemoryIdGenerator.Matches` is the only correct way to ask "could this id have come from here?".
   Owned by `src/Eidet.Core/Domain/MemoryIdGenerator.cs`.
+- **A worktree's memories belong to the main repository.** A git worktree is a second checkout of one
+  repo, and its path is routinely temporary — a PR branch under `.claude-worktrees/`, a session
+  scratchpad under the system temp directory. Taking the working directory verbatim made each checkout
+  its own namespace, so an agent session running in one banked memories that describe the repository
+  but are unreachable from it and outlive the directory they were named after. Measured on a field
+  corpus: 130 live memories across two such namespaces, more than every genuine repo's unenriched
+  backlog combined, and 108 of them were content-identical to memories the main repo already held
+  (the same sessions wrote to both). `RepoPathResolver.Resolve` reads the worktree's `.git` *pointer
+  file* and returns the main checkout; it is applied where a filesystem path first becomes a repo —
+  the CLI's working directory and `McpCommand`'s, never inside `RepoIdNormalizer`, which is a pure
+  string map called on already-normalized ids at ~40 sites and must stay filesystem-free and
+  idempotent. Scan roots are deliberately *not* resolved: intake still reads the files in front of it
+  and stores them under the resolved repo (`IntakeCommand` keeps `repoId` and `projectPath` separate).
+  Owned by `src/Eidet.Core/Domain/RepoPathResolver.cs`.
 - **Nothing mutates a stored memory outside `MemoryService`'s mutation gate.** Every
   store/forget/feedback/edit/link write funnels through `RunWriteAsync`/`RunMutationAsync`, which
   writes via a file-scoped `MutationCtx` and bumps the recall cache's per-scope generation in a
@@ -86,7 +100,10 @@ means deciding which domain owns writing it — see Gotchas.
 | `src/Eidet.Core/Domain/MemoryIdGenerator.cs` | Both id conventions + `Matches`; the frozen-format contract |
 | `src/Eidet.Core/Domain/{MemoryType,Valence,FunctionalStage,Validity,MemoryLayer,MemoryLink}.cs` | The dimensions |
 | `src/Eidet.Core/Domain/{MemoryProvenance,MemoryProvenanceJsonConverter}.cs` | Provenance value + its persisted form |
-| `src/Eidet.Core/Domain/RepoIdNormalizer.cs` | Filesystem path → `RepoId` namespace (`P--Eidet`) |
+| `src/Eidet.Core/Domain/RepoIdNormalizer.cs` | Filesystem path → `RepoId` namespace (`P--Eidet`); pure string map, no filesystem access |
+| `src/Eidet.Core/Domain/RepoPathResolver.cs` | Working directory → the repository it belongs to (a worktree resolves to its main checkout), applied before normalization |
+| `src/Eidet.Core/Services/RepoRehomeService.cs` | Moves a namespace's memories into another repo — the repair for what was banked before the resolver existed (`eidet repo rehome`) |
+| `src/Eidet.Core/Storage/RavenEidetStore.cs` (`GetLiveCountsByRepoAsync`) | The exhaustive repo enumeration — reads the `Memories_CountByType` reduce index, not a page of documents |
 | `src/Eidet.Core/Domain/RepoUsage.cs` | Per-repo anchor doc: `OriginalPath` maps a normalized id back to the filesystem path (what lets the Web UI trigger intake), plus the learned recall alpha and the git-intake watermark |
 | `src/Eidet.Core/Services/MemoryService.cs` | Every lifecycle verb + the mutation/cache gate (also hosts recall — see **recall**) |
 | `src/Eidet.Core/Services/MemoryServiceOptions.cs` | `StoreOptions` / `EditOptions` / `RecallOptions` — the 20% surface |
@@ -95,6 +112,15 @@ means deciding which domain owns writing it — see Gotchas.
 
 ## Gotchas
 
+- **Enumerating repos by projecting `RepoId` off the search index is wrong, and wrong quietly.**
+  `Distinct` over a document query only ever sees the first page: on a 23k-entry corpus that
+  reported 27 of 93 repos while looking like a complete answer, and the repos it omitted were the
+  small ones — which is exactly where a stranded namespace hides, so the one caller that needed it
+  most was the one it failed. `GetLiveCountsByRepoAsync` reads the `Memories_CountByType`
+  map-reduce index instead (already grouped by repo and type, already filtering retired entries),
+  which is one query of roughly one row per repo per type and yields exact counts as a side effect.
+  `GetDistinctRepoIdsAsync` is now its keys. Anything else that wants "all the X" from a document
+  query has the same bug waiting.
 - **`EditAsync` reports a gate rejection as `NotFound`.** Deliberate, to preserve the pre-#65 contract
   of the `UpdateMemoryAsync` bool wrapper — so a caller genuinely cannot distinguish "no such memory"
   from "the new content was rejected". Don't build UX on that return alone.
@@ -132,6 +158,15 @@ means deciding which domain owns writing it — see Gotchas.
 - `tests/Eidet.Core.Tests/Memory/ValencePolarityTests.cs` +
   `tests/Eidet.Core.Tests/Maintenance/ValenceWritePathGuardTests.cs` — the standing tripwire that an
   `Affirming`/`Refuting` near-duplicate pair survives the dup-gate, dedup, *and* consolidation.
+- `tests/Eidet.Core.Tests/Domain/RepoPathResolverTests.cs` — **the authority on repo identity for a
+  second checkout**: a worktree resolves to its main repository through rooted, forward-slash and
+  relative pointers, while a primary checkout, a plain directory, a submodule, a already-normalized
+  repo id, a missing path and a malformed pointer all come back unchanged.
+- `tests/Eidet.Core.Tests/Services/RepoRehomeServiceTests.cs` — **the authority on moving a
+  namespace**: the arriving copy is live while only the original is retired (the regression — taking
+  both from one object retires the memory it was rescuing), the new id satisfies its own content
+  commitment, fields survive, content the target already holds is folded rather than copied, the
+  source ends up empty either way, and a second run is a no-op.
 - `tests/Eidet.Core.Tests/Domain/` — `ValidityTests`, `MemoryIdGeneratorTests`,
   `ValenceBackfillTests`, `MemoryProvenanceJsonConverterTests`, `RepoIdNormalizerTests`.
 

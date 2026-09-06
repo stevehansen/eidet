@@ -5,6 +5,7 @@ using Eidet.Core.Services;
 using Eidet.Core.Storage;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using Eidet.Core.Domain;
 
 namespace Eidet.Service.Commands;
 
@@ -42,7 +43,7 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
             drift: config.Enrichment.DriftReview,
             reflection: reflectionEngine);
 
-        var repoId = Eidet.Core.Domain.RepoIdNormalizer.Normalize(settings.Repo ?? Directory.GetCurrentDirectory());
+        var repoId = Eidet.Core.Domain.RepoIdNormalizer.Normalize(RepoPathResolver.Resolve(settings.Repo ?? Directory.GetCurrentDirectory()));
 
         ISet<MaintenanceStep>? only = null;
         if (!string.IsNullOrWhiteSpace(settings.Only))

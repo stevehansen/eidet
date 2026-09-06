@@ -27,7 +27,7 @@ public sealed class QualityCommand : AsyncCommand<QualityCommand.Settings>
         var memory = new MemoryService(eidetStore, new LayerService(eidetStore));
         var svc = new QualityService(eidetStore, new IntegrityAuditor(memory, eidetStore));
 
-        var repoId = settings.Repo ?? Directory.GetCurrentDirectory();
+        var repoId = RepoPathResolver.Resolve(settings.Repo ?? Directory.GetCurrentDirectory());
 
         try
         {

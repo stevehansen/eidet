@@ -40,7 +40,7 @@ public sealed class RecallCommand : AsyncCommand<RecallCommand.Settings>
         var hookRunner = new HookRunner(config.Hooks);
         var svc = new MemoryService(eidetStore, hooks: hookRunner);
 
-        var repoId = settings.Repo ?? Directory.GetCurrentDirectory();
+        var repoId = RepoPathResolver.Resolve(settings.Repo ?? Directory.GetCurrentDirectory());
 
         var opts = new RecallOptions(settings.Query)
         {
