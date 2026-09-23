@@ -21,7 +21,9 @@ interval. This domain owns its shape and its lifecycle verbs. Whether a write is
 - **A git worktree is not its own repo.** `RepoPathResolver.Resolve` maps a working directory to the
   repository it belongs to (a worktree's `.git` pointer file names the main checkout), and it runs
   where a path *first* becomes a repo — the CLI's and MCP's working directory, or the MCP client's
-  first `file://` root, which overrides the stdio launch cwd unless `--repo`/`--workdir` is given (#94). Never put filesystem
+  first `file://` root, which overrides the stdio launch cwd unless `--repo`/`--workdir` is given (#94) —
+  but never from a shared-process client (`local-agent-mode-*`), and never after the root has moved
+  mid-session: that means one process is answering for several sessions. Never put filesystem
   access in `RepoIdNormalizer`: that is a pure string map called on already-normalized ids at ~40
   sites. Never resolve a *scan root* — intake reads the files in front of it and stores them under the
   resolved repo. Memories banked before this are moved with `eidet repo rehome`.

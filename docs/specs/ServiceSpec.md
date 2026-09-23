@@ -170,7 +170,9 @@ Working directory resolution order:
 1. `--repo` / `--workdir` argument (explicit; client roots are then ignored)
 2. MCP client roots — stdio only: when the client declares the `roots` capability, the server sends
    `roots/list` after `notifications/initialized` (and on `notifications/roots/list_changed`) and
-   re-binds to the first `file://` root (#94)
+   re-binds to the first `file://` root (#94). Not for shared-process clients (`local-agent-mode-*`,
+   the Claude desktop app), and not after a root moves mid-session — both fall back to 3, because a
+   shared process reports another session's folder
 3. Current working directory of the launching process (also used for tool calls that arrive before
    the roots answer)
 
