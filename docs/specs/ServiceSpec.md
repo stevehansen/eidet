@@ -617,6 +617,15 @@ its previous version rather than leaving it without memory until someone notices
 appends the failing command's own output to `update.log`, since "returned error" alone was not
 diagnosable after the fact.
 
+A manual `eidet update` refuses **before stopping anything** while the latest version has no
+registration leaf yet (`UpdateStatus.IsResolvable`, #97). NuGet lists a release in the flat-container
+index minutes before the registration index that `dotnet tool` resolves against, and pinning
+`--version` does not help: inside that window `dotnet tool update --ignore-failed-sources` prints
+"not found" but exits 0, so the trampoline would reinstall the old version after taking every MCP
+session down. The unattended path already waits, because its age gate needs the same publish date.
+Because the trampoline outlives the command, `eidet status` reads `update.log` back and shows the last
+failure while its target version is still not installed.
+
 Rollback is `eidet update --rollback`: reinstall the version recorded in `version-history.json`
 before this one. Exact and reproducible *because* releases are immutable — the predecessor is
 guaranteed to still exist and to be the same bytes. There is no automatic post-install health

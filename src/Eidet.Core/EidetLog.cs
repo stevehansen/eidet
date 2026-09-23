@@ -29,6 +29,20 @@ public static class EidetLog
 
     public static string LogPath => GetLogPath();
 
+    /// <summary>
+    /// Sends every later entry to <paramref name="path"/> instead of the user's config dir. For test
+    /// hosts: without it a test run appends to the real <c>eidet.log</c>, where its lines are
+    /// indistinguishable from a real session's (#97).
+    /// </summary>
+    public static void RedirectTo(string path)
+    {
+        lock (Lock)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+            _logPath = path;
+        }
+    }
+
     private static int _crashHandlersInstalled;
 
     /// <summary>
