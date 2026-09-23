@@ -35,6 +35,7 @@ public class McpServer
     private Action<string>? _sendToClient;
     private bool _clientSupportsRoots;
     private int _rootsRequestSeq;
+    private readonly Dictionary<string, string> _rootsTriggers = new(StringComparer.Ordinal);
 
     public McpServer(MemoryService svc, IntakeService intake, ConsolidationEngine consolidation,
         IMaintenanceRunner maintenance, LooseEndService looseEnds, string repoId, bool autoIntake = true,
@@ -51,8 +52,8 @@ public class McpServer
         _rpc = new JsonRpcDispatcher(new Dictionary<string, JsonRpcDispatcher.Handler>
         {
             ["initialize"] = (req, _) => Task.FromResult<JsonRpcResponse?>(HandleInitialize(req)),
-            ["notifications/initialized"] = (_, _) => { RequestRoots(); return Task.FromResult<JsonRpcResponse?>(null); },
-            ["notifications/roots/list_changed"] = (_, _) => { RequestRoots(); return Task.FromResult<JsonRpcResponse?>(null); },
+            ["notifications/initialized"] = (_, _) => { RequestRoots("initialized"); return Task.FromResult<JsonRpcResponse?>(null); },
+            ["notifications/roots/list_changed"] = (_, _) => { RequestRoots("list_changed"); return Task.FromResult<JsonRpcResponse?>(null); },
             ["tools/list"] = (req, _) => Task.FromResult<JsonRpcResponse?>(HandleToolsList(req)),
             ["tools/call"] = async (req, ct) => await HandleToolsCallAsync(req, ct),
         });
@@ -160,15 +161,17 @@ public class McpServer
                 clientVersion = info.TryGetProperty("version", out var v) ? v.ToString() : null;
             }
         }
-        EidetLog.Info($"[mcp] initialize from {clientName ?? "?"} {clientVersion} (roots={_clientSupportsRoots}, repo={_repoId})");
+        EidetLog.Info($"[mcp] initialize from {clientName ?? "?"} {clientVersion} (PID {Environment.ProcessId}, roots={_clientSupportsRoots}, repo={_repoId})");
 
         return JsonRpcResponse.Success(request.Id, new McpInitializeResult { Instructions = ServerInstructions });
     }
 
-    private void RequestRoots()
+    private void RequestRoots(string trigger)
     {
         if (!_honorClientRoots || !_clientSupportsRoots || _sendToClient is null) return;
-        var request = new { jsonrpc = "2.0", id = $"{RootsRequestIdPrefix}{++_rootsRequestSeq}", method = "roots/list" };
+        var id = $"{RootsRequestIdPrefix}{++_rootsRequestSeq}";
+        _rootsTriggers[id] = trigger;
+        var request = new { jsonrpc = "2.0", id, method = "roots/list" };
         _sendToClient(JsonSerializer.Serialize(request, JsonRpcDispatcher.SerializerOptions));
     }
 
@@ -190,37 +193,53 @@ public class McpServer
             var id = root.TryGetProperty("id", out var idEl) ? idEl.ToString() : "";
             if (!id.StartsWith(RootsRequestIdPrefix, StringComparison.Ordinal)) return true;
 
+            var trigger = _rootsTriggers.Remove(id, out var t) ? t : "?";
             if (hasResult)
-                ApplyRoots(result);
+                ApplyRoots(result, trigger);
             else
-                EidetLog.Info($"[mcp] roots/list failed: {root.GetProperty("error")}; staying on {_repoId}");
+                EidetLog.Info($"[mcp] roots/list failed (PID {Environment.ProcessId}, after {trigger}): {root.GetProperty("error")}; staying on {_repoId}");
             return true;
         }
     }
 
-    private void ApplyRoots(JsonElement result)
+    private void ApplyRoots(JsonElement result, string trigger)
     {
-        if (result.ValueKind != JsonValueKind.Object
-            || !result.TryGetProperty("roots", out var roots) || roots.ValueKind != JsonValueKind.Array)
-            return;
-
-        foreach (var r in roots.EnumerateArray())
+        var uris = new List<string>();
+        string? chosen = null;
+        if (result.ValueKind == JsonValueKind.Object
+            && result.TryGetProperty("roots", out var roots) && roots.ValueKind == JsonValueKind.Array)
         {
-            if (r.ValueKind != JsonValueKind.Object || !r.TryGetProperty("uri", out var uriEl)
-                || uriEl.ValueKind != JsonValueKind.String
-                || !Uri.TryCreate(uriEl.GetString(), UriKind.Absolute, out var uri) || !uri.IsFile)
-                continue;
+            foreach (var r in roots.EnumerateArray())
+            {
+                if (r.ValueKind != JsonValueKind.Object || !r.TryGetProperty("uri", out var uriEl)
+                    || uriEl.ValueKind != JsonValueKind.String)
+                    continue;
+                var raw = uriEl.GetString()!;
+                uris.Add(raw);
+                if (chosen is null && Uri.TryCreate(raw, UriKind.Absolute, out var uri) && uri.IsFile)
+                    chosen = RepoPathResolver.Resolve(uri.LocalPath);
+            }
+        }
 
-            var repo = RepoPathResolver.Resolve(uri.LocalPath);
-            if (string.Equals(repo, _repoId, StringComparison.OrdinalIgnoreCase)) return;
-
-            EidetLog.Info($"[mcp] repo from client roots: {repo} (was {_repoId})");
-            _repoId = repo;
-            // A fresh auto-intake: if the first context call already fired against the launch repo,
-            // the real repo still deserves its own first-session intake.
-            _autoIntake = _newAutoIntake?.Invoke(repo);
+        // One line per answer, with the PID and the whole list: whether one process ever serves
+        // several sessions (and so flips repo under them) can only be read off the log.
+        var prefix = $"[mcp] roots (PID {Environment.ProcessId}, after {trigger}): [{string.Join(", ", uris)}]";
+        if (chosen is null)
+        {
+            EidetLog.Info($"{prefix} — no file root; staying on {_repoId}");
             return;
         }
+        if (string.Equals(chosen, _repoId, StringComparison.OrdinalIgnoreCase))
+        {
+            EidetLog.Info($"{prefix} — repo unchanged ({_repoId})");
+            return;
+        }
+
+        EidetLog.Info($"{prefix} — repo {chosen} (was {_repoId})");
+        _repoId = chosen;
+        // A fresh auto-intake: if the first context call already fired against the launch repo,
+        // the real repo still deserves its own first-session intake.
+        _autoIntake = _newAutoIntake?.Invoke(chosen);
     }
 
     private JsonRpcResponse HandleToolsList(JsonRpcRequest request)

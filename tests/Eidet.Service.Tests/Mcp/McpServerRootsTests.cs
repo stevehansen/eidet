@@ -38,6 +38,23 @@ public class McpServerRootsTests : IDisposable
     }
 
     [Fact]
+    public async Task EveryRootsAnswer_IsLoggedWithPidTriggerAndFullList()
+    {
+        // Whether one process serves several client sessions can only be read off the log (#98).
+        var (server, sent) = NewServer();
+        await Initialize(server, withRoots: true);
+        var id = JsonDocument.Parse(sent[0]).RootElement.GetProperty("id").GetString()!;
+        var other = FileUri(Path.Combine(_projectDir, "second"));
+
+        await server.ProcessLineAsync(RootsResult(id, FileUri(_projectDir), other), CancellationToken.None);
+
+        var line = Assert.Single(File.ReadAllLines(Eidet.Core.EidetLog.LogPath), l => l.Contains(other));
+        Assert.Contains($"PID {Environment.ProcessId}, after initialized", line);
+        Assert.Contains(FileUri(_projectDir), line);
+        Assert.Contains($"repo {RepoPathResolver.Resolve(_projectDir)} (was {LaunchRepo})", line);
+    }
+
+    [Fact]
     public async Task ClientWithoutRoots_NeverAsks_KeepsLaunchRepo()
     {
         var (server, sent) = NewServer();
