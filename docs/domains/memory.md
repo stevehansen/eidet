@@ -70,8 +70,13 @@ means deciding which domain owns writing it — see Gotchas.
   `McpServer` sends `roots/list` after `notifications/initialized` (and again on
   `notifications/roots/list_changed`) and re-binds to the first `file://` root, through
   `RepoPathResolver`. An explicit `--repo`/`--workdir` wins; tool calls that land before the answer use
-  the cwd; the HTTP transport has no server→client channel and never asks (#94). Pinned by
-  `tests/Eidet.Service.Tests/Mcp/McpServerRootsTests.cs`.
+  the cwd; the HTTP transport has no server→client channel and never asks (#94). **Roots are only
+  trusted from a one-process-per-session client.** The Claude desktop app (`local-agent-mode-*`)
+  shares one process across its sessions and reports another session's folder (a SafeCommands
+  finding landed in `P--ProjectDashboard`), which is worse than an obviously-wrong launch directory:
+  such clients are never asked, and a root that moves mid-session marks the process distrusted and
+  sends it back to the launch repo. Telling sessions apart inside a shared process needs a per-call
+  repo, not roots. Pinned by `tests/Eidet.Service.Tests/Mcp/McpServerRootsTests.cs`.
 - **Nothing mutates a stored memory outside `MemoryService`'s mutation gate.** Every
   store/forget/feedback/edit/link write funnels through `RunWriteAsync`/`RunMutationAsync`, which
   writes via a file-scoped `MutationCtx` and bumps the recall cache's per-scope generation in a

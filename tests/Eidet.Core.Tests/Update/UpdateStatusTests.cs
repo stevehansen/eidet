@@ -34,6 +34,18 @@ public class UpdateStatusTests
     }
 
     [Fact]
+    public void A_version_without_a_registration_leaf_is_announced_but_not_resolvable()
+    {
+        // #97: the flat container lists a release minutes before the registration index dotnet tool
+        // resolves against; installing in that window reinstalls the old version and exits 0.
+        var status = Status("0.14.1", "0.14.2", published: null);
+
+        Assert.True(status.UpdateAvailable);
+        Assert.False(status.IsResolvable);
+        Assert.True(Status("0.14.1", "0.14.2", Now).IsResolvable);
+    }
+
+    [Fact]
     public void An_unknown_publish_date_fails_the_gate()
     {
         // Fail closed. An unknown age is not a young release, but it is also not evidence of an

@@ -159,6 +159,18 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             return 0;
         }
 
+        // Refuse BEFORE stopping anything: once the service and every MCP session are down, a
+        // version dotnet tool can't resolve yet reinstalls the old one and still exits 0 (#97).
+        if (!status!.IsResolvable)
+        {
+            var msg = $"v{latestVersion} is on NuGet but not installable yet — NuGet is still indexing it. Nothing was stopped; try again in a few minutes.";
+            if (settings.Json)
+                Console.WriteLine(JsonSerializer.Serialize(new { current = currentVersion, latest = latestVersion, updated = false, error = msg }));
+            else
+                AnsiConsole.MarkupLine($"[yellow]{Markup.Escape(msg)}[/]");
+            return 1;
+        }
+
         // On Windows, the running process locks its own DLLs, so dotnet tool update
         // will fail with "Access denied". We use a trampoline: stop everything, write
         // a temp script that does the actual update after we exit, then exit immediately.
@@ -530,9 +542,8 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
     internal static string GenerateWindowsTrampolineScript(string currentVersion, string latestVersion, bool restartService)
     {
         var myPid = Environment.ProcessId;
-        var configDir = ConfigManager.GetConfigDir();
         var scriptPath = Path.Combine(Path.GetTempPath(), $"eidet-update-{Guid.NewGuid():N}.cmd");
-        var logPath = Path.Combine(configDir, "update.log");
+        var logPath = UpdateLog.DefaultPath;
 
         // The script:
         // 1. Waits for the calling process to exit (polls every second, up to 30s)
@@ -664,10 +675,11 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             if (!settings.Json)
                 AnsiConsole.MarkupLine("  Running dotnet tool update...");
 
-            // Pin the version explicitly: `dotnet tool` falls back to the NuGet flat
-            // container when an exact version is requested, sidestepping the search-index
-            // lag (10–30 min after publish) that otherwise causes a silent re-resolve to
-            // the previously installed version. Ignore failed sources: a private feed in the
+            // Pin the version explicitly so a lagging index can't re-resolve to something else.
+            // Pinning does NOT get around registration-index lag: until the registration leaf
+            // exists `dotnet tool` reports "not found" yet exits 0 under --ignore-failed-sources,
+            // which is why callers gate on UpdateStatus.IsResolvable first and verify after (#97).
+            // Ignore failed sources: a private feed in the
             // user's NuGet.Config with an expired token otherwise aborts the whole update,
             // and nuget.org is the only source that can serve eidet anyway.
             var (exitCode, output) = await RunProcessAsync("dotnet", $"tool update -g eidet --version {latestVersion} --ignore-failed-sources", ct);

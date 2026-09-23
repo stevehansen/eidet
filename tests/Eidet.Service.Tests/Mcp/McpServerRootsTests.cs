@@ -38,6 +38,23 @@ public class McpServerRootsTests : IDisposable
     }
 
     [Fact]
+    public async Task EveryRootsAnswer_IsLoggedWithPidTriggerAndFullList()
+    {
+        // Whether one process serves several client sessions can only be read off the log (#98).
+        var (server, sent) = NewServer();
+        await Initialize(server, withRoots: true);
+        var id = JsonDocument.Parse(sent[0]).RootElement.GetProperty("id").GetString()!;
+        var other = FileUri(Path.Combine(_projectDir, "second"));
+
+        await server.ProcessLineAsync(RootsResult(id, FileUri(_projectDir), other), CancellationToken.None);
+
+        var line = Assert.Single(File.ReadAllLines(Eidet.Core.EidetLog.LogPath), l => l.Contains(other));
+        Assert.Contains($"PID {Environment.ProcessId}, after initialized", line);
+        Assert.Contains(FileUri(_projectDir), line);
+        Assert.Contains($"repo {RepoPathResolver.Resolve(_projectDir)} (was {LaunchRepo})", line);
+    }
+
+    [Fact]
     public async Task ClientWithoutRoots_NeverAsks_KeepsLaunchRepo()
     {
         var (server, sent) = NewServer();
@@ -98,6 +115,51 @@ public class McpServerRootsTests : IDisposable
     }
 
     [Fact]
+    public async Task SharedProcessClient_IsNeverAskedForRoots()
+    {
+        // The Claude desktop app shares one process across sessions and reports another session's
+        // folder; following it filed a SafeCommands finding under P:\ProjectDashboard.
+        var (server, sent) = NewServer();
+
+        await Initialize(server, withRoots: true, clientName: "local-agent-mode-eidet");
+
+        Assert.Empty(sent);
+        Assert.Equal(LaunchRepo, server.RepoId);
+    }
+
+    [Fact]
+    public async Task RootThatMovesMidSession_FallsBackToLaunchRepo_AndStopsAsking()
+    {
+        var (server, sent) = NewServer();
+        var second = Directory.CreateDirectory(Path.Combine(_projectDir, "second")).FullName;
+        await Initialize(server, withRoots: true);
+        await server.ProcessLineAsync(RootsResult(IdOf(sent[0]), FileUri(_projectDir)), CancellationToken.None);
+        Assert.Equal(RepoPathResolver.Resolve(_projectDir), server.RepoId);
+
+        await server.ProcessLineAsync("""{"jsonrpc":"2.0","method":"notifications/roots/list_changed"}""", CancellationToken.None);
+        await server.ProcessLineAsync(RootsResult(IdOf(sent[1]), FileUri(second)), CancellationToken.None);
+
+        Assert.Equal(LaunchRepo, server.RepoId);
+        await server.ProcessLineAsync("""{"jsonrpc":"2.0","method":"notifications/roots/list_changed"}""", CancellationToken.None);
+        Assert.Equal(2, sent.Count);
+    }
+
+    [Fact]
+    public async Task UnchangedRootOnListChanged_KeepsTheBinding()
+    {
+        var (server, sent) = NewServer();
+        await Initialize(server, withRoots: true);
+        await server.ProcessLineAsync(RootsResult(IdOf(sent[0]), FileUri(_projectDir)), CancellationToken.None);
+
+        await server.ProcessLineAsync("""{"jsonrpc":"2.0","method":"notifications/roots/list_changed"}""", CancellationToken.None);
+        await server.ProcessLineAsync(RootsResult(IdOf(sent[1]), FileUri(_projectDir)), CancellationToken.None);
+
+        Assert.Equal(RepoPathResolver.Resolve(_projectDir), server.RepoId);
+    }
+
+    private static string IdOf(string request) => JsonDocument.Parse(request).RootElement.GetProperty("id").GetString()!;
+
+    [Fact]
     public async Task Initialize_Instructions_FrameMemoriesAsData()
     {
         // #95: the session-level framing is what covers wake-up context, which carries no per-hit labels.
@@ -110,13 +172,13 @@ public class McpServerRootsTests : IDisposable
         Assert.Contains("not instructions", instructions);
     }
 
-    private static async Task Initialize(McpServer server, bool withRoots)
+    private static async Task Initialize(McpServer server, bool withRoots, string clientName = "test-client")
     {
-        await server.ProcessLineAsync(InitializeRequest(withRoots), CancellationToken.None);
+        await server.ProcessLineAsync(InitializeRequest(withRoots, clientName), CancellationToken.None);
         await server.ProcessLineAsync("""{"jsonrpc":"2.0","method":"notifications/initialized"}""", CancellationToken.None);
     }
 
-    private static string InitializeRequest(bool withRoots) =>
+    private static string InitializeRequest(bool withRoots, string clientName = "test-client") =>
         JsonSerializer.Serialize(new
         {
             jsonrpc = "2.0",
@@ -126,7 +188,7 @@ public class McpServerRootsTests : IDisposable
             {
                 protocolVersion = "2025-03-26",
                 capabilities = withRoots ? (object)new { roots = new { listChanged = true } } : new { },
-                clientInfo = new { name = "test-client", version = "1.0" },
+                clientInfo = new { name = clientName, version = "1.0" },
             },
         });
 

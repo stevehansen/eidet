@@ -24,6 +24,15 @@ public sealed record UpdateStatus
     public bool UpdateAvailable => SemanticVersion.IsNewer(Current, Latest);
 
     /// <summary>
+    /// Whether <c>dotnet tool update</c> can install <see cref="Latest"/> yet. NuGet lists a new
+    /// version in the flat-container index minutes before the registration index that
+    /// <c>dotnet tool</c> resolves against, and the publish date comes from that registration leaf —
+    /// so a missing date is the tell. Installing inside that window stops the service, reinstalls
+    /// the old version, and still exits 0 (#97).
+    /// </summary>
+    public bool IsResolvable => LatestPublishedAt is not null;
+
+    /// <summary>
     /// Whether an unattended install should proceed. Stricter than <see cref="UpdateAvailable"/> by
     /// the age gate: because releases are immutable, a bad build cannot be replaced in place, only
     /// superseded — so holding back for <paramref name="minimumAge"/> is the one thing that stops a

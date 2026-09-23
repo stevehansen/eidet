@@ -68,6 +68,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
 
         var currentVersion = Eidet.Core.EidetVersion.Current;
         var updateAvailable = SemanticVersion.IsNewer(currentVersion, latestVersion);
+        var lastUpdateFailure = UpdateLog.LastUnresolvedFailure(currentVersion);
 
         if (settings.Json)
         {
@@ -76,6 +77,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
                 version = currentVersion,
                 latestVersion,
                 updateAvailable,
+                lastUpdateFailure,
                 installedAt = lastInstall?.InstalledAt,
                 service = new
                 {
@@ -122,6 +124,9 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
 
             if (updateAvailable)
                 AnsiConsole.MarkupLine($"  [yellow]Update available: v{latestVersion}[/] — run [dim]eidet update[/]");
+
+            if (lastUpdateFailure != null)
+                AnsiConsole.MarkupLine($"  [red]Last update failed:[/] {Markup.Escape(lastUpdateFailure)} [dim]({Markup.Escape(UpdateLog.DefaultPath)})[/]");
 
             if (lastInstall != null)
                 AnsiConsole.MarkupLine($"  Installed: {lastInstall.InstalledAt.LocalDateTime:yyyy-MM-dd HH:mm} via {lastInstall.Source}");
