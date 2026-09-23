@@ -58,7 +58,9 @@ public sealed class McpCommand : AsyncCommand<McpCommand.Settings>
             var workDir = RepoPathResolver.Resolve(settings.Repo ?? settings.WorkDir ?? Directory.GetCurrentDirectory());
             var server = new McpServer(memorySvc, intakeSvc, consolidationEngine, maintenanceRunner, looseEndSvc, workDir,
                 autoIntake: config.Memory.AutoIntakeOnFirstSession, usage: usageTracker,
-                export: exportSvc, layers: layerSvc);
+                export: exportSvc, layers: layerSvc,
+                // An explicit --repo/--workdir is a deliberate choice; only the cwd fallback yields to client roots.
+                honorClientRoots: settings.Repo is null && settings.WorkDir is null);
 
             try
             {

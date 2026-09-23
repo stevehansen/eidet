@@ -64,6 +64,14 @@ means deciding which domain owns writing it — see Gotchas.
   idempotent. Scan roots are deliberately *not* resolved: intake still reads the files in front of it
   and stores them under the resolved repo (`IntakeCommand` keeps `repoId` and `projectPath` separate).
   Owned by `src/Eidet.Core/Domain/RepoPathResolver.cs`.
+- **An MCP session's repo is the client's root, not the launch cwd.** Many clients start the stdio
+  server from their install directory or `C:\Windows\System32` (~340 of the starts in one local log),
+  so the cwd files every memory under a bogus repo. When the client declares the `roots` capability,
+  `McpServer` sends `roots/list` after `notifications/initialized` (and again on
+  `notifications/roots/list_changed`) and re-binds to the first `file://` root, through
+  `RepoPathResolver`. An explicit `--repo`/`--workdir` wins; tool calls that land before the answer use
+  the cwd; the HTTP transport has no server→client channel and never asks (#94). Pinned by
+  `tests/Eidet.Service.Tests/Mcp/McpServerRootsTests.cs`.
 - **Nothing mutates a stored memory outside `MemoryService`'s mutation gate.** Every
   store/forget/feedback/edit/link write funnels through `RunWriteAsync`/`RunMutationAsync`, which
   writes via a file-scoped `MutationCtx` and bumps the recall cache's per-scope generation in a

@@ -39,4 +39,6 @@ public class MemorySearchResult
     public string? StalenessWarning { get; set; }
     public bool IsSuperseded { get; set; }
     public DriftReview? Drift { get; set; }
+    public MemoryProvenance Provenance { get; set; } = MemoryProvenance.Unknown;
+    public bool IsQuarantined { get; set; }
 }
