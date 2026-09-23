@@ -314,6 +314,8 @@ public static class RecallScoring
         LayerSource = entry.LayerId,
         IsSuperseded = !entry.IsLatest,
         Drift = entry.Drift,
+        Provenance = entry.Provenance,
+        IsQuarantined = entry.Quarantine is { Released: false },
     };
 
     public static int EstimateTokens(int charCount) => (int)Math.Ceiling(charCount / 4.0);

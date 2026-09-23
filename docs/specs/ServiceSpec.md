@@ -167,9 +167,12 @@ Content-Type: application/json
 ### Session Identity
 
 Working directory resolution order:
-1. MCP `initialize` params (`roots` or `workspaceFolders`)
-2. `--workdir` argument
-3. Current working directory of the launching process
+1. `--repo` / `--workdir` argument (explicit; client roots are then ignored)
+2. MCP client roots — stdio only: when the client declares the `roots` capability, the server sends
+   `roots/list` after `notifications/initialized` (and on `notifications/roots/list_changed`) and
+   re-binds to the first `file://` root (#94)
+3. Current working directory of the launching process (also used for tool calls that arrive before
+   the roots answer)
 
 Normalized to a `repoId` via `RepoIdNormalizer`.
 
