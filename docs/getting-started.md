@@ -145,11 +145,13 @@ Supported clients:
 | Client | How it's registered | Config file (fallback) |
 |--------|---------------------|------------------------|
 | `claude-code` | `claude mcp add --transport stdio -s user eidet -- eidet mcp` | `~/.claude.json` |
-| `claude-desktop` | direct file write (no CLI) | `claude_desktop_config.json` (platform-specific) |
+| `claude-desktop` | **not registered** — see below | `claude_desktop_config.json` (platform-specific) |
 | `codex` | `codex mcp add eidet -- eidet mcp` | `~/.codex/config.toml` |
 | `gemini` | `gemini mcp add eidet "eidet mcp" -s user` | — (CLI only) |
 
 When the client's own CLI is on `PATH`, eidet rides on it so you get whatever schema upstream is using; otherwise it writes the config file directly.
+
+**Claude desktop app:** don't add eidet to `claude_desktop_config.json`. The app runs one eidet process for all of its sessions and never says which session is calling, so memories can't be filed under the right repo; eidet refuses tool calls from it unless pinned with `"args": ["mcp", "--repo", "<path>"]`. Desktop **Code tab** sessions run Claude Code, which starts its own eidet per session from `claude-code`'s entry. `eidet status` flags a leftover desktop entry — quit the app fully before removing it, or the app writes it back.
 
 ### Any other MCP client
 

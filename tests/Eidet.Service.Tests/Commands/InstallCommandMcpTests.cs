@@ -25,6 +25,21 @@ public class InstallCommandMcpTests
     }
 
     [Fact]
+    public async Task ClaudeDesktop_IsUnsupported_AndInstallNeverWritesItsConfig()
+    {
+        // One shared eidet process serves every desktop session, so it can't know the caller's repo.
+        var desktop = McpClientRegistry.FindByName("claude-desktop")!;
+        var before = desktop.ConfigPath is { } p && File.Exists(p) ? File.ReadAllText(p) : null;
+
+        var (ok, detail) = await desktop.InstallAsync();
+
+        Assert.NotNull(desktop.Unsupported);
+        Assert.False(ok);
+        Assert.Contains(desktop.Unsupported!, detail);
+        Assert.Equal(before, desktop.ConfigPath is { } q && File.Exists(q) ? File.ReadAllText(q) : null);
+    }
+
+    [Fact]
     public void Registry_FindByName_IsCaseInsensitive()
     {
         Assert.NotNull(McpClientRegistry.FindByName("CLAUDE-CODE"));

@@ -115,7 +115,16 @@ This ensures Claude Code agents know how to use the memory system effectively fr
 
 ## Claude Desktop
 
-Same MCP stdio integration as Claude Code.
+**Not auto-registered, and unpinned entries are refused.** The desktop app runs one eidet process
+for all of its sessions (client name `local-agent-mode-*`): `roots/list` answers with the union of
+every open session's folders and `tools/call` carries no session identity, so the process cannot
+know which repo a call is for. Its cwd is the app's versioned install folder, which pooled every
+project's memories into one repo that changed on each app update. `McpServer` therefore refuses its
+tool calls unless the repo is pinned with `--repo`/`--workdir`; `eidet install` skips it and
+`eidet status` flags an existing entry for removal. Desktop **Code tab** sessions run Claude Code,
+which starts its own per-session eidet from the `claude-code` entry — that is the supported path.
+
+A pinned entry (one fixed repo for every desktop conversation) is the only working shape:
 
 ```json
 // ~/Library/Application Support/Claude/claude_desktop_config.json (macOS)
@@ -124,16 +133,11 @@ Same MCP stdio integration as Claude Code.
   "mcpServers": {
     "eidet": {
       "command": "eidet",
-      "args": ["mcp"]
+      "args": ["mcp", "--repo", "general"]
     }
   }
 }
 ```
-
-Difference from Claude Code: Claude Desktop doesn't have a working directory concept. The bridge can:
-1. Use a default "general" repo namespace for non-project conversations
-2. Accept a `--repo` argument for explicit namespace: `"args": ["mcp", "--repo", "general"]`
-3. Detect project context from conversation content (if the user mentions a project path)
 
 ---
 

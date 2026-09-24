@@ -128,6 +128,31 @@ public class McpServerRootsTests : IDisposable
     }
 
     [Fact]
+    public async Task SharedProcessClient_ToolCallsAreRefused()
+    {
+        // Its launch dir is the desktop app's versioned install folder: every project's memories
+        // pooled under C:\...\AnthropicClaude\app-<version>, a repo that changes on every update.
+        var (server, _) = NewServer();
+        await Initialize(server, withRoots: true, clientName: "local-agent-mode-eidet");
+
+        var result = await CallTool(server, "eidet_store");
+
+        Assert.True(result.GetProperty("isError").GetBoolean());
+        Assert.Equal(McpServer.SharedProcessRefusal, result.GetProperty("content")[0].GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task SharedProcessClient_WithPinnedRepo_IsServed()
+    {
+        var (server, _) = NewServer(honorClientRoots: false);
+        await Initialize(server, withRoots: true, clientName: "local-agent-mode-eidet");
+
+        var result = await CallTool(server, "eidet_context");
+
+        Assert.NotEqual(McpServer.SharedProcessRefusal, result.GetProperty("content")[0].GetProperty("text").GetString());
+    }
+
+    [Fact]
     public async Task RootThatMovesMidSession_FallsBackToLaunchRepo_AndStopsAsking()
     {
         var (server, sent) = NewServer();
@@ -176,6 +201,17 @@ public class McpServerRootsTests : IDisposable
     {
         await server.ProcessLineAsync(InitializeRequest(withRoots, clientName), CancellationToken.None);
         await server.ProcessLineAsync("""{"jsonrpc":"2.0","method":"notifications/initialized"}""", CancellationToken.None);
+    }
+
+    private static async Task<JsonElement> CallTool(McpServer server, string tool)
+    {
+        var request = JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0", id = 2, method = "tools/call",
+            @params = new { name = tool, arguments = new { content = "The build needs the net10 SDK pinned in global.json", type = "insight" } },
+        });
+        var reply = await server.ProcessLineAsync(request, CancellationToken.None);
+        return JsonSerializer.SerializeToElement(reply!.Result, JsonRpcDispatcher.SerializerOptions);
     }
 
     private static string InitializeRequest(bool withRoots, string clientName = "test-client") =>

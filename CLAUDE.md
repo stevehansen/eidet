@@ -125,7 +125,8 @@ Distribution: NuGet (`eidet`, `Eidet.Sdk`), npm (`@eidet/sdk`), PyPI (`eidet-sdk
 
 MCP config (written by `eidet install`):
 - Claude Code: `~/.claude.json` → `mcpServers.eidet`
-- Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json` / `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Claude Desktop: **not registered** — one shared process serves every desktop session and cannot
+  know the caller's repo, so unpinned tool calls are refused; the Code tab uses Claude Code's entry
 
 ## Security — STRIDE.md
 
