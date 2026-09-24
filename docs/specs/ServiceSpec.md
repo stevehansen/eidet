@@ -620,8 +620,20 @@ install fails or doesn't verify, and deleted by the next update once their proce
 (`ToolFiles`, ported from Parley). This replaced a detached `.cmd` trampoline that killed every eidet
 process and retried against MCP clients respawning `eidet mcp`. A session left on the old version
 runs what it has already loaded; an assembly it first needs afterwards went away with the old
-install, so such a session should be restarted. An `eidet serve` the service manager didn't start is
-stopped via the service lock, so the restarted service can bind. `dotnet tool update` runs with
+install, so such a session should be restarted. The service is **asked to stop itself** before its
+manager is: on Windows the updater sets a session-local named event keyed by the service's PID
+(`Local\Eidet-Shutdown-<pid>`, `ServiceShutdown`) and waits up to 15s, falling back to
+`schtasks /end` only for a service that doesn't listen (older version) or doesn't exit. That runs the
+service's shutdown instead of terminating it, and — since the unattended install is a child of that
+service — leaves `/end` nothing to act on, so the updater's survival never depends on how Task
+Scheduler ends a running task. On macOS/Linux the manager's stop sends SIGTERM, which `eidet serve`
+handles as the same graceful stop. (On Linux, systemd's default `KillMode=control-group` still takes
+the whole unit — a service-spawned updater included — down with it; unattended installs there are
+unverified.) An `eidet serve` the service manager didn't start is found via the service lock and
+stopped the same way, killed only if it doesn't exit, so the restarted service can bind. A
+same-version reinstall (`--force`/`--to <current>`) fails safe while sessions hold the shim:
+`dotnet tool update` doesn't recreate a shim that was moved aside, the verify step catches it and
+the files are restored. `dotnet tool update` runs with
 `--ignore-failed-sources`: a private feed in the user's NuGet.Config with an expired token must not
 abort an update that only nuget.org can serve. It also runs with `--no-http-cache`: right after a
 release, dotnet's locally cached package metadata can predate it, and the install then no-ops. The service is restarted **whether or not the update
