@@ -163,11 +163,15 @@ public sealed class UpdateChecker
         }
     }
 
-    private static async Task<string?> FetchOverHttpAsync(string url, CancellationToken ct)
+    internal static async Task<string?> FetchOverHttpAsync(string url, CancellationToken ct)
     {
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            // The registration5-gz-* leaves are always served gzip-encoded. Without decompression
+            // the leaf parses as garbage, the publish date is always null, and IsResolvable /
+            // IsInstallable never pass — every manual and unattended update is refused.
+            using var handler = new HttpClientHandler { AutomaticDecompression = System.Net.DecompressionMethods.All };
+            using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
             http.DefaultRequestHeaders.UserAgent.ParseAdd("Eidet-Updater");
             return await http.GetStringAsync(url, ct);
         }
