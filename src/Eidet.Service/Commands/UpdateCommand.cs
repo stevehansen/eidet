@@ -428,7 +428,9 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
             // Ignore failed sources: a private feed in the
             // user's NuGet.Config with an expired token otherwise aborts the whole update,
             // and nuget.org is the only source that can serve eidet anyway.
-            var (exitCode, output) = await RunProcessAsync("dotnet", $"tool update -g eidet --version {latestVersion} --ignore-failed-sources", ct);
+            // No http cache: right after a release, dotnet's locally cached package metadata can
+            // predate it even once NuGet resolves it, and the install then no-ops (seen in Parley).
+            var (exitCode, output) = await RunProcessAsync("dotnet", $"tool update -g eidet --version {latestVersion} --ignore-failed-sources --no-http-cache", ct);
 
             if (exitCode == 0)
                 return (true, null);

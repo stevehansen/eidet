@@ -623,7 +623,8 @@ runs what it has already loaded; an assembly it first needs afterwards went away
 install, so such a session should be restarted. An `eidet serve` the service manager didn't start is
 stopped via the service lock, so the restarted service can bind. `dotnet tool update` runs with
 `--ignore-failed-sources`: a private feed in the user's NuGet.Config with an expired token must not
-abort an update that only nuget.org can serve. The service is restarted **whether or not the update
+abort an update that only nuget.org can serve. It also runs with `--no-http-cache`: right after a
+release, dotnet's locally cached package metadata can predate it, and the install then no-ops. The service is restarted **whether or not the update
 succeeded** — the updater stopped it, so a failed install hands the host back its previous version
 rather than leaving it without memory until someone notices. Every outcome, with the failing
 command's own output, is appended to `update.log`, since "returned error" alone was not diagnosable
