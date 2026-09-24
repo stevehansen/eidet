@@ -119,4 +119,38 @@ public class UpdateCheckerTests : IDisposable
         File.WriteAllText(CachePath, "{ this is not json");
         Assert.Null(UpdateChecker.ReadCache(CachePath));
     }
+
+    [Fact]
+    public async Task Fetch_DecompressesGzipEncodedRegistrationLeaf()
+    {
+        // NuGet serves registration5-gz-* leaves gzip-encoded unconditionally; read raw, the
+        // publish date was always null and every update was refused as "not installable yet".
+        var port = FreePort();
+        using var listener = new System.Net.HttpListener();
+        listener.Prefixes.Add($"http://localhost:{port}/");
+        listener.Start();
+        var serve = Task.Run(async () =>
+        {
+            var ctx = await listener.GetContextAsync();
+            var body = System.Text.Encoding.UTF8.GetBytes("""{"published":"2026-09-24T09:33:46.157+00:00"}""");
+            ctx.Response.AddHeader("Content-Encoding", "gzip");
+            using (var gz = new System.IO.Compression.GZipStream(ctx.Response.OutputStream, System.IO.Compression.CompressionLevel.Fastest))
+                await gz.WriteAsync(body);
+            ctx.Response.Close();
+        });
+
+        var json = await UpdateChecker.FetchOverHttpAsync($"http://localhost:{port}/eidet/0.14.4.json", CancellationToken.None);
+        await serve;
+
+        Assert.Equal(DateTimeOffset.Parse("2026-09-24T09:33:46.157+00:00"), UpdateChecker.ReadPublishedDate(json!));
+    }
+
+    private static int FreePort()
+    {
+        var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        l.Start();
+        var port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
+        l.Stop();
+        return port;
+    }
 }
