@@ -5,14 +5,25 @@ using Eidet.Core.Update;
 namespace Eidet.Service.Commands;
 
 /// <summary>
-/// Reads back what the detached Windows update script wrote. That script runs after
-/// <c>eidet update</c> has already exited 0, so <c>update.log</c> is the only place its outcome
-/// lands; this is what lets <c>eidet status</c> say an update failed instead of just "update
-/// available" (#97).
+/// The outcome of every install, in <c>update.log</c>. An unattended install runs detached from any
+/// console, so this is where its result lands; reading it back is what lets <c>eidet status</c> say
+/// an update failed instead of just "update available" (#97).
 /// </summary>
 internal static partial class UpdateLog
 {
     public static string DefaultPath => Path.Combine(ConfigManager.GetConfigDir(), "update.log");
+
+    /// <summary>Appends one outcome line in the format <see cref="LastUnresolvedFailure"/> reads. Never throws.</summary>
+    public static void Append(string outcome, string? path = null)
+    {
+        try
+        {
+            var target = path ?? DefaultPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.AppendAllText(target, $"{DateTime.Now:dd/MM/yyyy HH:mm:ss} - {outcome}{Environment.NewLine}");
+        }
+        catch { }
+    }
 
     /// <summary>
     /// The last outcome line, when it is a failure whose target version is still newer than
