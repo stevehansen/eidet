@@ -611,25 +611,33 @@ Three rules decide whether a found release is actually taken:
 
 The scheduler shells out to the same `eidet update` a human would type, with the vetted version
 pinned (`--to`), and it persists its own task state *first* — the updater's first act is to stop
-the service that called it. Platform-specific work stays in one place: the Windows trampoline
-(a detached script that waits for file locks to release, retries against MCP clients that respawn
-`eidet mcp`, verifies the installed version, and restarts the service), and a direct replace on
-macOS/Linux where loaded files are not locked. Both paths run `dotnet tool update` with
+the service that called it. The install runs **in the updater's own process on every OS, and only
+the service is stopped** — AI sessions keep their `eidet mcp` processes on the old version and switch
+when they next restart. Windows won't delete open files but will move them, so before
+`dotnet tool update` the in-use files of the shim and `.store/eidet` (held by running sessions and by
+the updater itself) are moved to `~/.dotnet/tools/.eidet-old/<guid>/`; they are moved back if the
+install fails or doesn't verify, and deleted by the next update once their processes have exited
+(`ToolFiles`, ported from Parley). This replaced a detached `.cmd` trampoline that killed every eidet
+process and retried against MCP clients respawning `eidet mcp`. A session left on the old version
+runs what it has already loaded; an assembly it first needs afterwards went away with the old
+install, so such a session should be restarted. An `eidet serve` the service manager didn't start is
+stopped via the service lock, so the restarted service can bind. `dotnet tool update` runs with
 `--ignore-failed-sources`: a private feed in the user's NuGet.Config with an expired token must not
-abort an update that only nuget.org can serve. And both restart the service **whether or not the
-update succeeded** — the updater's first act was to stop it, so a failed install hands the host back
-its previous version rather than leaving it without memory until someone notices. The trampoline
-appends the failing command's own output to `update.log`, since "returned error" alone was not
-diagnosable after the fact.
+abort an update that only nuget.org can serve. The service is restarted **whether or not the update
+succeeded** — the updater stopped it, so a failed install hands the host back its previous version
+rather than leaving it without memory until someone notices. Every outcome, with the failing
+command's own output, is appended to `update.log`, since "returned error" alone was not diagnosable
+after the fact.
 
 A manual `eidet update` refuses **before stopping anything** while the latest version has no
 registration leaf yet (`UpdateStatus.IsResolvable`, #97). NuGet lists a release in the flat-container
 index minutes before the registration index that `dotnet tool` resolves against, and pinning
 `--version` does not help: inside that window `dotnet tool update --ignore-failed-sources` prints
-"not found" but exits 0, so the trampoline would reinstall the old version after taking every MCP
-session down. The unattended path already waits, because its age gate needs the same publish date.
-Because the trampoline outlives the command, `eidet status` reads `update.log` back and shows the last
-failure while its target version is still not installed.
+"not found" but exits 0, reinstalling the old version. The unattended path already waits, because
+its age gate needs the same publish date. That date comes from a registration leaf NuGet always serves
+gzip-encoded; until 0.14.5 the checker didn't decompress it, so both gates failed closed on every
+release. An unattended install has no console, so `eidet status` reads `update.log` back and shows the
+last failure while its target version is still not installed.
 
 Rollback is `eidet update --rollback`: reinstall the version recorded in `version-history.json`
 before this one. Exact and reproducible *because* releases are immutable — the predecessor is

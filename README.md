@@ -62,7 +62,7 @@ After `eidet install`, the service autostarts at login and your AI clients can u
 # Check for updates
 eidet update --check
 
-# Update (stops service, updates tool, restarts service)
+# Update (restarts the service; open AI sessions keep working and switch on their next restart)
 eidet update
 
 # Report an issue (opens GitHub with version pre-filled)

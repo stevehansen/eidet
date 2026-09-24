@@ -3,8 +3,9 @@ using Eidet.Service.Commands;
 namespace Eidet.Service.Tests.Commands;
 
 /// <summary>
-/// #97: the detached Windows update script reports only to update.log, so <c>eidet status</c> reads
-/// the last outcome back. The line shapes below are what the generated .cmd script writes.
+/// #97: an unattended install reports only to update.log, so <c>eidet status</c> reads the last
+/// outcome back. Most line shapes below are what the retired Windows .cmd trampoline wrote — they
+/// stay readable because existing logs still end in them.
 /// </summary>
 public class UpdateLogTests : IDisposable
 {
@@ -66,5 +67,17 @@ public class UpdateLogTests : IDisposable
     public void A_missing_log_reports_nothing()
     {
         Assert.Null(UpdateLog.LastUnresolvedFailure("0.14.1", _path));
+    }
+
+    [Fact]
+    public void Appended_outcomes_round_trip()
+    {
+        // A multi-line error (dotnet's own output) must not hide the outcome line above it.
+        UpdateLog.Append("Update from v0.14.4 to v0.14.5 FAILED: dotnet tool update failed:\nAccess denied", _path);
+        Assert.EndsWith("- Update from v0.14.4 to v0.14.5 FAILED: dotnet tool update failed:",
+            UpdateLog.LastUnresolvedFailure("0.14.4", _path));
+
+        UpdateLog.Append("Updated from v0.14.4 to v0.14.5", _path);
+        Assert.Null(UpdateLog.LastUnresolvedFailure("0.14.4", _path));
     }
 }
