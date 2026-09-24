@@ -18,10 +18,13 @@ namespace Eidet.Service.Mcp;
 /// before the roots answer use the launch repo.
 ///
 /// Roots are only trusted from a client that runs one server process per session. The Claude
-/// desktop app (<c>local-agent-mode-*</c>) shares one process across its sessions and reports some
-/// other session's folder, so following it files memories under the wrong real project — worse than
-/// the obviously-wrong launch directory. Such clients are never asked, and any client whose root
-/// changes mid-session is treated the same way from then on, falling back to the launch repo.
+/// desktop app (<c>local-agent-mode-*</c>) shares one process across its sessions: its
+/// <c>roots/list</c> answer is the union of every open session's folders and its tool calls carry no
+/// session identity, so no answer can name the calling session's repo. Such a client is never asked,
+/// and unless the repo was pinned with <c>--repo</c>/<c>--workdir</c> every tool call is refused —
+/// its launch directory is the app's versioned install folder, which pools all projects' memories
+/// into one repo that changes on every app update. Any other client whose root changes mid-session
+/// stops being asked and falls back to the launch repo.
 /// </summary>
 public class McpServer
 {
@@ -34,9 +37,15 @@ public class McpServer
     /// <summary>Client names known to share one server process across sessions.</summary>
     private static readonly string[] SharedProcessClientPrefixes = ["local-agent-mode"];
 
+    internal const string SharedProcessRefusal =
+        "Eidet is off for this client: the Claude desktop app runs one eidet process for all its sessions and never says which session is calling, so there is no repo to file memories under. "
+        + "Claude Code sessions (including the desktop Code tab) start their own eidet from ~/.claude.json — remove the `eidet` entry from claude_desktop_config.json and restart the app. "
+        + "To keep this entry, pin it to one repo: `eidet mcp --repo <path>`.";
+
     private string _repoId;
     private readonly string _launchRepoId;
     private readonly bool _honorClientRoots;
+    private bool _sharedProcessClient;
     private bool _rootsDistrusted;
     private bool _boundToRoot;
     private readonly ToolDispatcher _dispatcher;
@@ -174,9 +183,14 @@ public class McpServer
                 clientVersion = info.TryGetProperty("version", out var v) ? v.ToString() : null;
             }
         }
-        _rootsDistrusted = clientName is not null
+        _sharedProcessClient = clientName is not null
             && SharedProcessClientPrefixes.Any(prefix => clientName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
-        EidetLog.Info($"[mcp] initialize from {clientName ?? "?"} {clientVersion} (PID {Environment.ProcessId}, roots={_clientSupportsRoots}{(_rootsDistrusted ? " but shared-process client, roots ignored" : "")}, repo={_repoId})");
+        _rootsDistrusted = _sharedProcessClient;
+        var shared = !_sharedProcessClient ? ""
+            : _honorClientRoots ? " but shared-process client, tool calls refused"
+            : " but shared-process client, roots ignored";
+        var log = $"[mcp] initialize from {clientName ?? "?"} {clientVersion} (PID {Environment.ProcessId}, roots={_clientSupportsRoots}{shared}, repo={_repoId})";
+        if (_sharedProcessClient && _honorClientRoots) EidetLog.Warn(log); else EidetLog.Info(log);
 
         return JsonRpcResponse.Success(request.Id, new McpInitializeResult { Instructions = ServerInstructions });
     }
@@ -309,6 +323,10 @@ public class McpServer
 
         if (!_exposedTools.Contains(toolName))
             return JsonRpcResponse.ErrorResponse(request.Id, -32601, $"Unknown tool: {toolName}");
+
+        // Pinned (--repo/--workdir) means the user chose the repo, so a shared process may use it.
+        if (_sharedProcessClient && _honorClientRoots)
+            return JsonRpcResponse.Success(request.Id, McpCallToolResult.Error(SharedProcessRefusal));
 
         if (_autoIntake is not null)
         {

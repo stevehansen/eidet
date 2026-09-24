@@ -32,6 +32,11 @@ public sealed class McpInstallCommand : AsyncCommand<McpInstallCommand.Settings>
         var results = new List<(string Name, bool Ok, string Detail)>();
         foreach (var client in targets)
         {
+            if (client.Unsupported != null)
+            {
+                results.Add((client.Name, false, $"not installed — {client.Unsupported}"));
+                continue;
+            }
             var status = await client.CheckAsync(ct);
             if (status == McpInstallStatus.Configured)
             {
@@ -68,7 +73,7 @@ public sealed class McpInstallCommand : AsyncCommand<McpInstallCommand.Settings>
         {
             var available = new List<McpClient>();
             foreach (var client in McpClientRegistry.All)
-                if (await client.CheckAsync(ct) != McpInstallStatus.NotAvailable)
+                if (client.Unsupported == null && await client.CheckAsync(ct) != McpInstallStatus.NotAvailable)
                     available.Add(client);
             return available;
         }
@@ -89,7 +94,7 @@ public sealed class McpInstallCommand : AsyncCommand<McpInstallCommand.Settings>
         var detected = new List<McpClient>();
         foreach (var client in McpClientRegistry.All)
         {
-            if (await client.CheckAsync(ct) != McpInstallStatus.NotAvailable)
+            if (client.Unsupported == null && await client.CheckAsync(ct) != McpInstallStatus.NotAvailable)
                 detected.Add(client);
         }
 

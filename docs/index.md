@@ -47,7 +47,7 @@ dotnet tool install -g eidet
 eidet setup
 
 # Register as system service + auto-configure every detected MCP client
-# (Claude Code, Claude Desktop, Codex, Gemini)
+# (Claude Code — including the desktop app's Code tab — Codex, Gemini)
 eidet install
 
 # Store a memory via CLI

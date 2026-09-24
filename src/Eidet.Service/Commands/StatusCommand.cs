@@ -59,11 +59,11 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
         catch { }
 
         // MCP client registration (best-effort).
-        var mcpClients = new List<(string Name, McpInstallStatus Status)>();
+        var mcpClients = new List<(McpClient Client, McpInstallStatus Status)>();
         foreach (var client in McpClientRegistry.All)
         {
-            try { mcpClients.Add((client.Name, await client.CheckAsync(cancellation))); }
-            catch { mcpClients.Add((client.Name, McpInstallStatus.NotAvailable)); }
+            try { mcpClients.Add((client, await client.CheckAsync(cancellation))); }
+            catch { mcpClients.Add((client, McpInstallStatus.NotAvailable)); }
         }
 
         var currentVersion = Eidet.Core.EidetVersion.Current;
@@ -112,7 +112,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
                     e.PreviousVersion,
                     e.Source,
                 }),
-                mcpClients = mcpClients.Select(c => new { name = c.Name, status = c.Status.ToString() }),
+                mcpClients = mcpClients.Select(c => new { name = c.Client.Name, status = c.Status.ToString(), unsupported = c.Client.Unsupported }),
             }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
 
             Console.WriteLine(json);
@@ -196,22 +196,27 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
     /// Compact MCP-client summary for status output: configured ones get
     /// ✓, installed-but-not-configured get a yellow ✗, missing tools are
     /// listed as dim "(not installed)" at the end (or hidden if all
-    /// detected clients are configured).
+    /// detected clients are configured). An unsupported client is only
+    /// mentioned when it has an eidet entry — in red, asking for its removal.
     /// </summary>
-    private static string FormatMcpClients(IReadOnlyList<(string Name, McpInstallStatus Status)> clients)
+    private static string FormatMcpClients(IReadOnlyList<(McpClient Client, McpInstallStatus Status)> clients)
     {
-        var configured = clients.Where(c => c.Status == McpInstallStatus.Configured).ToList();
-        var pending = clients.Where(c => c.Status == McpInstallStatus.NotConfigured).ToList();
-        var missing = clients.Where(c => c.Status == McpInstallStatus.NotAvailable).ToList();
+        var harmful = clients.Where(c => c.Client.Unsupported != null && c.Status == McpInstallStatus.Configured).ToList();
+        var supported = clients.Where(c => c.Client.Unsupported == null).ToList();
+        var configured = supported.Where(c => c.Status == McpInstallStatus.Configured).ToList();
+        var pending = supported.Where(c => c.Status == McpInstallStatus.NotConfigured).ToList();
+        var missing = supported.Where(c => c.Status == McpInstallStatus.NotAvailable).ToList();
 
-        if (configured.Count == 0 && pending.Count == 0)
+        if (configured.Count == 0 && pending.Count == 0 && harmful.Count == 0)
             return "[dim]No supported MCP clients detected[/]";
 
         var parts = new List<string>();
-        foreach (var (name, _) in configured) parts.Add($"[green]{name} ✓[/]");
-        foreach (var (name, _) in pending) parts.Add($"[yellow]{name} ✗ (run `eidet mcp install {name}`)[/]");
+        foreach (var (client, _) in configured) parts.Add($"[green]{client.Name} ✓[/]");
+        foreach (var (client, _) in pending) parts.Add($"[yellow]{client.Name} ✗ (run `eidet mcp install {client.Name}`)[/]");
+        foreach (var (client, _) in harmful)
+            parts.Add($"[red]{client.Name} ✗ (remove eidet from {Markup.Escape(client.ConfigPath ?? "its config")}: {Markup.Escape(client.Unsupported!)})[/]");
         if (missing.Count > 0)
-            parts.Add($"[dim]not installed: {string.Join(", ", missing.Select(c => c.Name))}[/]");
+            parts.Add($"[dim]not installed: {string.Join(", ", missing.Select(c => c.Client.Name))}[/]");
         return string.Join(", ", parts);
     }
 

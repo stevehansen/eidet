@@ -27,6 +27,12 @@ public abstract class McpClient
     /// <summary>Name of the upstream CLI we shell out to (e.g. "claude", "codex"). Null = file-only client.</summary>
     protected virtual string? CliCommand => null;
 
+    /// <summary>
+    /// Why eidet must not be registered with this client, or null when it can be. An existing entry
+    /// in an unsupported client's config is harmful and should be removed, not left "configured".
+    /// </summary>
+    public virtual string? Unsupported => null;
+
     public async Task<McpInstallStatus> CheckAsync(CancellationToken ct = default)
     {
         var cliOnPath = CliCommand != null && IsExecutableOnPath(CliCommand);
@@ -42,6 +48,8 @@ public abstract class McpClient
 
     public async Task<(bool Success, string Detail)> InstallAsync(CancellationToken ct = default)
     {
+        if (Unsupported != null) return (false, $"{Name}: not installed — {Unsupported}");
+
         if (CliCommand != null && IsExecutableOnPath(CliCommand))
         {
             var (ok, detail) = await InstallViaCliAsync(ct);
@@ -219,6 +227,13 @@ internal sealed class ClaudeCodeClient : McpClient
 internal sealed class ClaudeDesktopClient : McpClient
 {
     public override string Name => "claude-desktop";
+
+    // The app runs one server process for all its sessions, answers roots/list with every open
+    // session's folders and sends no session identity with tool calls — so the process cannot know
+    // the caller's repo, and McpServer refuses its tool calls.
+    public override string? Unsupported =>
+        "the desktop app shares one eidet process across all its sessions and cannot say which repo a call is for; "
+        + "Code-tab sessions start their own eidet from Claude Code's config (`eidet mcp install claude-code`)";
 
     public override string? ConfigPath
     {

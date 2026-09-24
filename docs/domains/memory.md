@@ -72,11 +72,16 @@ means deciding which domain owns writing it — see Gotchas.
   `RepoPathResolver`. An explicit `--repo`/`--workdir` wins; tool calls that land before the answer use
   the cwd; the HTTP transport has no server→client channel and never asks (#94). **Roots are only
   trusted from a one-process-per-session client.** The Claude desktop app (`local-agent-mode-*`)
-  shares one process across its sessions and reports another session's folder (a SafeCommands
-  finding landed in `P--ProjectDashboard`), which is worse than an obviously-wrong launch directory:
-  such clients are never asked, and a root that moves mid-session marks the process distrusted and
-  sends it back to the launch repo. Telling sessions apart inside a shared process needs a per-call
-  repo, not roots. Pinned by `tests/Eidet.Service.Tests/Mcp/McpServerRootsTests.cs`.
+  shares one process across its sessions: its `roots/list` answer is the union of every open
+  session's folders and its tool calls carry no session identity (a SafeCommands finding landed in
+  `P--ProjectDashboard`). Such clients are never asked, and **unless `--repo`/`--workdir` pins the
+  repo their tool calls are refused** with a fix-it message — the launch cwd is the app's versioned
+  install folder (`AnthropicClaude\app-<version>`), which pooled every project's memories into one
+  repo that changes on each app update. `ClaudeDesktopClient.Unsupported` keeps `eidet install` from
+  registering it and makes `eidet status`/`mcp list` flag an existing entry for removal; desktop
+  Code-tab sessions get their own per-session process from Claude Code's config. A root that moves
+  mid-session on any other client marks the process distrusted and sends it back to the launch repo.
+  Pinned by `tests/Eidet.Service.Tests/Mcp/McpServerRootsTests.cs` and `InstallCommandMcpTests.cs`.
 - **Nothing mutates a stored memory outside `MemoryService`'s mutation gate.** Every
   store/forget/feedback/edit/link write funnels through `RunWriteAsync`/`RunMutationAsync`, which
   writes via a file-scoped `MutationCtx` and bumps the recall cache's per-scope generation in a
