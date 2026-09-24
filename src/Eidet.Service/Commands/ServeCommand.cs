@@ -1,6 +1,8 @@
+using System.Runtime.InteropServices;
 using Eidet.Core;
 using Eidet.Core.Configuration;
 using Eidet.Core.Services;
+using Eidet.Service.Update;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -171,6 +173,20 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
             AnsiConsole.MarkupLine("\n[yellow]Shutting down...[/]");
             cts.Cancel();
         };
+
+        // The same graceful stop for the updater (Windows) and the service manager (SIGTERM), which
+        // otherwise terminate the process and skip the cleanup in the finally block below.
+        using var stopRequest = ServiceShutdown.Listen(() =>
+        {
+            EidetLog.Info("Stop requested by eidet update");
+            cts.Cancel();
+        });
+        using var sigterm = OperatingSystem.IsWindows() ? null : PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx =>
+        {
+            ctx.Cancel = true;
+            EidetLog.Info("SIGTERM received");
+            cts.Cancel();
+        });
 
         try
         {

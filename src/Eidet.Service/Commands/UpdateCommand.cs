@@ -285,6 +285,12 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
     {
         if (!ServiceLock.IsServiceRunning(out var info) || info is null || info.Pid == Environment.ProcessId)
             return;
+        if (ServiceShutdown.RequestStop(info.Pid, TimeSpan.FromSeconds(15)))
+        {
+            if (!settings.Json)
+                AnsiConsole.MarkupLine($"  Stopped eidet serve (PID {info.Pid}) gracefully");
+            return;
+        }
         try
         {
             using var serve = Process.GetProcessById(info.Pid);
@@ -355,6 +361,16 @@ public sealed class UpdateCommand : AsyncCommand<UpdateCommand.Settings>
                 {
                     if (!settings.Json)
                         AnsiConsole.MarkupLine("  Stopping scheduled task...");
+                    // Ask the service to exit first; /end only for one that doesn't (older version,
+                    // or stuck). See ServiceShutdown for why this matters to the unattended install.
+                    if (ServiceLock.IsServiceRunning(out var info) && info is not null
+                        && info.Pid != Environment.ProcessId
+                        && ServiceShutdown.RequestStop(info.Pid, TimeSpan.FromSeconds(15)))
+                    {
+                        if (!settings.Json)
+                            AnsiConsole.MarkupLine("  Service stopped gracefully.");
+                        return true;
+                    }
                     await RunProcessAsync("schtasks.exe", "/end /tn \"Eidet\"", ct);
                     // Give the process time to release file locks
                     await Task.Delay(2000, ct);
