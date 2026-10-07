@@ -48,16 +48,16 @@ public static partial class TextFold
         var i = start;
         while (i < text.Length && char.IsWhiteSpace(text[i])) i++;
 
-        var inCode = false;
+        var fence = 0;
         for (; i < text.Length; i++)
         {
             var c = text[i];
             if (c == '`')
             {
-                inCode = !inCode;
+                fence = AfterBackticks(text, ref i, fence);
                 continue;
             }
-            if (inCode) continue;
+            if (fence > 0) continue;
             if (c is '\n' or '\r') return i;
             if (c is '。' or '！' or '？') return i + 1;
             if (c is not ('.' or '!' or '?')) continue;
@@ -75,8 +75,24 @@ public static partial class TextFold
     private static string Balance(string s)
     {
         if (s.AsSpan().Count("**") % 2 == 1) s += "**";
-        if (s.AsSpan().Count('`') % 2 == 1) s += "`";
-        return s;
+        var fence = 0;
+        for (var i = 0; i < s.Length; i++)
+            if (s[i] == '`') fence = AfterBackticks(s, ref i, fence);
+        return fence > 0 ? s + new string('`', fence) : s;
+    }
+
+    /// <summary>
+    /// The open code fence after the backtick run at <paramref name="i"/>: the length of the run that opened the
+    /// code span or fence the text is in, or 0 outside code. As in markdown, a run opens code when none is open and
+    /// closes it only when it is as long as the opening run, so a <c>````</c> fence can hold <c>```</c> and a
+    /// <c>``</c> span can hold a lone backtick. Moves <paramref name="i"/> to the run's last backtick.
+    /// </summary>
+    private static int AfterBackticks(string text, ref int i, int fence)
+    {
+        var run = 1;
+        while (i + run < text.Length && text[i + run] == '`') run++;
+        i += run - 1;
+        return fence == 0 ? run : run == fence ? 0 : fence;
     }
 
     [GeneratedRegex(@"\b(?:e\.g|i\.e|etc|vs|cf|al|approx|Dr|Mr|Ms|Fig|Eq|No)\.$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

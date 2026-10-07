@@ -25,6 +25,18 @@ public class TextFoldTests
             "Run `git log -1. --stat` before pushing.",
             TextFold.FirstSentence("Run `git log -1. --stat` before pushing. Then tag."));
 
+    [Fact]
+    public void FirstSentence_DoubleBacktickSpan_HoldsALoneBacktick() =>
+        Assert.Equal(
+            "Quote it as ``a`b. c`` inline.",
+            TextFold.FirstSentence("Quote it as ``a`b. c`` inline. Then move on."));
+
+    [Theory]
+    [InlineData("Run `dotnet test", "Run `dotnet test`")]
+    [InlineData("Run ``dotnet test. Then", "Run ``dotnet test. Then``")]
+    public void FirstSentence_UnclosedCodeSpan_IsClosedWithItsOwnRun(string text, string expected) =>
+        Assert.Equal(expected, TextFold.FirstSentence(text));
+
     [Theory]
     [InlineData("记忆是本地的。服务不联网。", "记忆是本地的。")]
     [InlineData("最初の文です！次の文です。", "最初の文です！")]
@@ -77,5 +89,14 @@ public class TextFoldTests
         var text = "Run this:\n```\nsafe dotnet build. Then\nsafe dotnet test\n```\nAfterwards check the log.";
 
         Assert.Equal("Run this: …", TextFold.Fit(text, 40));
+    }
+
+    [Fact]
+    public void Fit_NeverCutsInsideAFourBacktickFence()
+    {
+        // The ```` fence holds a ``` fence; only another ```` closes it.
+        var text = "Example:\n````\nfirst. Then more\n```\nnested. Code\n```\n````\nAfterwards check the log.";
+
+        Assert.Equal("Example: …", TextFold.Fit(text, 40));
     }
 }
