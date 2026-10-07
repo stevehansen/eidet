@@ -72,7 +72,10 @@ expansion follows edges somebody **authored**; cue expansion follows entities en
   it actionable, so a renderer preferring it hands the agent a topic label and silently discards the
   knowledge the store retained. `RecallToolHandler` therefore renders full `Content` for the top
   `DetailedHits` and stays terse below the cut; only 45 of 15.6k live memories had a null `OneLiner`,
-  so an `OneLiner ?? Summary ?? Content` chain makes the later branches unreachable in practice.
+  so an `OneLiner ?? Summary ?? Content` chain makes the later branches unreachable in practice. Both
+  budgets (`DetailChars` 700, `HeadlineChars` 120) fold through `TextFold.Fit` to whole leading sentences
+  (a `.` ends one only before whitespace, so `0.5.0` and `$.store` survive) plus ` …`; a mid-sentence
+  char cut is the fallback only when the first sentence alone is over budget.
 - **Trust de-boosts the rank; the label is what reaches the agent.** Once an unvouched memory is
   returned it reads exactly like first-party knowledge, which is the indirect-prompt-injection opening
   (STRIDE E-9). `MemorySearchResult` therefore carries `Provenance` and `IsQuarantined`, and

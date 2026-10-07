@@ -3,6 +3,7 @@ using Eidet.Core.Domain;
 using Eidet.Core.LooseEnds;
 using Eidet.Core.Memory;
 using Eidet.Core.Services;
+using Eidet.Core.Text;
 using Eidet.Service.Mcp;
 
 namespace Eidet.Service.Tools.Handlers;
@@ -96,7 +97,7 @@ public sealed class RecallToolHandler : IToolHandler
                     _ => "",
                 };
 
-                var headline = FirstNonEmpty(r.OneLiner, r.Summary) ?? Truncate(r.Content, HeadlineChars);
+                var headline = FirstNonEmpty(r.OneLiner, r.Summary) ?? TextFold.Fit(r.Content, HeadlineChars);
                 lines.Add($"  {prefix} {glyph}{headline}{stale}");
                 lines.Add($"      id={r.Id} importance={r.Importance:F2} score={r.Score:F2}{TrustLabel(r)}");
 
@@ -111,7 +112,7 @@ public sealed class RecallToolHandler : IToolHandler
                     // Suppress only when the headline already IS the content — otherwise the
                     // abstraction and the source say different things and both earn their space.
                     if (body.Length > 0 && !string.Equals(body, headline, StringComparison.Ordinal))
-                        lines.Add($"      {Truncate(body, DetailChars).ReplaceLineEndings("\n      ")}");
+                        lines.Add($"      {TextFold.Fit(body, DetailChars).ReplaceLineEndings("\n      ")}");
                 }
             }
         }
@@ -136,9 +137,6 @@ public sealed class RecallToolHandler : IToolHandler
     private const int DetailChars = 700;
 
     private const int HeadlineChars = 120;
-
-    private static string Truncate(string s, int max) =>
-        s.Length <= max ? s : s[..max] + "…";
 
     /// <summary>Unvouched = its origin sits below first-party trust (pack, intake, reflection, unknown)
     /// or it is under an unreleased quarantine verdict.</summary>

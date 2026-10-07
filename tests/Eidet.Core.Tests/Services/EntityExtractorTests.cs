@@ -111,6 +111,19 @@ public class EntityExtractorTests
         Assert.Equal("The API uses JWT auth", oneLiner);
     }
 
+    [Theory]
+    [InlineData("scratch-pad 0.5.0 adds option B. It also fixes the cache.", "scratch-pad 0.5.0 adds option B")]
+    [InlineData("Plugins read state through $.store.get. Then they render.", "Plugins read state through $.store.get")]
+    [InlineData("Prefer a fold, e.g. the first sentence. Then stop.", "Prefer a fold, e.g. the first sentence")]
+    [InlineData("Run `dotnet test -c Release. --no-build` after building. Then push.", "Run `dotnet test -c Release. --no-build` after building")]
+    [InlineData("记忆是本地的。服务不联网。", "记忆是本地的。")]
+    public void GenerateHeuristicOneLiner_UsesTheFirstWholeSentence(string content, string expected) =>
+        Assert.Equal(expected, EntityExtractor.GenerateHeuristicOneLiner(content));
+
+    [Fact]
+    public void GenerateHeuristicOneLiner_StopsAtLineBreak() =>
+        Assert.Equal("Upgrade path for 0.14", EntityExtractor.GenerateHeuristicOneLiner("Upgrade path for 0.14\nStop the service first."));
+
     [Fact]
     public void GenerateHeuristicOneLiner_TruncatesLongContent()
     {
