@@ -28,7 +28,7 @@ public sealed class MaintainCommand : AsyncCommand<MaintainCommand.Settings>
         public string? Only { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
         var store = DocumentStoreFactory.CreateFromConfig(config);

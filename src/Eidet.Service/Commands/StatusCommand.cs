@@ -17,7 +17,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
         public bool Json { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
 

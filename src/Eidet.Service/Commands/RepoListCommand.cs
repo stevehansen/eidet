@@ -28,7 +28,7 @@ public sealed class RepoListCommand : AsyncCommand<RepoListCommand.Settings>
         public bool Json { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
         var store = DocumentStoreFactory.CreateFromConfig(config);

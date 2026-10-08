@@ -20,7 +20,7 @@ public sealed class ApiKeyCreateCommand : AsyncCommand<ApiKeyCreateCommand.Setti
         public bool Json { get; set; }
     }
 
-    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var scopes = settings.Scopes?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
@@ -76,7 +76,7 @@ public sealed class ApiKeyListCommand : AsyncCommand<ApiKeyListCommand.Settings>
         public bool Json { get; set; }
     }
 
-    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
 
@@ -131,7 +131,7 @@ public sealed class ApiKeyRevokeCommand : AsyncCommand<ApiKeyRevokeCommand.Setti
         public bool Json { get; set; }
     }
 
-    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
         var removed = config.Auth.ApiKeys.RemoveAll(k =>

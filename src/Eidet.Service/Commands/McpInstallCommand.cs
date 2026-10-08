@@ -24,7 +24,7 @@ public sealed class McpInstallCommand : AsyncCommand<McpInstallCommand.Settings>
         public bool Json { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken ct)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken ct)
     {
         var targets = await ResolveTargetsAsync(settings, ct);
         if (targets.Count == 0) return 1;

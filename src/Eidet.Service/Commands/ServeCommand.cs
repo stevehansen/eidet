@@ -26,7 +26,7 @@ public sealed class ServeCommand : AsyncCommand<ServeCommand.Settings>
         public bool RunAsService { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         EidetLog.InstallCrashHandlers("serve");
 

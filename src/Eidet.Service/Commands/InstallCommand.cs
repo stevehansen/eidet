@@ -15,7 +15,7 @@ public sealed class InstallCommand : AsyncCommand<InstallCommand.Settings>
         public bool Json { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         if (!settings.Json)
             AnsiConsole.MarkupLine("[bold]Installing Eidet service...[/]");
