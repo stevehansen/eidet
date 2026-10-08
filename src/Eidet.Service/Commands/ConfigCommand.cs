@@ -14,7 +14,7 @@ public sealed class ConfigGetCommand : AsyncCommand<ConfigGetCommand.Settings>
         public string Key { get; set; } = "";
     }
 
-    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
         var value = ConfigHelper.GetValue(config, settings.Key);
@@ -42,7 +42,7 @@ public sealed class ConfigSetCommand : AsyncCommand<ConfigSetCommand.Settings>
         public string Value { get; set; } = "";
     }
 
-    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
 
@@ -67,7 +67,7 @@ public sealed class ConfigListCommand : AsyncCommand<ConfigListCommand.Settings>
         public bool Json { get; set; }
     }
 
-    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
 

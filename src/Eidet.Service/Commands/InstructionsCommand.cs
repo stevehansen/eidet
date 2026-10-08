@@ -18,7 +18,7 @@ public sealed class InstructionsCommand : AsyncCommand<InstructionsCommand.Setti
         public bool Print { get; set; }
     }
 
-    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var instructions = GenerateInstructions();
 

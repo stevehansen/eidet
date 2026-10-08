@@ -30,7 +30,7 @@ public sealed class StoreCommand : AsyncCommand<StoreCommand.Settings>
         public bool Json { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         if (!Enum.TryParse<MemoryType>(settings.Type, true, out var type))
         {

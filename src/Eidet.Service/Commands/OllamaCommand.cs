@@ -14,7 +14,7 @@ public sealed class OllamaStatusCommand : AsyncCommand<OllamaStatusCommand.Setti
         public bool Json { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
         using var svc = new OllamaService(config.Enrichment.Url);
@@ -87,7 +87,7 @@ public sealed class OllamaPullCommand : AsyncCommand<OllamaPullCommand.Settings>
         public string? Model { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
         using var svc = new OllamaService(config.Enrichment.Url);
@@ -164,7 +164,7 @@ public sealed class OllamaListCommand : AsyncCommand<OllamaListCommand.Settings>
 {
     public sealed class Settings : CommandSettings { }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
         using var svc = new OllamaService(config.Enrichment.Url);

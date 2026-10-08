@@ -13,7 +13,7 @@ namespace Eidet.Service.Commands;
 /// </summary>
 public sealed class BenchSmokeCommand : AsyncCommand
 {
-    protected override async Task<int> ExecuteAsync(CommandContext context, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, CancellationToken cancellation)
     {
         var dataset = new FixtureDataset();
         var transcript = Transcript.LoadEmbeddedFixture();
@@ -66,7 +66,7 @@ public sealed class BenchFullCommand : AsyncCommand<BenchFullCommand.Settings>
         public string? RecordPath { get; set; }
     }
 
-    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var dataset = new PendingRealDataset(settings.DatasetPath);
         AnsiConsole.MarkupLine($"[red]{Markup.Escape(LeaderboardGuard.Refusal(dataset, settings.DatasetPath))}[/]");

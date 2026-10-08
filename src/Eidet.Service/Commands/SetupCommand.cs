@@ -24,7 +24,7 @@ public sealed class SetupCommand : AsyncCommand<SetupCommand.Settings>
         public bool Embedded { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         AnsiConsole.MarkupLine($"[bold]Eidet[/] v{EidetVersion.Current} — Setup");
         AnsiConsole.WriteLine();

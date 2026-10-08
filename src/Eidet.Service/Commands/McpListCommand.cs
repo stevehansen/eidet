@@ -16,7 +16,7 @@ public sealed class McpListCommand : AsyncCommand<McpListCommand.Settings>
         public bool Json { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken ct)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken ct)
     {
         var rows = new List<(string Name, McpInstallStatus Status, string? ConfigPath, string? Unsupported)>();
         foreach (var client in McpClientRegistry.All)

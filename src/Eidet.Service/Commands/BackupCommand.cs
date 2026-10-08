@@ -18,7 +18,7 @@ public sealed class BackupCreateCommand : AsyncCommand<BackupCreateCommand.Setti
         public bool Json { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
         var store = DocumentStoreFactory.CreateFromConfig(config);
@@ -60,7 +60,7 @@ public sealed class BackupRestoreCommand : AsyncCommand<BackupRestoreCommand.Set
         public bool Json { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         if (!settings.Force)
         {
@@ -98,7 +98,7 @@ public sealed class BackupListCommand : AsyncCommand<BackupListCommand.Settings>
         public bool Json { get; set; }
     }
 
-    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
         var backupDir = settings.Dir ?? BackupService.GetBackupDir(config.Backup);
@@ -142,7 +142,7 @@ public sealed class BackupPruneCommand : AsyncCommand<BackupPruneCommand.Setting
         public bool Json { get; set; }
     }
 
-    protected override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
         var backupDir = BackupService.GetBackupDir(config.Backup);

@@ -26,7 +26,7 @@ public sealed class LogsCommand : AsyncCommand<LogsCommand.Settings>
         public bool NoColor { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var path = EidetLog.LogPath;
 

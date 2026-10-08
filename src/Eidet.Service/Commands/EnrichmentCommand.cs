@@ -170,7 +170,7 @@ public sealed class EnrichmentSetupCommand : AsyncCommand<EnrichmentSetupCommand
 {
     public sealed class Settings : CommandSettings { }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         AnsiConsole.MarkupLine($"[bold]Eidet[/] v{EidetVersion.Current} — Enrichment setup");
         AnsiConsole.WriteLine();
@@ -387,7 +387,7 @@ public sealed class EnrichmentReloadCommand : AsyncCommand<EnrichmentReloadComma
         public string? ApiKey { get; set; }
     }
 
-    protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellation)
     {
         var config = ConfigManager.Load();
         return await EnrichmentReloadClient.ReloadAndReportAsync(config, settings.ApiKey, cancellation);
