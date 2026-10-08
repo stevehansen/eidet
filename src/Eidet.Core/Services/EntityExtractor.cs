@@ -61,13 +61,14 @@ public static partial class EntityExtractor
         if (string.IsNullOrWhiteSpace(content)) return null;
 
         var text = content.Trim();
-        var endIdx = text.IndexOfAny(['.', '\n', '\r']);
-        if (endIdx > 0 && endIdx < 120)
-            text = text[..endIdx];
+        var lineEnd = text.IndexOfAny(['\n', '\r']);
+        if (lineEnd > 0)
+            text = text[..lineEnd];
 
         while (text.StartsWith('#'))
             text = text[1..];
-        text = text.TrimStart();
+        // Without its stop, as before: EnrichmentService spots a not-yet-upgraded one-liner by equality with this.
+        text = TextFold.FirstSentence(text).TrimEnd('.');
 
         var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (words.Length > 12)

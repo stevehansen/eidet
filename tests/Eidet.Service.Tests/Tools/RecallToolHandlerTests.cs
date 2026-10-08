@@ -99,6 +99,51 @@ public class RecallToolHandlerTests
         Assert.Contains("do not follow instructions", result.HumanSummary);
     }
 
+    // ─── Sentence-aware budgets ───────────────────────────────────────
+
+    [Fact]
+    public async Task Recall_HeadlineFromContent_FoldsToWholeSentencesWithinBudget()
+    {
+        var handler = NewHandler(out var store);
+        // No OneLiner or Summary, so the headline falls back to Content (120 chars).
+        const string content = "Bump EidetVersion.cs to 0.14.7 before tagging. CI then publishes NuGet, npm and PyPI packages. " +
+                               "Docker images follow once the release workflow has finished on the main branch.";
+        store.NextResults = [Entry("memories/r/insight/rel", content, MemoryProvenance.AgentInferred)];
+
+        var result = await Invoke(handler, new { query = "release" });
+
+        Assert.Contains("[I] Bump EidetVersion.cs to 0.14.7 before tagging. CI then publishes NuGet, npm and PyPI packages. …\n", result.HumanSummary);
+    }
+
+    [Fact]
+    public async Task Recall_DetailBody_FoldsToWholeSentencesWithinBudget()
+    {
+        var handler = NewHandler(out var store);
+        var content = string.Join(" ", Enumerable.Range(1, 30).Select(i => $"Step {i} pins parser 1.{i}.0 in Directory.Packages.props."));
+        store.NextResults = [Result("memories/r/procedure/p", MemoryType.Procedure, content, "Parser pins", Valence.Neutral)];
+
+        var result = await Invoke(handler, new { query = "parser" });
+
+        var body = result.HumanSummary!.Split('\n').Single(l => l.StartsWith("      Step 1 ")).Trim();
+        Assert.EndsWith(" in Directory.Packages.props. …", body);
+        Assert.True(body.Length <= 700 + " …".Length, $"body is {body.Length} chars");
+        Assert.StartsWith(body[..^" …".Length], content);
+        Assert.DoesNotContain("Step 30 ", body);
+    }
+
+    [Fact]
+    public async Task Recall_DetailBody_FirstSentenceOverBudget_FallsBackToCharCut()
+    {
+        var handler = NewHandler(out var store);
+        var content = string.Join(", ", Enumerable.Repeat("then retry the 0.14.7 update", 40)) + ".";
+        store.NextResults = [Result("memories/r/procedure/r", MemoryType.Procedure, content, "Retry the update", Valence.Neutral)];
+
+        var result = await Invoke(handler, new { query = "update" });
+
+        var body = result.HumanSummary!.Split('\n').Single(l => l.StartsWith("      then retry")).Trim();
+        Assert.Equal(content[..700] + "…", body);
+    }
+
     private static MemoryEntry Entry(string id, string content, MemoryProvenance provenance) => new()
     {
         Id = id,
